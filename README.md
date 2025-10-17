@@ -11,6 +11,7 @@ A production-grade, high-performance, high-availability distributed lock Java fr
 - **Observability**: Built-in metrics (Micrometer), tracing (OpenTelemetry), and structured logging
 - **Production Ready**: Comprehensive configuration, monitoring, and testing capabilities
 - **Battle-Tested Patterns**: Redis and ZooKeeper integrations mirror proven designs from Redisson and Apache Curator
+- **🚀 Optimized Implementation**: Enhanced performance with shared thread pools, fencing tokens, and resource efficiency (see [OPTIMIZATIONS.md](OPTIMIZATIONS.md))
 
 ## Supported Backends
 
@@ -55,6 +56,8 @@ DistributedLockFactory lockFactory = ConfiguredDistributedLockFactory.create(con
 ```
 
 ## Quick Start
+
+> **💡 New**: Check out [OPTIMIZATIONS.md](OPTIMIZATIONS.md) for the enhanced implementations with better performance and resource efficiency!
 
 ### Maven Dependencies
 

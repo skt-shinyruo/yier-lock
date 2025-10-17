@@ -29,7 +29,18 @@ public interface DistributedLock extends AutoCloseable {
 
     boolean isHeldByCurrentThread();
 
-
+    /**
+     * Get the fencing token for the current lock holder.
+     * Returns FencingToken.NONE if lock is not held by current thread.
+     * 
+     * Fencing tokens provide protection against issues with lock expiry
+     * and delayed operations, as described by Martin Kleppmann.
+     * 
+     * @return fencing token if lock is held, FencingToken.NONE otherwise
+     */
+    default FencingToken getFencingToken() {
+        return FencingToken.NONE;
+    }
 
     String getName();
 

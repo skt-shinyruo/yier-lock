@@ -1,2 +1,3 @@
-com/mycorp/distributedlock/springboot/SpringDistributedLockFactory.class
+com/mycorp/distributedlock/springboot/config/EnableDistributedLock.class
 META-INF/spring-configuration-metadata.json
+com/mycorp/distributedlock/springboot/SpringDistributedLockFactory.class
