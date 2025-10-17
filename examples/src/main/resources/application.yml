@@ -1,0 +1,10 @@
+spring:
+  distributed-lock:
+    enabled: true
+    type: redis
+    default-lease-time: 30s
+    redis:
+      hosts: localhost:6379
+      # 可选：如果Redis有密码，取消注释并配置
+      # password: your-redis-password
+      # database: 0

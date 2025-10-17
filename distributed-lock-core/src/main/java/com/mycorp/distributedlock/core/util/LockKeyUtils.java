@@ -8,6 +8,7 @@ public final class LockKeyUtils {
     private static final String READ_LOCK_SUFFIX = ":read";
     private static final String WRITE_LOCK_SUFFIX = ":write";
     private static final String CHANNEL_SUFFIX = ":channel";
+    private static final String CLIENT_ID = UUID.randomUUID().toString();
     
     private LockKeyUtils() {
     }
@@ -29,7 +30,7 @@ public final class LockKeyUtils {
     }
     
     public static String generateLockValue() {
-        return UUID.randomUUID().toString() + ":" + Thread.currentThread().getId();
+        return CLIENT_ID + ":" + Thread.currentThread().getId();
     }
     
     public static String getCurrentThreadLockValue() {

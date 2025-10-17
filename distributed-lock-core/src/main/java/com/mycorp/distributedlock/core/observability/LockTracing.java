@@ -37,6 +37,9 @@ public class LockTracing {
     public interface SpanContext extends AutoCloseable {
         void setStatus(String status);
         void setError(Throwable throwable);
+        void setAttribute(String key, String value);
+        void setAttribute(String key, long value);
+        void setAttribute(String key, boolean value);
         @Override
         void close();
     }
@@ -60,7 +63,22 @@ public class LockTracing {
             span.recordException(throwable);
             span.setAttribute("lock.status", "error");
         }
-        
+
+        @Override
+        public void setAttribute(String key, String value) {
+            span.setAttribute(key, value);
+        }
+
+        @Override
+        public void setAttribute(String key, long value) {
+            span.setAttribute(key, value);
+        }
+
+        @Override
+        public void setAttribute(String key, boolean value) {
+            span.setAttribute(key, value);
+        }
+
         @Override
         public void close() {
             try {
@@ -75,11 +93,23 @@ public class LockTracing {
         @Override
         public void setStatus(String status) {
         }
-        
+
         @Override
         public void setError(Throwable throwable) {
         }
-        
+
+        @Override
+        public void setAttribute(String key, String value) {
+        }
+
+        @Override
+        public void setAttribute(String key, long value) {
+        }
+
+        @Override
+        public void setAttribute(String key, boolean value) {
+        }
+
         @Override
         public void close() {
         }

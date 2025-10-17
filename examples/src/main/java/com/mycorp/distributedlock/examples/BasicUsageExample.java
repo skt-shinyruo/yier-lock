@@ -1,9 +1,9 @@
 package com.mycorp.distributedlock.examples;
 
 import com.mycorp.distributedlock.api.DistributedLock;
+import com.mycorp.distributedlock.api.DistributedLockFactory;
 import com.mycorp.distributedlock.api.DistributedReadWriteLock;
-import com.mycorp.distributedlock.redis.RedisDistributedLockFactory;
-import com.mycorp.distributedlock.zookeeper.ZooKeeperDistributedLockFactory;
+import com.mycorp.distributedlock.api.ServiceLoaderDistributedLockFactory;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
 import org.apache.curator.framework.CuratorFramework;
@@ -26,7 +26,7 @@ public class BasicUsageExample {
         System.out.println("=== Redis Distributed Lock Example ===");
         
         RedisClient redisClient = RedisClient.create(RedisURI.create("redis://localhost:6379"));
-        RedisDistributedLockFactory lockFactory = new RedisDistributedLockFactory(redisClient);
+        DistributedLockFactory lockFactory = new ServiceLoaderDistributedLockFactory();  // 自动发现Redis提供者
         
         DistributedLock lock = lockFactory.getLock("example-resource");
         
@@ -50,13 +50,15 @@ public class BasicUsageExample {
         System.out.println("\n=== ZooKeeper Distributed Lock Example ===");
         
         CuratorFramework curator = CuratorFrameworkFactory.newClient(
-            "localhost:2181", 
+            "localhost:2181",
             new ExponentialBackoffRetry(1000, 3)
         );
         curator.start();
         curator.blockUntilConnected(10, TimeUnit.SECONDS);
         
-        ZooKeeperDistributedLockFactory lockFactory = new ZooKeeperDistributedLockFactory(curator);
+        // 对于ZK示例，手动创建Provider（因为standalone示例无Spring）
+        com.mycorp.distributedlock.zookeeper.ZooKeeperLockProvider zkProvider = new com.mycorp.distributedlock.zookeeper.ZooKeeperLockProvider(curator, new com.mycorp.distributedlock.core.config.LockConfiguration(), null, null);
+        DistributedLockFactory lockFactory = new ServiceLoaderDistributedLockFactory();  // 自动发现可用提供者
         
         DistributedLock lock = lockFactory.getLock("example-resource");
         
@@ -82,7 +84,7 @@ public class BasicUsageExample {
         System.out.println("\n=== Read/Write Lock Example ===");
         
         RedisClient redisClient = RedisClient.create(RedisURI.create("redis://localhost:6379"));
-        RedisDistributedLockFactory lockFactory = new RedisDistributedLockFactory(redisClient);
+        DistributedLockFactory lockFactory = new ServiceLoaderDistributedLockFactory();
         
         DistributedReadWriteLock rwLock = lockFactory.getReadWriteLock("shared-resource");
         
@@ -117,7 +119,7 @@ public class BasicUsageExample {
         System.out.println("\n=== Async Lock Example ===");
         
         RedisClient redisClient = RedisClient.create(RedisURI.create("redis://localhost:6379"));
-        RedisDistributedLockFactory lockFactory = new RedisDistributedLockFactory(redisClient);
+        DistributedLockFactory lockFactory = new ServiceLoaderDistributedLockFactory();
         
         DistributedLock lock = lockFactory.getLock("async-resource");
         
@@ -144,7 +146,7 @@ public class BasicUsageExample {
         System.out.println("\n=== Try-with-Resources Example ===");
         
         RedisClient redisClient = RedisClient.create(RedisURI.create("redis://localhost:6379"));
-        RedisDistributedLockFactory lockFactory = new RedisDistributedLockFactory(redisClient);
+        DistributedLockFactory lockFactory = new ServiceLoaderDistributedLockFactory();
         
         try (DistributedLock lock = lockFactory.getLock("auto-resource")) {
             lock.lock(30, TimeUnit.SECONDS);

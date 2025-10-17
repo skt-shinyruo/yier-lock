@@ -160,7 +160,7 @@ public class ZooKeeperDistributedReadWriteLock implements DistributedReadWriteLo
                     
                     Timer.Sample heldTimerSample = heldTimer.get();
                     if (heldTimerSample != null) {
-                        heldTimerSample.stop();
+                        metrics.recordHeldTime(heldTimerSample, name);
                         heldTimer.remove();
                     }
                     
@@ -341,7 +341,7 @@ public class ZooKeeperDistributedReadWriteLock implements DistributedReadWriteLo
                     
                     Timer.Sample heldTimerSample = heldTimer.get();
                     if (heldTimerSample != null) {
-                        heldTimerSample.stop();
+                        metrics.recordHeldTime(heldTimerSample, name);
                         heldTimer.remove();
                     }
                     

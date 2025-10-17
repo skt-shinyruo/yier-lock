@@ -135,7 +135,7 @@ class RedisDistributedLockIntegrationTest {
     }
     
     @Test
-    void testAsyncLockOperations() throws ExecutionException, InterruptedException {
+    void testAsyncLockOperations() throws ExecutionException, InterruptedException, TimeoutException {
         DistributedLock lock = lockFactory.getLock("test-async");
         
         CompletableFuture<Void> lockFuture = lock.lockAsync(5, TimeUnit.SECONDS);

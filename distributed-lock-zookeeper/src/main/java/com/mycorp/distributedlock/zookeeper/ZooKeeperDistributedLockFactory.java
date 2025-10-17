@@ -1,20 +1,19 @@
 package com.mycorp.distributedlock.zookeeper;
 
-import com.mycorp.distributedlock.api.DistributedLock;
-import com.mycorp.distributedlock.api.DistributedLockFactory;
-import com.mycorp.distributedlock.api.DistributedReadWriteLock;
+import com.mycorp.distributedlock.api.*;
 import com.mycorp.distributedlock.core.config.LockConfiguration;
 import com.mycorp.distributedlock.core.observability.LockMetrics;
 import com.mycorp.distributedlock.core.observability.LockTracing;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.api.OpenTelemetry;
 import org.apache.curator.framework.CuratorFramework;
+import org.apache.curator.framework.recipes.queue.QueueSerializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentHashMap;
 
-public class ZooKeeperDistributedLockFactory implements DistributedLockFactory {
+public class ZooKeeperDistributedLockFactory {
     
     private static final Logger logger = LoggerFactory.getLogger(ZooKeeperDistributedLockFactory.class);
     
@@ -47,7 +46,6 @@ public class ZooKeeperDistributedLockFactory implements DistributedLockFactory {
         logger.info("ZooKeeper distributed lock factory initialized with base path: {}", lockBasePath);
     }
     
-    @Override
     public DistributedLock getLock(String name) {
         return locks.computeIfAbsent(name, lockName ->
             new ZooKeeperDistributedLock(
@@ -61,7 +59,6 @@ public class ZooKeeperDistributedLockFactory implements DistributedLockFactory {
         );
     }
     
-    @Override
     public DistributedReadWriteLock getReadWriteLock(String name) {
         return readWriteLocks.computeIfAbsent(name, lockName ->
             new ZooKeeperDistributedReadWriteLock(
@@ -74,35 +71,44 @@ public class ZooKeeperDistributedLockFactory implements DistributedLockFactory {
             )
         );
     }
-    
-    @Override
+
+
+
     public void shutdown() {
         logger.info("Shutting down ZooKeeper distributed lock factory");
-        
+
+        // Attempt to release locks held by current thread
+        // Note: We cannot release locks held by other threads as that would be unsafe
         locks.values().forEach(lock -> {
             try {
                 if (lock.isHeldByCurrentThread()) {
                     lock.unlock();
+                    logger.info("Released lock {} during shutdown", lock.getName());
                 }
             } catch (Exception e) {
                 logger.warn("Error releasing lock {} during shutdown", lock.getName(), e);
             }
         });
-        
+
         readWriteLocks.values().forEach(readWriteLock -> {
             try {
                 if (readWriteLock.readLock().isHeldByCurrentThread()) {
                     readWriteLock.readLock().unlock();
+                    logger.info("Released read lock {} during shutdown", readWriteLock.getName());
                 }
                 if (readWriteLock.writeLock().isHeldByCurrentThread()) {
                     readWriteLock.writeLock().unlock();
+                    logger.info("Released write lock {} during shutdown", readWriteLock.getName());
                 }
             } catch (Exception e) {
                 logger.warn("Error releasing read-write lock {} during shutdown", readWriteLock.getName(), e);
             }
         });
-        
+
+        // Clear caches to help GC
         locks.clear();
         readWriteLocks.clear();
+
+        logger.info("ZooKeeper distributed lock factory shutdown completed");
     }
 }

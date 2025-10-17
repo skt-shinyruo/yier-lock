@@ -10,6 +10,7 @@ A production-grade, high-performance, high-availability distributed lock Java fr
 - **Rich API**: Both synchronous and asynchronous operations with try-with-resources support
 - **Observability**: Built-in metrics (Micrometer), tracing (OpenTelemetry), and structured logging
 - **Production Ready**: Comprehensive configuration, monitoring, and testing capabilities
+- **Battle-Tested Patterns**: Redis and ZooKeeper integrations mirror proven designs from Redisson and Apache Curator
 
 ## Supported Backends
 
@@ -30,6 +31,28 @@ A production-grade, high-performance, high-availability distributed lock Java fr
   - Built-in reentrant lock support
   - Read/write locks with proper semantics
   - Battle-tested reliability
+
+## Design Highlights
+
+- **Redis Reentrancy**: Locks are stored as hashes containing `owner` and `count`, mirroring Redisson's Lua scripts to guarantee atomic reentrant acquisition and renewal.
+- **Pub/Sub Coordination**: Waiters subscribe to per-lock channels and auto-unsubscribe after notifications so listeners cannot leak under contention.
+- **Watchdog Safety**: Renewals are idempotent and validate ownership before extending TTL, preventing runaway watchdogs during failover scenarios.
+
+### Provider Discovery
+
+- The new `ServiceLoaderDistributedLockFactory` mirrors Redisson's pluggable architecture by discovering available `LockProvider`s via Java's `ServiceLoader`.
+- Provider selection is guided by `distributed-lock.type` (Typesafe config), Spring's `spring.distributed-lock.type`, or environment variables like `DISTRIBUTED_LOCK_PROVIDER`.
+- Fallback order honours provider-specific priority so production-proven backends (Redis) are preferred when no explicit choice is made.
+- A convenience helper `ConfiguredDistributedLockFactory.create(...)` wires the factory using a `LockConfiguration` instance.
+
+```java
+import com.mycorp.distributedlock.api.DistributedLockFactory;
+import com.mycorp.distributedlock.core.ConfiguredDistributedLockFactory;
+import com.mycorp.distributedlock.core.config.LockConfiguration;
+
+LockConfiguration configuration = new LockConfiguration();
+DistributedLockFactory lockFactory = ConfiguredDistributedLockFactory.create(configuration);
+```
 
 ## Quick Start
 
@@ -148,6 +171,136 @@ try {
     writeLock.unlock();
 }
 ```
+
+## Spring Integration
+
+The framework provides seamless integration with Spring and Spring Boot through the `distributed-lock-spring-boot-starter` module. This enables automatic configuration, annotation-driven locking, and simplified dependency management.
+
+### Adding the Starter Dependency
+
+Include the starter in your Maven `pom.xml`:
+
+```xml
+<dependency>
+    <groupId>com.my-corp</groupId>
+    <artifactId>distributed-lock-spring-boot-starter</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+
+<!-- Optional: Include specific backends if not auto-detected -->
+<dependency>
+    <groupId>com.my-corp</groupId>
+    <artifactId>distributed-lock-redis</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+<!-- or -->
+<dependency>
+    <groupId>com.my-corp</groupId>
+    <artifactId>distributed-lock-zookeeper</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+```
+
+### Enabling Spring Integration
+
+Add `@EnableDistributedLock` to your Spring configuration class:
+
+```java
+import com.mycorp.distributedlock.springboot.config.EnableDistributedLock;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+@EnableDistributedLock
+public class LockConfig {
+    // Optional custom beans or overrides
+}
+```
+
+This enables auto-configuration of `SpringDistributedLockFactory` as a Spring Bean and registers the AOP aspect for annotation processing.
+
+### Annotation-Based Locking
+
+Use `@DistributedLock` or `@DistributedReadLock` annotations on service methods:
+
+```java
+import com.mycorp.distributedlock.api.annotation.DistributedLock;
+import org.springframework.stereotype.Service;
+
+@Service
+public class OrderService {
+
+    @DistributedLock(value = "order:{#orderId}", timeout = "30s")
+    public void processOrder(String orderId) {
+        // Critical section: process order
+        System.out.println("Processing order: " + orderId);
+        // Lock is automatically acquired before method execution
+        // and released after, even on exceptions
+    }
+
+    @DistributedReadLock(value = "cache:{#key}")
+    public String getCachedData(String key) {
+        // Read lock: multiple readers allowed
+        return "data for " + key;
+    }
+}
+```
+
+- `value`: Lock key, supports SpEL expressions (e.g., method parameters).
+- `timeout`: Lease time (defaults to configured value).
+- Fallback to simple string concatenation if SpEL evaluation fails.
+
+### Configuration
+
+Configure properties in `application.yml`:
+
+```yaml
+distributed:
+  lock:
+    enabled: true
+    default-lease-time: 30s
+    default-wait-time: 10s
+    backend: redis  # or zookeeper
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+    zookeeper:
+      connect-string: localhost:2181
+      base-path: /distributed-locks
+    # Observability
+    metrics:
+      enabled: true
+    tracing:
+      enabled: true
+    # AOP specific
+    aop:
+      proxy-target-class: true  # Use CGLIB proxies
+```
+
+The `SpringDistributedLockFactory` will be auto-configured based on available backends and properties.
+
+### Running Examples
+
+The `examples` module demonstrates Spring Boot integration:
+
+1. Ensure Redis (localhost:6379) or ZooKeeper (localhost:2181) is running.
+2. Build the project: `mvn clean install`
+3. Run the example: `cd examples && mvn spring-boot:run`
+4. Observe logs for lock acquisition/release in `SpringBootDistributedLockExample`.
+5. Test manual locking via injected `SpringDistributedLockFactory` and annotation-based via AOP.
+
+For detailed code, see `examples/src/main/java/com/mycorp/distributedlock/examples/spring/SpringBootDistributedLockExample.java`.
+
+### Migration Guide
+
+- **From Manual Locking**: Replace direct `DistributedLockFactory` instantiation with `@Autowired SpringDistributedLockFactory`.
+- **To Annotations**: Annotate methods with `@DistributedLock`; use SpEL in `value` for dynamic keys (e.g., `#{#param}`).
+- **Key Utils**: Leverage `SpringLockKeyUtils` for SpEL evaluation in non-annotation contexts.
+- **Configuration**: Migrate Typesafe Config to Spring Properties; backends are optional dependencies.
+- **Observability**: Metrics and tracing integrate automatically with Spring Boot Actuator/Micrometer.
+- **Compatibility**: Core API remains unchanged; annotations add declarative layer without breaking existing code.
+
+For full migration from the planning document, refer to the Architect mode design: Starter auto-configures factory, AOP handles annotations, and properties map to core config.
 
 ## Configuration
 

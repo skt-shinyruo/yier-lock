@@ -128,7 +128,7 @@ public class ZooKeeperDistributedLock implements DistributedLock {
                 
                 Timer.Sample heldTimerSample = heldTimer.get();
                 if (heldTimerSample != null) {
-                    heldTimerSample.stop();
+                    metrics.recordHeldTime(heldTimerSample, name);
                     heldTimer.remove();
                 }
                 
