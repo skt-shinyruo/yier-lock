@@ -1,1 +1,1 @@
-com.mycorp.distributedlock.redis.RedisLockProvider
+com.mycorp.distributedlock.redis.SimpleRedisLockProvider

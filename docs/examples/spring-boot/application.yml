@@ -1,0 +1,116 @@
+# Spring Boot 分布式锁示例配置
+server:
+  port: 8080
+
+# 分布式锁配置
+distributed-lock:
+  # 后端类型：redis 或 zookeeper
+  backend: redis
+
+  # Redis 配置
+  redis:
+    # 单节点配置
+    hosts: localhost:6379
+
+    # 集群配置示例 (取消注释使用)
+    # cluster:
+    #   nodes:
+    #     - redis://localhost:6379
+    #     - redis://localhost:6380
+    #     - redis://localhost:6381
+
+    # 密码 (如果需要)
+    # password: your-redis-password
+
+    # 数据库索引
+    database: 0
+
+    # 客户端名称
+    client-name: distributed-lock-spring-boot-example
+
+    # 连接池配置
+    pool:
+      max-total: 20      # 最大连接数
+      max-idle: 10       # 最大空闲连接
+      min-idle: 5        # 最小空闲连接
+      max-wait-millis: 5000  # 最大等待时间
+
+  # ZooKeeper 配置示例 (切换后端时使用)
+  # zookeeper:
+  #   connect-string: localhost:2181
+  #   base-path: /distributed-locks
+  #   session-timeout: 60s
+  #   connection-timeout: 15s
+
+  # 监控配置
+  monitoring:
+    enabled: true
+    metrics:
+      enabled: true
+    tracing:
+      enabled: true
+
+  # 看门狗配置
+  watchdog:
+    enabled: true
+    renewal-interval: 10s
+
+  # 性能配置
+  performance:
+    retry-count: 3
+    retry-interval: 100ms
+    connection-timeout: 5s
+    operation-timeout: 30s
+
+# Spring Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# 日志配置
+logging:
+  level:
+    com.mycorp.distributedlock: INFO
+    com.mycorp.distributedlock.examples: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+---
+# 生产环境配置示例
+spring:
+  profiles: production
+
+distributed-lock:
+  redis:
+    cluster:
+      nodes:
+        - redis://prod-redis-1:6379
+        - redis://prod-redis-2:6379
+        - redis://prod-redis-3:6379
+      password: ${REDIS_PASSWORD}
+    pool:
+      max-total: 50
+      max-idle: 20
+      min-idle: 10
+
+---
+# 测试环境配置示例
+spring:
+  profiles: test
+
+distributed-lock:
+  redis:
+    hosts: localhost:6379
+  monitoring:
+    enabled: false
+  metrics:
+    enabled: false

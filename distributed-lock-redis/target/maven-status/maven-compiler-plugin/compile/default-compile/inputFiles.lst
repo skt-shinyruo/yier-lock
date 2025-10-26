@@ -1,6 +1,3 @@
 /home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisClusterFactory.java
-/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisDistributedLock.java
-/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisDistributedLockFactory.java
-/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisDistributedReadWriteLock.java
-/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisFairLock.java
-/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/RedisLockProvider.java
+/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/SimpleRedisLock.java
+/home/feng/code/java/yier-lock/distributed-lock-redis/src/main/java/com/mycorp/distributedlock/redis/SimpleRedisLockProvider.java

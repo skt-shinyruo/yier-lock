@@ -1,0 +1,162 @@
+# 分布式锁开发环境配置
+
+version: '3.8'
+
+services:
+  # 分布式锁应用
+  distributed-lock-app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - DISTRIBUTED_LOCK_BACKEND=redis
+      - DISTRIBUTED_LOCK_REDIS_HOSTS=redis:6379
+      - DISTRIBUTED_LOCK_MONITORING_ENABLED=true
+      - DISTRIBUTED_LOCK_METRICS_ENABLED=true
+    depends_on:
+      - redis
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Redis 单节点
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-your-password}
+    volumes:
+      - redis_data:/data
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Redis 集群 (可选)
+  redis-cluster:
+    image: redis:7-alpine
+    command: redis-server --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    ports:
+      - "7001:6379"
+      - "7002:6380"
+      - "7003:6381"
+    volumes:
+      - redis_cluster_data:/data
+    networks:
+      - distributed-lock-network
+    deploy:
+      replicas: 3
+    restart: unless-stopped
+
+  # ZooKeeper (可选)
+  zookeeper:
+    image: zookeeper:3.8
+    ports:
+      - "2181:2181"
+    environment:
+      - ZOO_MY_ID=1
+      - ZOO_SERVERS=server.1=zookeeper:2888:3888
+    volumes:
+      - zookeeper_data:/data
+      - zookeeper_logs:/datalog
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # AlertManager 告警
+  alertmanager:
+    image: prom/alertmanager:latest
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Node Exporter (系统监控)
+  node-exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+  # Redis Exporter (Redis 监控)
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis://redis:6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on:
+      - redis
+    networks:
+      - distributed-lock-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  redis_cluster_data:
+  zookeeper_data:
+  zookeeper_logs:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+networks:
+  distributed-lock-network:
+    driver: bridge

@@ -1,0 +1,108 @@
+# Spring Boot 3.x 分布式锁配置示例
+
+server:
+  port: 8080
+
+spring:
+  application:
+    name: distributed-lock-demo
+
+  # 分布式锁配置
+  distributed-lock:
+    # 启用分布式锁 (默认: true)
+    enabled: true
+    
+    # 锁类型: redis 或 zookeeper
+    type: redis
+    
+    # 全局配置
+    default-lease-time: 30s      # 默认租约时间
+    default-wait-time: 10s       # 默认等待时间
+    retry-interval: 100ms        # 重试间隔
+    max-retries: 3               # 最大重试次数
+    
+    # 看门狗配置
+    watchdog-enabled: true                    # 启用看门狗
+    watchdog-renewal-interval: 10s            # 看门狗续约间隔
+    
+    # 监控配置
+    metrics-enabled: true                     # 启用指标收集
+    tracing-enabled: true                     # 启用分布式追踪
+    
+    # AOP切面配置
+    aop:
+      enabled: true                           # 启用AOP切面
+      pointcut-expression: "@annotation(com.mycorp.distributedlock.api.annotation.DistributedLock)"
+      performance-monitoring: true            # 启用性能监控
+      exception-handling: true                # 启用异常处理
+    
+    # Redis配置 (当type=redis时使用)
+    redis:
+      hosts: "localhost:6379"                 # Redis主机列表
+      
+      # 认证配置
+      password: ""                            # Redis密码 (可选)
+      ssl: false                              # 是否启用SSL
+      
+      # TLS证书配置 (当ssl=true时使用)
+      trust-store-path: ""                    # 信任证书路径
+      trust-store-password: ""                # 信任证书密码
+      key-store-path: ""                      # 密钥库路径
+      key-store-password: ""                  # 密钥库密码
+      
+      # 连接池配置
+      pool:
+        max-total: 8                          # 最大连接数
+        max-idle: 8                           # 最大空闲连接数
+        min-idle: 0                           # 最小空闲连接数
+        max-wait: -1ms                        # 最大等待时间 (-1表示无限等待)
+    
+    # ZooKeeper配置 (当type=zookeeper时使用)
+    zookeeper:
+      connect-string: "localhost:2181"       # 连接字符串
+      base-path: "/distributed-locks"        # 锁基础路径
+      
+      # 超时配置
+      session-timeout: 60s                    # 会话超时时间
+      connection-timeout: 15s                 # 连接超时时间
+      
+      # 认证配置
+      auth-enabled: false                     # 是否启用认证
+      auth-scheme: "digest"                   # 认证方案
+      auth-info: ""                           # 认证信息 (格式: username:password)
+      
+      # ACL权限配置
+      acl-enabled: false                      # 是否启用ACL
+      acl:
+        permissions: "ALL"                    # ACL权限
+        scheme: "digest"                      # ACL方案
+        id: ""                                # ACL ID
+
+# Actuator监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,distributed-lock
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# 日志配置
+logging:
+  level:
+    com.mycorp.distributedlock: DEBUG         # 分布式锁日志级别
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
+
+# 应用信息配置
+info:
+  app:
+    name: "Distributed Lock Demo"
+    description: "Spring Boot 3.x 分布式锁示例应用"
+    version: "1.0.0"
+    java-version: "17"

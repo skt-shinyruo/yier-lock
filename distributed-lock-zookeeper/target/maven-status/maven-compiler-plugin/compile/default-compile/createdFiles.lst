@@ -1,6 +1,1 @@
-com/mycorp/distributedlock/zookeeper/ZooKeeperDistributedLock.class
-com/mycorp/distributedlock/zookeeper/ZooKeeperDistributedReadWriteLock$ReadLock.class
-com/mycorp/distributedlock/zookeeper/ZooKeeperDistributedReadWriteLock$WriteLock.class
 com/mycorp/distributedlock/zookeeper/ZooKeeperDistributedLockFactory.class
-com/mycorp/distributedlock/zookeeper/ZooKeeperLockProvider.class
-com/mycorp/distributedlock/zookeeper/ZooKeeperDistributedReadWriteLock.class

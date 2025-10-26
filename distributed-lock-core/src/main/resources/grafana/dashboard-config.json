@@ -1,0 +1,293 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "distributed-lock-dashboard",
+    "title": "分布式锁监控仪表板",
+    "tags": ["distributed-lock", "microservices", "monitoring", "lock-management"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "总体概览",
+        "type": "stat",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 0},
+        "targets": [
+          {
+            "expr": "lock_operations_total",
+            "legendFormat": "总操作数",
+            "refId": "A"
+          },
+          {
+            "expr": "lock_operations_success_total",
+            "legendFormat": "成功操作数",
+            "refId": "B"
+          },
+          {
+            "expr": "lock_concurrency_current",
+            "legendFormat": "当前并发数",
+            "refId": "C"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "red", "value": 80}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "性能指标",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8},
+        "targets": [
+          {
+            "expr": "rate(lock_operations_total[5m])",
+            "legendFormat": "操作速率 (ops/sec)",
+            "refId": "A"
+          },
+          {
+            "expr": "lock_operation_duration_seconds{quantile=\"0.95\"}",
+            "legendFormat": "95分位响应时间 (s)",
+            "refId": "B"
+          },
+          {
+            "expr": "lock_operation_duration_seconds{quantile=\"0.99\"}",
+            "legendFormat": "99分位响应时间 (s)",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {"label": "ops/sec", "min": 0},
+          {"label": "seconds", "min": 0}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "错误率",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+        "targets": [
+          {
+            "expr": "rate(lock_operations_failed_total[5m]) / rate(lock_operations_total[5m]) * 100",
+            "legendFormat": "错误率 (%)",
+            "refId": "A"
+          },
+          {
+            "expr": "lock_operations_failed_total",
+            "legendFormat": "错误总数",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {"label": "percentage", "min": 0, "max": 100},
+          {"label": "count", "min": 0}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "并发数",
+        "type": "graph",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "targets": [
+          {
+            "expr": "lock_concurrency_current",
+            "legendFormat": "当前并发数",
+            "refId": "A"
+          },
+          {
+            "expr": "lock_concurrency_peak",
+            "legendFormat": "峰值并发数",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "锁级指标",
+        "type": "table",
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+        "targets": [
+          {
+            "expr": "lock_acquisition_count",
+            "legendFormat": "获取次数",
+            "refId": "A"
+          },
+          {
+            "expr": "lock_hold_time_seconds",
+            "legendFormat": "平均持有时间 (s)",
+            "refId": "B"
+          },
+          {
+            "expr": "lock_contention_rate",
+            "legendFormat": "竞争率",
+            "refId": "C"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {}
+            }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "健康状态",
+        "type": "stat",
+        "gridPos": {"h": 4, "w": 12, "x": 0, "y": 32},
+        "targets": [
+          {
+            "expr": "lock_health_overall_status",
+            "legendFormat": "整体健康状态",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "thresholds"},
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 0.5},
+                {"color": "green", "value": 1}
+              ]
+            },
+            "mappings": [
+              {"options": {"0": {"text": "不健康"}, "1": {"text": "健康"}}, "type": "value"}
+            ]
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "告警统计",
+        "type": "graph",
+        "gridPos": {"h": 4, "w": 12, "x": 12, "y": 32},
+        "targets": [
+          {
+            "expr": "lock_alerts_total",
+            "legendFormat": "告警总数",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(lock_alerts_triggered_total[5m])",
+            "legendFormat": "告警触发率",
+            "refId": "B"
+          }
+        ]
+      }
+    ],
+    "time": {"from": "now-1h", "to": "now"},
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+          "hide": 0,
+          "includeAll": false,
+          "label": "Data Source",
+          "multi": false,
+          "name": "datasource",
+          "options": [],
+          "query": "prometheus",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "type": "datasource"
+        },
+        {
+          "current": {"selected": false, "text": ["All"]},
+          "datasource": "${datasource}",
+          "definition": "label_values(lock_operations_total, application)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Application",
+          "multi": true,
+          "name": "application",
+          "options": [],
+          "query": "label_values(lock_operations_total, application)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        },
+        {
+          "current": {"selected": false, "text": ["All"]},
+          "datasource": "${datasource}",
+          "definition": "label_values(lock_operations_total{application=~\"$application\"}, lock_name)",
+          "hide": 0,
+          "includeAll": true,
+          "label": "Lock Name",
+          "multi": true,
+          "name": "lock_name",
+          "options": [],
+          "query": "label_values(lock_operations_total{application=~\"$application\"}, lock_name)",
+          "refresh": 1,
+          "regex": "",
+          "skipUrlSync": false,
+          "sort": 1,
+          "type": "query"
+        }
+      ]
+    },
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": "${datasource}",
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        },
+        {
+          "datasource": "${datasource}",
+          "enable": true,
+          "expr": "increase(lock_alerts_triggered_total[1m]) > 0",
+          "iconColor": "red",
+          "name": "告警事件",
+          "titleFormat": "分布式锁告警",
+          "textFormat": "告警触发"
+        },
+        {
+          "datasource": "${datasource}",
+          "enable": true,
+          "expr": "changes(lock_health_overall_status[1m]) > 0",
+          "iconColor": "yellow",
+          "name": "健康状态变化",
+          "titleFormat": "健康状态变更",
+          "textFormat": "系统健康状态发生变化"
+        }
+      ]
+    },
+    "refresh": "30s",
+    "schemaVersion": 27,
+    "version": 1,
+    "links": [
+      {
+        "asDropdown": false,
+        "icon": "external link",
+        "includeVars": false,
+        "keepTime": false,
+        "tags": [],
+        "targetBlank": false,
+        "title": "Prometheus",
+        "tooltip": "",
+        "type": "link",
+        "url": "/explore?left=%5B%22now-1h%22,%22now%22,%22Prometheus%22,%7B%22expr%22:%22rate(lock_operations_total%5B5m%5D)%22%7D%5D"
+      }
+    ]
+  }
+}

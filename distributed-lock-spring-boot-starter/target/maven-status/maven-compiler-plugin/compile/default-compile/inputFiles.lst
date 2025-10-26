@@ -1,4 +1,8 @@
-/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/SpringDistributedLockFactory.java
+/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/aop/DistributedLockAspect.java
+/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/health/DistributedLockHealthStatus.java
+/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/actuator/DistributedLockHealthIndicator.java
 /home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/config/DistributedLockAutoConfiguration.java
 /home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/config/DistributedLockProperties.java
 /home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/config/EnableDistributedLock.java
+/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/SpringDistributedLockFactory.java
+/home/feng/code/java/yier-lock/distributed-lock-spring-boot-starter/src/main/java/com/mycorp/distributedlock/springboot/health/DistributedLockHealthChecker.java

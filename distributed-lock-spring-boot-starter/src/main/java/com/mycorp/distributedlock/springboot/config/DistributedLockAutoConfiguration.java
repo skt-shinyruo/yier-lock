@@ -1,23 +1,16 @@
 package com.mycorp.distributedlock.springboot.config;
 
-import com.mycorp.distributedlock.api.DistributedLockFactory;
+import com.mycorp.distributedlock.core.observability.*;
 import com.mycorp.distributedlock.api.LockProvider;
-import com.mycorp.distributedlock.core.config.LockConfiguration;
-import com.mycorp.distributedlock.core.util.LockKeyUtils;
+import com.mycorp.distributedlock.api.DistributedLockFactory;
 import com.mycorp.distributedlock.springboot.SpringDistributedLockFactory;
-import com.typesafe.config.Config;
-import com.typesafe.config.ConfigFactory;
-import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
+import com.mycorp.distributedlock.springboot.actuator.DistributedLockHealthIndicator;
+import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
+
 import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.api.OpenTelemetry;
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.curator.framework.CuratorFrameworkFactory;
-import org.apache.curator.retry.ExponentialBackoffRetry;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.aop.config.AopConfigUtils;
-import org.springframework.beans.factory.annotation.Autowired;
+
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -25,205 +18,339 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Import;
-import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.EnableAspectJAutoProxy;
 
-import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Optional;
+import javax.management.MBeanServer;
+import java.lang.management.ManagementFactory;
 
 /**
- * 分布式锁 Spring Boot 自动配置类。
- * 提供 SpringDistributedLockFactory Bean 和相关配置。
+ * 分布式锁自动配置
+ * 集成监控和指标收集功能的Spring Boot自动配置
  */
 @Configuration
-@ConditionalOnProperty(name = "spring.distributed-lock.enabled", matchIfMissing = true)
+@ConditionalOnClass({DistributedLockFactory.class, MeterRegistry.class})
 @EnableConfigurationProperties(DistributedLockProperties.class)
-
-@Import({LockConfiguration.class})  // 导入 core 配置，但实际 LockConfiguration 是 POJO
+@EnableAspectJAutoProxy
 public class DistributedLockAutoConfiguration {
 
-    private static final Logger logger = LoggerFactory.getLogger(DistributedLockAutoConfiguration.class);
-
-    @Autowired
-    private DistributedLockProperties properties;
-
-    @Autowired(required = false)
-    private Optional<MeterRegistry> meterRegistry = Optional.empty();
-
-    @Autowired(required = false)
-    private Optional<OpenTelemetry> openTelemetry = Optional.empty();
-
-    @Autowired
-    private org.springframework.core.env.Environment environment;
-
     /**
-     * 构建统一的 LockConfiguration。
-     */
-    private LockConfiguration buildLockConfiguration() {
-        return new LockConfiguration(environment);
-    }
-
-    private String formatDuration(Duration duration) {
-        long seconds = duration.getSeconds();
-        long nanos = duration.getNano();
-        if (nanos > 0) {
-            return seconds + "." + (nanos / 100_000) + "s";
-        }
-        return seconds + "s";
-    }
-
-    /**
-     * 创建 RedisLockProvider Bean（仅当 type=redis 时）。
+     * 分布式锁配置Bean
      */
     @Bean
-    @ConditionalOnClass(name = "com.mycorp.distributedlock.redis.RedisLockProvider")
-    @ConditionalOnProperty(name = "spring.distributed-lock.type", havingValue = "redis")
-    @Primary
-    public LockProvider redisLockProvider() {
-        LockConfiguration lockConfig = buildLockConfiguration();
-        RedisURI redisUri = createRedisUri();
-        RedisClient redisClient = createRedisClient(redisUri);
-        MeterRegistry mr = meterRegistry.orElse(null);
-        OpenTelemetry ot = openTelemetry.orElse(null);
-        return new com.mycorp.distributedlock.redis.RedisLockProvider(redisClient, lockConfig, mr, ot);
-    }
-
-    private RedisURI createRedisUri() {
-        LockConfiguration lockConfig = buildLockConfiguration();
-        String[] hosts = lockConfig.getRedisHosts().split(",");
-        RedisURI.Builder builder;
-
-        if (hosts.length == 1) {
-            String hostPort = hosts[0].trim();
-            if (lockConfig.isRedisSslEnabled()) {
-                builder = RedisURI.Builder.redis(hostPort.split(":")[0],
-                    Integer.parseInt(hostPort.split(":")[1]));
-                builder.withSsl(true);
-            } else {
-                builder = RedisURI.Builder.redis(hostPort);
-            }
-        } else {
-            RedisURI[] redisURIs = new RedisURI[hosts.length];
-            for (int i = 0; i < hosts.length; i++) {
-                String hostPort = hosts[i].trim();
-                if (lockConfig.isRedisSslEnabled()) {
-                    redisURIs[i] = RedisURI.Builder.redis(hostPort.split(":")[0],
-                        Integer.parseInt(hostPort.split(":")[1])).withSsl(true).build();
-                } else {
-                    redisURIs[i] = RedisURI.create("redis://" + hostPort);
-                }
-            }
-            builder = RedisURI.Builder.cluster(redisURIs[0]);
-            for (int i = 1; i < redisURIs.length; i++) {
-                builder.withHost(redisURIs[i].getHost(), redisURIs[i].getPort());
-            }
-        }
-
-        // 添加认证信息
-        String password = lockConfig.getRedisPassword();
-        if (password != null && !password.isEmpty()) {
-            builder.withPassword(password);
-        }
-
-        return builder.build();
-    }
-
-    private RedisClient createRedisClient(RedisURI redisUri) {
-        RedisClient client = RedisClient.create(redisUri);
-
-        // 配置连接池支持
-        // Lettuce 默认启用连接池，我们可以通过 ClientResources 进行更细粒度的配置
-        io.lettuce.core.resource.ClientResources.Builder resourcesBuilder =
-            io.lettuce.core.resource.DefaultClientResources.builder();
-
-        // 配置线程池大小（影响异步操作性能）
-        if (properties.getRedis().getPool().getMaxTotal() > 0) {
-            resourcesBuilder.ioThreadPoolSize(properties.getRedis().getPool().getMaxTotal());
-            resourcesBuilder.computationThreadPoolSize(Runtime.getRuntime().availableProcessors() * 2);
-        }
-
-        client.setResources(resourcesBuilder.build());
-
-        logger.info("Redis client created with enhanced connection pool configuration: maxTotal={}, maxIdle={}",
-            properties.getRedis().getPool().getMaxTotal(), properties.getRedis().getPool().getMaxIdle());
-
-        return client;
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(name = "distributed.lock.enabled", havingValue = "true", matchIfMissing = true)
+    public DistributedLockFactory distributedLockFactory(
+            DistributedLockProperties properties,
+            LockProvider lockProvider) {
+        return new SpringDistributedLockFactory(properties, lockProvider);
     }
 
     /**
-     * 创建 ZooKeeperLockProvider Bean（仅当 type=zookeeper 时）。
+     * 分布式锁健康检查指示器
      */
     @Bean
-    @ConditionalOnClass(name = "com.mycorp.distributedlock.zookeeper.ZooKeeperLockProvider")
-    @ConditionalOnProperty(name = "spring.distributed-lock.type", havingValue = "zookeeper")
-    @Primary
-    public LockProvider zookeeperLockProvider() {
-        LockConfiguration lockConfig = buildLockConfiguration();
-        CuratorFramework curator = createCuratorFramework();
-        MeterRegistry mr = meterRegistry.orElse(null);
-        OpenTelemetry ot = openTelemetry.orElse(null);
-        return new com.mycorp.distributedlock.zookeeper.ZooKeeperLockProvider(curator, lockConfig, mr, ot);
+    @ConditionalOnBean(DistributedLockFactory.class)
+    @ConditionalOnClass(HealthIndicator.class)
+    public HealthIndicator distributedLockHealthIndicator(DistributedLockFactory lockFactory) {
+        return new DistributedLockHealthIndicator(lockFactory);
     }
 
-    private CuratorFramework createCuratorFramework() {
-        String connectString = properties.getZookeeper().getConnectString();
+    /**
+     * 分布式锁切面
+     */
+    @Bean
+    @ConditionalOnProperty(name = "distributed.lock.aspect.enabled", havingValue = "true", matchIfMissing = true)
+    public DistributedLockAspect distributedLockAspect(DistributedLockFactory lockFactory) {
+        return new DistributedLockAspect(lockFactory);
+    }
 
-        CuratorFrameworkFactory.Builder builder = CuratorFrameworkFactory.builder()
-                .connectString(connectString)
-                .sessionTimeoutMs((int) properties.getZookeeper().getSessionTimeout().toMillis())
-                .connectionTimeoutMs((int) properties.getZookeeper().getConnectionTimeout().toMillis())
-                .retryPolicy(new ExponentialBackoffRetry(
-                    (int) properties.getRetryInterval().toMillis(),
-                    properties.getMaxRetries()));
+    // ===== 监控和指标收集相关配置 =====
 
-        // 添加认证
-        if (properties.getZookeeper().isAuthEnabled() &&
-            properties.getZookeeper().getAuthInfo() != null) {
-            String[] authParts = properties.getZookeeper().getAuthInfo().split(":");
-            if (authParts.length == 2) {
-                builder.authorization(properties.getZookeeper().getAuthScheme(),
-                    (authParts[0] + ":" + authParts[1]).getBytes());
+    /**
+     * 指标配置管理
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(name = "distributed.lock.metrics.enabled", havingValue = "true", matchIfMissing = true)
+    public MetricsConfiguration metricsConfiguration(DistributedLockProperties properties) {
+        MetricsConfiguration config = new MetricsConfiguration();
+        
+        // 从Spring配置加载指标配置
+        DistributedLockProperties.MetricsProperties metricsProps = properties.getMetrics();
+        
+        // 应用配置
+        if (metricsProps != null) {
+            MetricsConfiguration.MetricsConfig configBean = config.getConfig();
+            configBean.setMetricsEnabled(metricsProps.isEnabled());
+            configBean.setTracingEnabled(metricsProps.isTracingEnabled());
+            configBean.setMicrometerEnabled(metricsProps.isMicrometerEnabled());
+            configBean.setPrometheusEnabled(metricsProps.isPrometheusEnabled());
+            configBean.setJmxEnabled(metricsProps.isJmxEnabled());
+            configBean.setMonitoringEnabled(metricsProps.isMonitoringEnabled());
+            configBean.setAlertingEnabled(metricsProps.isAlertingEnabled());
+            configBean.setHealthCheckEnabled(metricsProps.isHealthCheckEnabled());
+            
+            if (metricsProps.getRetentionDuration() != null) {
+                configBean.setMetricsRetentionDuration(metricsProps.getRetentionDuration());
+            }
+            if (metricsProps.getCollectionInterval() != null) {
+                configBean.setMetricsCollectionInterval(metricsProps.getCollectionInterval());
+            }
+            if (metricsProps.getPrometheusPort() != null) {
+                configBean.setPrometheusHttpPort(metricsProps.getPrometheusPort());
             }
         }
+        
+        return config;
+    }
 
-        // 创建并启动 CuratorFramework
-        CuratorFramework curator = builder.build();
-        curator.start();
+    /**
+     * 性能指标实现
+     */
+    @Bean
+    @ConditionalOnBean(MetricsConfiguration.class)
+    @ConditionalOnMissingBean
+    public LockPerformanceMetrics lockPerformanceMetrics(
+            MetricsConfiguration config,
+            MeterRegistry meterRegistry) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        
+        return new LockPerformanceMetrics(
+            meterRegistry,
+            null, // OpenTelemetry bean could be injected here
+            metricsConfig.isMetricsEnabled(),
+            metricsConfig.isTracingEnabled()
+        );
+    }
 
-        try {
-            curator.blockUntilConnected((int) properties.getZookeeper().getConnectionTimeout().toMillis(),
-                java.util.concurrent.TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            logger.warn("Interrupted while waiting for ZooKeeper connection", e);
+    /**
+     * 指标收集器
+     */
+    @Bean
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public LockMetricsCollector lockMetricsCollector(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        
+        return new LockMetricsCollector(
+            null, // MeterRegistry can be injected
+            null, // OpenTelemetry can be injected
+            metricsConfig.isMetricsEnabled()
+        );
+    }
+
+    /**
+     * Micrometer适配器
+     */
+    @Bean
+    @ConditionalOnBean(MeterRegistry.class)
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public MicrometerMetricsAdapter micrometerMetricsAdapter(
+            MeterRegistry meterRegistry,
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        
+        return new MicrometerMetricsAdapter(
+            meterRegistry,
+            metricsConfig.isMicrometerEnabled(),
+            metricsConfig.getMicrometerApplicationName(),
+            metricsConfig.getMicrometerInstanceId()
+        );
+    }
+
+    /**
+     * Prometheus指标导出器
+     */
+    @Bean
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public PrometheusMetricsExporter prometheusMetricsExporter(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        PrometheusMetricsExporter.PrometheusExporterConfig exporterConfig = 
+            new PrometheusMetricsExporter.PrometheusExporterConfig();
+        
+        exporterConfig.setPrometheusEnabled(metricsConfig.isPrometheusEnabled());
+        exporterConfig.setApplicationName(metricsConfig.getMicrometerApplicationName());
+        exporterConfig.setInstanceId(metricsConfig.getMicrometerInstanceId());
+        
+        if (metricsConfig.getPrometheusPushGatewayUrl() != null) {
+            exporterConfig.setPushGatewayUrl(metricsConfig.getPrometheusPushGatewayUrl());
+            exporterConfig.setPushGatewayJob(metricsConfig.getPrometheusPushGatewayJob());
+            exporterConfig.setAutoPushEnabled(metricsConfig.isPrometheusAutoPush());
         }
-
-        return curator;
+        
+        return new PrometheusMetricsExporter(
+            performanceMetrics,
+            null, // MicrometerMetricsAdapter can be injected
+            null, // LockMetricsCollector can be injected
+            exporterConfig
+        );
     }
 
     /**
-     * 创建 SpringDistributedLockFactory Bean。
-     * 委托到注入的 LockProvider。
+     * 监控服务
      */
     @Bean
-    @ConditionalOnBean(LockProvider.class)
-    @ConditionalOnMissingBean(DistributedLockFactory.class)
-    public SpringDistributedLockFactory springDistributedLockFactory(LockProvider delegate) {
-        MeterRegistry mr = meterRegistry.orElse(null);
-        OpenTelemetry ot = openTelemetry.orElse(null);
-
-        logger.info("SpringDistributedLockFactory created with provider: {}", delegate.getClass().getSimpleName());
-        return new SpringDistributedLockFactory(delegate, mr, ot);
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public LockMonitoringService lockMonitoringService(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        LockMonitoringService.MonitoringConfig monitoringConfig = 
+            new LockMonitoringService.MonitoringConfig();
+        
+        monitoringConfig.setMainMonitoringInterval(metricsConfig.getMonitoringInterval());
+        monitoringConfig.setThreadPoolSize(metricsConfig.getMonitoringThreadPoolSize());
+        
+        return new LockMonitoringService(performanceMetrics, null, monitoringConfig);
     }
 
     /**
-     * 启用 AspectJ AOP 支持，为后续 AOP 切面准备。
+     * 告警服务
      */
     @Bean
-    public static AopConfigUtils enableAspectJAutoProxy() {
-        AopConfigUtils.forceAutoProxyCreatorAdviceClasses();
-        return null;  // 不返回 Bean
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public LockAlertingService lockAlertingService(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        LockAlertingService.AlertingConfig alertingConfig = 
+            new LockAlertingService.AlertingConfig();
+        
+        alertingConfig.setCheckInterval(metricsConfig.getAlertingCheckInterval());
+        alertingConfig.setLogNotificationEnabled(metricsConfig.isAlertingLogEnabled());
+        alertingConfig.setMicrometerNotificationEnabled(metricsConfig.isAlertingMicrometerEnabled());
+        
+        return new LockAlertingService(performanceMetrics, null, alertingConfig);
+    }
+
+    /**
+     * JMX管理器
+     */
+    @Bean
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(name = "distributed.lock.metrics.jmx.enabled", havingValue = "true", matchIfMissing = true)
+    public LockJMXManager lockJmxManager(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        LockJMXManager.JMXConfig jmxConfig = new LockJMXManager.JMXConfig();
+        
+        jmxConfig.setMBeanDomainName(metricsConfig.getJmxDomainName());
+        jmxConfig.setEnableRemoteAccess(metricsConfig.isJmxRemoteAccess());
+        jmxConfig.setRmiRegistryPort(metricsConfig.getJmxRmiRegistryPort());
+        jmxConfig.setRmiServerPort(metricsConfig.getJmxRmiServerPort());
+        
+        return new LockJMXManager(performanceMetrics, null, jmxConfig);
+    }
+
+    /**
+     * 健康指标组件
+     */
+    @Bean
+    @ConditionalOnBean(LockPerformanceMetrics.class)
+    @ConditionalOnMissingBean
+    public LockHealthMetrics lockHealthMetrics(
+            LockPerformanceMetrics performanceMetrics,
+            MetricsConfiguration config) {
+        
+        MetricsConfiguration.MetricsConfig metricsConfig = config.getConfig();
+        LockHealthMetrics.HealthConfig healthConfig = new LockHealthMetrics.HealthConfig();
+        
+        healthConfig.setHealthCheckInterval(metricsConfig.getHealthCheckInterval());
+        healthConfig.setHealthCheckThreadPoolSize(metricsConfig.getHealthCheckThreadPoolSize());
+        healthConfig.setEnableDetailedHealthChecks(metricsConfig.isHealthCheckDetailed());
+        
+        return new LockHealthMetrics(performanceMetrics, null, healthConfig);
+    }
+
+    /**
+     * 告警规则管理
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public AlertingRules alertingRules(MetricsConfiguration config) {
+        AlertingRules.RulesConfig rulesConfig = new AlertingRules.RulesConfig();
+        return new AlertingRules(rulesConfig);
+    }
+
+    /**
+     * Grafana仪表板配置
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    public GrafanaDashboardConfig grafanaDashboardConfig() {
+        return new GrafanaDashboardConfig();
+    }
+
+    // ===== 启动时初始化逻辑 =====
+
+    /**
+     * 启动时初始化监控组件
+     */
+    @Bean
+    @ConditionalOnBean({
+        LockPerformanceMetrics.class,
+        PrometheusMetricsExporter.class,
+        LockJMXManager.class,
+        LockHealthMetrics.class
+    })
+    public ObservabilityInitializer observabilityInitializer(
+            LockPerformanceMetrics performanceMetrics,
+            PrometheusMetricsExporter prometheusExporter,
+            LockJMXManager jmxManager,
+            LockHealthMetrics healthMetrics,
+            MetricsConfiguration config) {
+        
+        return new ObservabilityInitializer(
+            performanceMetrics,
+            prometheusExporter,
+            jmxManager,
+            healthMetrics,
+            config
+        );
+    }
+
+    /**
+     * 监控和指标收集初始化器
+     */
+    public static class ObservabilityInitializer {
+        
+        private final LockPerformanceMetrics performanceMetrics;
+        private final PrometheusMetricsExporter prometheusExporter;
+        private final LockJMXManager jmxManager;
+        private final LockHealthMetrics healthMetrics;
+        private final MetricsConfiguration config;
+        
+        public ObservabilityInitializer(
+                LockPerformanceMetrics performanceMetrics,
+                PrometheusMetricsExporter prometheusExporter,
+                LockJMXManager jmxManager,
+                LockHealthMetrics healthMetrics,
+                MetricsConfiguration config) {
+            this.performanceMetrics = performanceMetrics;
+            this.prometheusExporter = prometheusExporter;
+            this.jmxManager = jmxManager;
+            this.healthMetrics = healthMetrics;
+            this.config = config;
+        }
+        
+        // 可以在这里添加启动时的初始化逻辑
     }
 }

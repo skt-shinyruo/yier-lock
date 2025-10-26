@@ -1,157 +1,184 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.core.config.LockConfiguration;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
-import io.lettuce.core.RedisURI;
+import io.lettuce.core.SocketOptions;
 import io.lettuce.core.api.StatefulRedisConnection;
-import io.lettuce.core.cluster.RedisClusterClient;
-import io.lettuce.core.cluster.api.StatefulRedisClusterConnection;
-import io.lettuce.core.resource.ClientResources;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.opentelemetry.api.OpenTelemetry;
+import io.lettuce.core.api.sync.RedisCommands;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.StringJoiner;
 
 /**
- * Factory for creating Redis connections with cluster and sentinel support.
- * Based on Redisson's multi-mode Redis connection handling.
+ * Redis集群工厂 - 简化版本
+ * 支持单机、集群、哨兵模式
  */
 public class RedisClusterFactory {
-
+    
     private static final Logger logger = LoggerFactory.getLogger(RedisClusterFactory.class);
-
+    
     public enum RedisMode {
-        SINGLE,
-        CLUSTER,
-        SENTINEL
+        STANDALONE,    // 单机模式
+        CLUSTER,       // 集群模式  
+        SENTINEL       // 哨兵模式
     }
-
+    
     private final LockConfiguration configuration;
-    private final MeterRegistry meterRegistry;
-    private final OpenTelemetry openTelemetry;
-    RedisMode mode;
-
-    public RedisClusterFactory(LockConfiguration configuration,
-                              MeterRegistry meterRegistry,
-                              OpenTelemetry openTelemetry) {
+    private final RedisMode mode;
+    private final List<RedisClient> clients = new ArrayList<>();
+    private final List<StatefulRedisConnection<String, String>> connections = new ArrayList<>();
+    
+    public RedisClusterFactory(LockConfiguration configuration) {
         this.configuration = configuration;
-        this.meterRegistry = meterRegistry;
-        this.openTelemetry = openTelemetry;
-        this.mode = detectRedisMode();
+        this.mode = detectMode();
+        initializeConnections();
+        
+        logger.info("Redis cluster factory initialized in {} mode", mode);
     }
-
-    /**
-     * Create a Redis distributed lock factory with appropriate connection mode.
-     */
-    public RedisDistributedLockFactory createLockFactory() {
-        switch (mode) {
-            case CLUSTER:
-                return createClusterLockFactory();
-            case SENTINEL:
-                return createSentinelLockFactory();
-            case SINGLE:
-            default:
-                return createSingleLockFactory();
+    
+    public RedisCommands<String, String> getCommands() {
+        if (connections.isEmpty()) {
+            throw new IllegalStateException("No Redis connections available");
         }
+        return connections.get(0).sync();
     }
-
-    private RedisMode detectRedisMode() {
-        String hosts = configuration.getRedisHosts();
-        if (hosts == null || hosts.trim().isEmpty()) {
-            hosts = "localhost:6379";
-        }
-
-        // Simple heuristic: if multiple hosts with same port, likely cluster
-        // if multiple hosts with different ports, likely sentinel
-        String[] hostPorts = hosts.split(",");
-        if (hostPorts.length > 1) {
-            boolean samePort = Arrays.stream(hostPorts)
-                    .map(hp -> hp.split(":"))
-                    .filter(parts -> parts.length == 2)
-                    .map(parts -> parts[1])
-                    .collect(Collectors.toSet())
-                    .size() == 1;
-
-            if (samePort) {
-                logger.info("Detected Redis Cluster mode with hosts: {}", hosts);
-                return RedisMode.CLUSTER;
-            } else {
-                logger.info("Detected Redis Sentinel mode with hosts: {}", hosts);
-                return RedisMode.SENTINEL;
-            }
-        }
-
-        logger.info("Using single Redis instance mode");
-        return RedisMode.SINGLE;
+    
+    public List<RedisCommands<String, String>> getAllCommands() {
+        return connections.stream()
+            .map(StatefulRedisConnection::sync)
+            .collect(java.util.stream.Collectors.toList());
     }
-
-    private RedisDistributedLockFactory createSingleLockFactory() {
-        ClientResources clientResources = ClientResources.builder()
-                .ioThreadPoolSize(Runtime.getRuntime().availableProcessors() * 2)
-                .computationThreadPoolSize(Runtime.getRuntime().availableProcessors())
-                .build();
-
-        RedisClient redisClient = RedisClient.create(clientResources, configuration.getRedisHosts());
-        return RedisDistributedLockFactory.createWithCustomResources(configuration, meterRegistry, openTelemetry);
-    }
-
-    private RedisDistributedLockFactory createClusterLockFactory() {
-        String[] nodes = configuration.getRedisHosts().split(",");
-        List<RedisURI> redisURIs = Arrays.stream(nodes)
-                .map(node -> {
-                    String[] parts = node.split(":");
-                    return RedisURI.builder()
-                            .withHost(parts[0])
-                            .withPort(Integer.parseInt(parts[1]))
-                            .build();
-                })
-                .collect(Collectors.toList());
-
-        ClientResources clientResources = ClientResources.builder()
-                .ioThreadPoolSize(Runtime.getRuntime().availableProcessors() * 2)
-                .computationThreadPoolSize(Runtime.getRuntime().availableProcessors())
-                .build();
-
-        RedisClusterClient clusterClient = RedisClusterClient.create(clientResources, redisURIs);
-
-        // For cluster mode, we need to create a different factory that can handle cluster connections
-        // This is a simplified implementation - in production you'd want full cluster support
-        try {
-            // Use the first node as the primary connection for compatibility
-            RedisURI primaryUri = redisURIs.get(0);
-            RedisClient redisClient = RedisClient.create(clientResources, primaryUri);
-            return new RedisDistributedLockFactory(redisClient, configuration, meterRegistry, openTelemetry);
-        } catch (Exception e) {
-            logger.error("Failed to create cluster connection", e);
-            throw new RuntimeException("Failed to create Redis cluster connection", e);
-        }
-    }
-
-    private RedisDistributedLockFactory createSentinelLockFactory() {
-        // For sentinel, we need master name and sentinel hosts
-        // This is a simplified implementation
-        String sentinelMaster = System.getProperty("redis.sentinel.master", "mymaster");
-        String sentinelHosts = configuration.getRedisHosts();
-
-        ClientResources clientResources = ClientResources.builder()
-                .ioThreadPoolSize(Runtime.getRuntime().availableProcessors() * 2)
-                .computationThreadPoolSize(Runtime.getRuntime().availableProcessors())
-                .build();
-
-        RedisURI.Builder builder = RedisURI.builder()
-                .withSentinel(sentinelHosts.split(",")[0].split(":")[0],
-                             Integer.parseInt(sentinelHosts.split(",")[0].split(":")[1]))
-                .withSentinelMasterId(sentinelMaster);
-
-        RedisClient redisClient = RedisClient.create(clientResources, builder.build());
-        return new RedisDistributedLockFactory(redisClient, configuration, meterRegistry, openTelemetry);
-    }
-
+    
     public RedisMode getMode() {
         return mode;
+    }
+    
+    public void shutdown() {
+        logger.info("Shutting down Redis cluster factory");
+        
+        connections.forEach(connection -> {
+            try {
+                connection.close();
+            } catch (Exception e) {
+                logger.error("Error closing Redis connection", e);
+            }
+        });
+        connections.clear();
+        
+        clients.forEach(client -> {
+            try {
+                client.shutdown();
+            } catch (Exception e) {
+                logger.error("Error shutting down Redis client", e);
+            }
+        });
+        clients.clear();
+    }
+    
+    // ============ 私有方法 ============
+    
+    private RedisMode detectMode() {
+        String hosts = configuration.getRedisHosts();
+        
+        // 简单检测：检查是否有哨兵或集群标记
+        if (hosts.contains("sentinel")) {
+            return RedisMode.SENTINEL;
+        }
+        
+        if (hosts.contains(",")) {
+            // 多个主机可能是集群
+            String[] hostParts = hosts.split(",");
+            if (hostParts.length > 1) {
+                return RedisMode.CLUSTER;
+            }
+        }
+        
+        return RedisMode.STANDALONE;
+    }
+    
+    private void initializeConnections() {
+        String hosts = configuration.getRedisHosts();
+        String password = configuration.getRedisPassword();
+        boolean ssl = configuration.isRedisSslEnabled();
+        int database = configuration.getRedisDatabase();
+        
+        List<String> hostList = parseHosts(hosts);
+        
+        for (String host : hostList) {
+            try {
+                RedisClient client = createRedisClient(host, password, ssl, database);
+                clients.add(client);
+                
+                StatefulRedisConnection<String, String> connection = client.connect();
+                connections.add(connection);
+                
+                logger.info("Connected to Redis: {}", host);
+            } catch (Exception e) {
+                logger.error("Failed to connect to Redis: {}", host, e);
+                // 继续尝试其他连接
+            }
+        }
+        
+        if (connections.isEmpty()) {
+            throw new RuntimeException("Failed to establish any Redis connections");
+        }
+    }
+    
+    private List<String> parseHosts(String hosts) {
+        List<String> hostList = new ArrayList<>();
+        
+        if (hosts.contains(",")) {
+            String[] parts = hosts.split(",");
+            for (String part : parts) {
+                String trimmed = part.trim();
+                if (!trimmed.isEmpty()) {
+                    hostList.add(trimmed);
+                }
+            }
+        } else {
+            hostList.add(hosts.trim());
+        }
+        
+        return hostList;
+    }
+    
+    private RedisClient createRedisClient(String host, String password, boolean ssl, int database) {
+        StringBuilder uriBuilder = new StringBuilder("redis://");
+        
+        if (password != null && !password.isEmpty()) {
+            uriBuilder.append(":").append(password).append("@");
+        }
+        
+        uriBuilder.append(host);
+        
+        // 添加数据库
+        if (database > 0) {
+            uriBuilder.append("/").append(database);
+        }
+        
+        // 添加SSL
+        if (ssl) {
+            uriBuilder.append("?ssl=true");
+        }
+        
+        RedisClient client = RedisClient.create(uriBuilder.toString());
+        
+        // 配置客户端选项
+        SocketOptions socketOptions = SocketOptions.builder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
+        
+        ClientOptions clientOptions = ClientOptions.builder()
+            .socketOptions(socketOptions)
+            .build();
+        
+        client.setOptions(clientOptions);
+        
+        return client;
     }
 }

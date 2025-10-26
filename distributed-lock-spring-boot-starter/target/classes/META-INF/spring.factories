@@ -1,1 +1,7 @@
-org.springframework.boot.autoconfigure.EnableAutoConfiguration=com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration
+# Spring Boot 3.x 分布式锁自动配置
+org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
+com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration
+
+# 健康检查自动配置
+org.springframework.boot.actuate.health.HealthIndicator=\
+com.mycorp.distributedlock.springboot.actuator.DistributedLockHealthIndicator
