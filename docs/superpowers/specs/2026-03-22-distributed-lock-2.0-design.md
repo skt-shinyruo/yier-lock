@@ -271,7 +271,7 @@ No module may depend back into Spring, Redis, or ZooKeeper from `api` or `core`.
 Recommended public API shape:
 
 ```java
-public interface LockManager extends AutoCloseable {
+public interface LockManager {
     MutexLock mutex(String key);
     ReadWriteLock readWrite(String key);
 }
@@ -306,6 +306,17 @@ Public API must not include:
 
 The public API is intentionally small so every supported backend can implement it honestly.
 
+### Public API Timing Rules
+
+Public acquisition semantics are fixed as follows:
+
+- `lock()` waits indefinitely until the lock is acquired or the thread is interrupted
+- `tryLock(Duration waitTime)` is the only public timed acquisition API
+- backend configuration may tune client/network/operation timeouts, but may not redefine the meaning of `lock()` or `tryLock(Duration)`
+- Spring annotation defaults may supply a wait duration only for annotation-driven acquisition when the annotation omits one
+
+This prevents backend configuration from silently changing public locking semantics.
+
 ### Kernel Lock Semantics
 
 2.0 kernel semantics are fixed as follows:
@@ -318,10 +329,22 @@ The public API is intentionally small so every supported backend can implement i
 - ownership is thread-affine in the kernel contract
 - read/write upgrade is not part of the kernel API
 - read/write downgrade is not part of the kernel API
+- if a thread already holds a read lock for key `K`, an attempt to acquire the write lock for key `K` through the kernel API must fail fast rather than block or deadlock
+- if a thread already holds a write lock for key `K`, an attempt to acquire the read lock for key `K` through the kernel API must fail fast rather than implicitly downgrade
 - fairness is not part of the kernel contract
 - public API does not expose lease or renewal semantics
 
 This keeps the external model close to Java lock expectations while still allowing backend-specific internal implementations.
+
+### AutoCloseable Semantics
+
+2.0 close semantics are fixed as follows:
+
+- `MutexLock.close()` releases one hold if and only if the current thread owns the lock
+- `MutexLock.close()` is a no-op when the current thread does not own the lock
+- runtime lifecycle is owned by `LockRuntime`, not by `LockManager`
+
+This allows safe try-with-resources usage without creating a second lifecycle authority for the runtime.
 
 ## Core Domain and Ports
 
@@ -486,16 +509,25 @@ distributed:
     redis:
       uri: redis://localhost:6379
       key-prefix: dlock:
-      acquire-timeout: 5s
+      operation-timeout: 5s
       lease-time: 30s
     zookeeper:
       connect-string: localhost:2181
       base-path: /distributed-locks
       session-timeout: 30s
-      acquire-timeout: 5s
+      operation-timeout: 5s
 ```
 
 Backend-specific configuration is interpreted only by the owning backend module.
+
+Backend configuration may define adapter-internal settings such as:
+
+- network/client timeout
+- command/operation timeout
+- Redis lease duration
+- ZooKeeper session timeout
+
+Backend configuration may not override the public meaning of `lock()` or `tryLock(Duration)`.
 
 #### Spring integration configuration
 
@@ -512,7 +544,24 @@ distributed:
 
 This configuration is only for Spring integration behavior.
 
+Precedence rules for Spring-driven locking:
+
+1. annotation `waitFor` value, if present
+2. starter annotation default timeout
+3. no further fallback at the Spring layer; if neither is set, acquisition is unbounded and uses `lock()`
+
 ## Spring Boot Integration
+
+### Platform Baseline
+
+The 2.0 starter targets:
+
+- Java 17 minimum
+- Spring Boot 3.x
+- Jakarta-based Spring APIs
+- Boot 3 auto-configuration registration conventions
+
+2.0 must not support both Boot 2 and Boot 3 in the same starter artifact.
 
 ### Starter Responsibilities
 
@@ -608,8 +657,9 @@ Required kernel contract cases:
 - read locks can coexist
 - write lock excludes read and write lock holders
 - runtime shutdown prevents future acquisition
-- read/write upgrade is unsupported at kernel level
-- read/write downgrade is unsupported at kernel level
+- read-to-write acquisition on the same key fails fast for the same thread
+- write-to-read acquisition on the same key fails fast for the same thread
+- `MutexLock.close()` behaves as specified by the kernel close contract
 
 ### Layer 2: Backend Contract Integration
 
