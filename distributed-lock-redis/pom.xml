@@ -72,8 +72,8 @@
             <scope>test</scope>
         </dependency>
         <dependency>
-            <groupId>ch.qos.logback</groupId>
-            <artifactId>logback-classic</artifactId>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-testkit</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
