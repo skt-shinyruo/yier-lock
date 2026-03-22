@@ -306,6 +306,18 @@ Public API must not include:
 
 The public API is intentionally small so every supported backend can implement it honestly.
 
+### Public Error Model
+
+2.0 public error handling is intentionally narrow:
+
+- invalid lock key input uses `IllegalArgumentException`
+- unlocking without ownership uses `IllegalMonitorStateException`
+- interruption during acquisition uses `InterruptedException`
+- backend/client/protocol failures during lock operations use a single public unchecked exception: `LockBackendException`
+- invalid runtime/backend selection or invalid configuration at startup uses a single public unchecked exception: `LockConfigurationException`
+
+Kernel and runtime code should prefer these standard or explicitly defined exceptions instead of introducing feature-specific exception trees.
+
 ### Public API Timing Rules
 
 Public acquisition semantics are fixed as follows:
@@ -324,6 +336,7 @@ This prevents backend configuration from silently changing public locking semant
 - mutex locks are reentrant for the same thread within the same `LockManager`
 - read locks are reentrant for the same thread within the same `LockManager`
 - write locks are reentrant for the same thread within the same `LockManager`
+- reentrancy and ownership are defined by logical lock key within a `LockManager`, not by Java object identity of the returned handle
 - a lock acquired `N` times by the same thread must be unlocked `N` times before it is fully released
 - unlock by a non-owning thread must fail
 - ownership is thread-affine in the kernel contract
@@ -589,10 +602,12 @@ Recommended shape:
 ```java
 @DistributedLock(
     key = "order:#{#orderId}",
-    mode = LockMode.MUTEX,
+    mode = DistributedLockMode.MUTEX,
     waitFor = "5s"
 )
 ```
+
+The annotation mode enum is part of the starter public API and must not reuse the internal core backend `LockMode` enum.
 
 The annotation must not include:
 
