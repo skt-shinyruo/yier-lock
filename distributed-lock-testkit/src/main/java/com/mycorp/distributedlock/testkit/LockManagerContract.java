@@ -12,7 +12,7 @@ import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-abstract class LockManagerContract {
+public abstract class LockManagerContract {
 
     protected final ExecutorService executor = Executors.newSingleThreadExecutor();
     protected LockRuntime runtime;

@@ -20,13 +20,14 @@ public final class DefaultMutexLock implements MutexLock {
 
     @Override
     public void lock() throws InterruptedException {
-        manager.acquire(key, mode, DefaultLockManager.indefiniteWait());
+        if (!manager.acquire(key, mode, DefaultLockManager.indefiniteWait())) {
+            throw new IllegalStateException("Failed to acquire lock for key " + key);
+        }
     }
 
     @Override
     public boolean tryLock(Duration waitTime) throws InterruptedException {
-        manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
-        return true;
+        return manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
     }
 
     @Override

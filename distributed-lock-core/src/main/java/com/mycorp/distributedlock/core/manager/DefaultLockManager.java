@@ -35,11 +35,11 @@ public final class DefaultLockManager implements LockManager {
         return new DefaultReadWriteLock(this, normalizeKey(key));
     }
 
-    void acquire(String key, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+    boolean acquire(String key, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
         String normalizedKey = normalizeKey(key);
         String stateKey = stateKey(normalizedKey, mode);
         LockState state = states.computeIfAbsent(stateKey, ignored -> new LockState(backend, normalizedKey, stateKey));
-        state.acquire(mode, waitPolicy);
+        return state.acquire(mode, waitPolicy);
     }
 
     void release(String key, LockMode mode) {
@@ -105,13 +105,13 @@ public final class DefaultLockManager implements LockManager {
             this.resource = new LockResource(backendKey);
         }
 
-        private synchronized void acquire(LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+        private synchronized boolean acquire(LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
             Thread current = Thread.currentThread();
-            switch (mode) {
+            return switch (mode) {
                 case MUTEX -> acquireMutex(current, waitPolicy);
                 case READ -> acquireRead(current, waitPolicy);
                 case WRITE -> acquireWrite(current, waitPolicy);
-            }
+            };
         }
 
         private synchronized boolean release(LockMode mode) {
@@ -136,42 +136,56 @@ public final class DefaultLockManager implements LockManager {
             };
         }
 
-        private void acquireMutex(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
+        private boolean acquireMutex(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
             if (current == mutexOwner) {
                 mutexHoldCount++;
-                return;
+                return true;
             }
-            mutexHandle = backend.acquire(resource, LockMode.MUTEX, waitPolicy);
+            BackendLockHandle acquiredHandle = backend.acquire(resource, LockMode.MUTEX, waitPolicy);
+            if (acquiredHandle == null) {
+                return false;
+            }
+            mutexHandle = acquiredHandle;
             mutexOwner = current;
             mutexHoldCount = 1;
+            return true;
         }
 
-        private void acquireRead(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
+        private boolean acquireRead(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
             if (current == writeOwner) {
                 throw new IllegalStateException("Cannot acquire read lock while holding write lock");
             }
             ReadHold hold = readHolds.get(current);
             if (hold != null) {
                 hold.count++;
-                return;
+                return true;
             }
 
             BackendLockHandle handle = backend.acquire(resource, LockMode.READ, waitPolicy);
+            if (handle == null) {
+                return false;
+            }
             readHolds.put(current, new ReadHold(handle));
+            return true;
         }
 
-        private void acquireWrite(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
+        private boolean acquireWrite(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
             if (readHolds.containsKey(current)) {
                 throw new IllegalStateException("Cannot acquire write lock while holding read lock");
             }
             if (current == writeOwner) {
                 writeHoldCount++;
-                return;
+                return true;
             }
 
-            writeHandle = backend.acquire(resource, LockMode.WRITE, waitPolicy);
+            BackendLockHandle acquiredHandle = backend.acquire(resource, LockMode.WRITE, waitPolicy);
+            if (acquiredHandle == null) {
+                return false;
+            }
+            writeHandle = acquiredHandle;
             writeOwner = current;
             writeHoldCount = 1;
+            return true;
         }
 
         private void releaseMutex(Thread current) {

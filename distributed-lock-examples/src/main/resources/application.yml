@@ -1,0 +1,7 @@
+distributed:
+  lock:
+    enabled: true
+    backend: redis
+    redis:
+      uri: redis://127.0.0.1:6379
+      lease-time: 30s
