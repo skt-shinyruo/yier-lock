@@ -27,3 +27,6 @@ replay_pid*
 # Editor swap files
 *.swp
 *~
+
+# Local planning and superpowers docs
+docs/superpowers/
