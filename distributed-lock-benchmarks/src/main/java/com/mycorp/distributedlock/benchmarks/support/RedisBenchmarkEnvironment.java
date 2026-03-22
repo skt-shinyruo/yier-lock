@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
 import com.mycorp.distributedlock.api.LockManager;
+import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 
@@ -23,6 +24,7 @@ public final class RedisBenchmarkEnvironment implements AutoCloseable {
         String redisUri = configuredRedisUri();
         LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("redis")
+            .backendModules(java.util.List.of(new RedisBackendModule(redisUri)))
             .configuration(Map.of(
                 "uri", redisUri,
                 "lease-seconds", 30L

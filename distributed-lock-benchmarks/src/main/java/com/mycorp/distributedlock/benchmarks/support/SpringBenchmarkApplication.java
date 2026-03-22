@@ -2,14 +2,23 @@ package com.mycorp.distributedlock.benchmarks.support;
 
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.redis.RedisBackendModule;
+import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 
 @SpringBootApplication
 public class SpringBenchmarkApplication {
+
+    @Bean
+    BackendModule redisBackendModule(@Value("${distributed.lock.redis.uri}") String redisUri) {
+        return new RedisBackendModule(redisUri);
+    }
 
     @Service
     public static class ProgrammaticBenchmarkService {

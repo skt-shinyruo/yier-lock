@@ -1,7 +1,10 @@
 package com.mycorp.distributedlock.benchmarks;
 
+import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -55,6 +58,7 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("redis")
+                .backendModules(java.util.List.of(new RedisBackendModule(redisUri)))
                 .configuration(Map.of(
                     "uri", redisUri,
                     "lease-seconds", 30L
@@ -70,6 +74,9 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("zookeeper")
+                .backendModules(java.util.List.of(new ZooKeeperBackendModule(
+                    new ZooKeeperBackendConfiguration(zooKeeperConnectString, zooKeeperBasePath)
+                )))
                 .configuration(Map.of(
                     "connect-string", zooKeeperConnectString,
                     "base-path", zooKeeperBasePath

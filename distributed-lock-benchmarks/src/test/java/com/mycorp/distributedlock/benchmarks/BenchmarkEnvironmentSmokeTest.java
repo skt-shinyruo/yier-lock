@@ -17,6 +17,7 @@ class BenchmarkEnvironmentSmokeTest {
         try (RedisBenchmarkEnvironment environment = RedisBenchmarkEnvironment.start()) {
             MutexLock lock = environment.lockManager().mutex("bench:smoke:redis");
             assertThat(lock.tryLock(Duration.ofMillis(100))).isTrue();
+            lock.unlock();
         }
     }
 
@@ -25,6 +26,7 @@ class BenchmarkEnvironmentSmokeTest {
         try (ZooKeeperBenchmarkEnvironment environment = ZooKeeperBenchmarkEnvironment.start()) {
             MutexLock lock = environment.lockManager().mutex("bench:smoke:zk");
             assertThat(lock.tryLock(Duration.ofMillis(100))).isTrue();
+            lock.unlock();
         }
     }
 
