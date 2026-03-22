@@ -1,0 +1,29 @@
+# Maven build output
+target/
+dependency-reduced-pom.xml
+.flattened-pom.xml
+
+# IDEs and editors
+.idea/
+.vscode/
+*.iml
+.classpath
+.project
+.settings/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Logs and process files
+*.log
+*.pid
+
+# JVM crash dumps
+hs_err_pid*
+replay_pid*
+*.hprof
+
+# Editor swap files
+*.swp
+*~

@@ -1,502 +1,329 @@
 package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.DistributedLockFactory;
-import com.mycorp.distributedlock.core.observability.*;
+import com.mycorp.distributedlock.api.DistributedReadWriteLock;
+import com.mycorp.distributedlock.api.LockConfigurationBuilder;
+import com.mycorp.distributedlock.api.LockProvider;
+import com.mycorp.distributedlock.core.observability.MetricsConfiguration;
+import com.mycorp.distributedlock.springboot.SpringDistributedLockFactory;
+import com.mycorp.distributedlock.springboot.actuator.DistributedLockHealthIndicator;
+import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
-import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
-import com.mycorp.distributedlock.springboot.actuator.DistributedLockHealthIndicator;
+import com.mycorp.distributedlock.springboot.health.DistributedLockHealthChecker;
 import io.micrometer.core.instrument.MeterRegistry;
-import io.opentelemetry.api.OpenTelemetry;
-import org.aspectj.lang.annotation.Aspect;
-import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.autoconfigure.AutoConfigurationPackages;
-import org.springframework.boot.autoconfigure.context.PropertyPlaceholderAutoConfiguration;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.runner.ApplicationContextRunner;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.test.context.TestPropertySource;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.BeforeEach;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
-import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.actuate.health.Status;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.junit.jupiter.api.Assertions.*;
+import java.util.concurrent.TimeUnit;
 
-/**
- * Spring Boot自动配置集成测试
- * 
- * @since 3.0.0
- */
-@DisplayName("Spring Boot自动配置集成测试")
-@SpringBootTest(classes = {
-    DistributedLockAutoConfiguration.class,
-    PropertyPlaceholderAutoConfiguration.class
-})
-@TestPropertySource(properties = {
-    "distributed.lock.enabled=true",
-    "distributed.lock.metrics.enabled=true",
-    "distributed.lock.metrics.prometheus.enabled=true",
-    "distributed.lock.aspect.enabled=true",
-    "distributed.lock.metrics.jmx.enabled=true"
-})
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+@DisplayName("Distributed lock starter auto-configuration integration")
 class DistributedLockAutoConfigurationIntegrationTest {
 
-    private ApplicationContextRunner contextRunner;
+    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+        .withUserConfiguration(DistributedLockAutoConfiguration.class)
+        .withBean(LockProvider.class, StubLockProvider::new);
 
-    @BeforeEach
-    void setUp() {
-        contextRunner = new ApplicationContextRunner()
-            .withUserConfiguration(DistributedLockAutoConfiguration.class);
+    @Test
+    @DisplayName("creates the factory, aspect, and health beans with the real constructors")
+    void shouldCreateCoreStarterBeansWithRealConstructors() {
+        contextRunner
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withPropertyValues("distributed.lock.metrics.enabled=false")
+            .run(context -> {
+                assertThat(context).hasSingleBean(DistributedLockFactory.class);
+                assertThat(context).hasSingleBean(DistributedLockProperties.class);
+                assertThat(context).hasSingleBean(DistributedLockAspect.class);
+                assertThat(context).hasSingleBean(DistributedLockHealthChecker.class);
+                assertThat(context).hasSingleBean(DistributedLockHealthIndicator.class);
+
+                DistributedLockFactory lockFactory = context.getBean(DistributedLockFactory.class);
+                assertThat(lockFactory).isInstanceOf(SpringDistributedLockFactory.class);
+
+                SpringDistributedLockFactory springFactory = (SpringDistributedLockFactory) lockFactory;
+                assertThat(springFactory.getDelegate()).isSameAs(context.getBean(LockProvider.class));
+                assertThat(springFactory.getMeterRegistry()).contains(context.getBean(MeterRegistry.class));
+                assertThat(springFactory.getOpenTelemetry()).isEmpty();
+
+                DistributedLockHealthIndicator healthIndicator = context.getBean(DistributedLockHealthIndicator.class);
+                assertThat(healthIndicator.health().getStatus()).isEqualTo(Status.UP);
+            });
     }
 
-    @Nested
-    @DisplayName("自动配置基础功能测试")
-    class BasicAutoConfigurationTests {
+    @Test
+    @DisplayName("uses the actual nested properties structure when building metrics configuration")
+    void shouldMapNestedMetricsPropertiesIntoMetricsConfiguration() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.metrics.enabled=true",
+                "distributed.lock.metrics.tracing-enabled=false",
+                "distributed.lock.metrics.collection-interval=PT45S",
+                "distributed.lock.metrics.micrometer.enabled=false",
+                "distributed.lock.metrics.micrometer.application-name=test-app",
+                "distributed.lock.metrics.micrometer.instance-id=node-a",
+                "distributed.lock.metrics.prometheus.enabled=true",
+                "distributed.lock.metrics.prometheus.http-port=9095",
+                "distributed.lock.metrics.jmx.enabled=false",
+                "distributed.lock.metrics.monitoring.enabled=false",
+                "distributed.lock.metrics.monitoring.interval=PT2M",
+                "distributed.lock.metrics.monitoring.thread-pool-size=6",
+                "distributed.lock.metrics.alerting.enabled=false",
+                "distributed.lock.metrics.alerting.check-interval=PT20S",
+                "distributed.lock.metrics.alerting.log-enabled=false",
+                "distributed.lock.metrics.health-check.enabled=true",
+                "distributed.lock.metrics.health-check.interval=PT3M",
+                "distributed.lock.metrics.health-check.thread-pool-size=4",
+                "distributed.lock.metrics.health-check.detailed=false"
+            )
+            .run(context -> {
+                MetricsConfiguration.MetricsConfig metricsConfig = context.getBean(MetricsConfiguration.class).getConfig();
 
-        @Test
-        @DisplayName("默认配置下所有Bean都应该被创建")
-        void shouldCreateAllRequiredBeansWithDefaultConfig() {
-            contextRunner
-                .run(context -> {
-                    assertThat(context)
-                        .hasSingleBean(DistributedLockFactory.class)
-                        .hasSingleBean(DistributedLockProperties.class)
-                        .hasSingleBean(DistributedLockAspect.class)
-                        .hasSingleBean(DistributedLockHealthIndicator.class)
-                        .hasSingleBean(MetricsConfiguration.class)
-                        .hasSingleBean(LockPerformanceMetrics.class)
-                        .hasSingleBean(LockMetricsCollector.class)
-                        .hasSingleBean(MicrometerMetricsAdapter.class)
-                        .hasSingleBean(PrometheusMetricsExporter.class)
-                        .hasSingleBean(LockMonitoringService.class)
-                        .hasSingleBean(LockAlertingService.class)
-                        .hasSingleBean(LockJMXManager.class)
-                        .hasSingleBean(LockHealthMetrics.class);
-                });
-        }
-
-        @Test
-        @DisplayName("禁用分布式锁时不应该创建相关Bean")
-        void shouldNotCreateBeansWhenDisabled() {
-            contextRunner
-                .withPropertyValues("distributed.lock.enabled=false")
-                .run(context -> {
-                    assertThat(context)
-                        .doesNotHaveBean(DistributedLockFactory.class)
-                        .doesNotHaveBean(DistributedLockAspect.class)
-                        .doesNotHaveBean(DistributedLockHealthIndicator.class);
-                });
-        }
-
-        @Test
-        @DisplayName("禁用指标收集时不应该创建监控相关Bean")
-        void shouldNotCreateMetricsBeansWhenDisabled() {
-            contextRunner
-                .withPropertyValues("distributed.lock.metrics.enabled=false")
-                .run(context -> {
-                    assertThat(context)
-                        .doesNotHaveBean(LockPerformanceMetrics.class)
-                        .doesNotHaveBean(PrometheusMetricsExporter.class)
-                        .doesNotHaveBean(LockMonitoringService.class)
-                        .doesNotHaveBean(LockAlertingService.class);
-                });
-        }
-
-        @Test
-        @DisplayName("禁用AOP时不应该创建切面Bean")
-        void shouldNotCreateAspectBeanWhenDisabled() {
-            contextRunner
-                .withPropertyValues("distributed.lock.aspect.enabled=false")
-                .run(context -> {
-                    assertThat(context)
-                        .doesNotHaveBean(DistributedLockAspect.class);
-                });
-        }
+                assertThat(metricsConfig.isMetricsEnabled()).isTrue();
+                assertThat(metricsConfig.isTracingEnabled()).isFalse();
+                assertThat(metricsConfig.getMetricsCollectionInterval()).hasSeconds(45);
+                assertThat(metricsConfig.isMicrometerEnabled()).isFalse();
+                assertThat(metricsConfig.getMicrometerApplicationName()).isEqualTo("test-app");
+                assertThat(metricsConfig.getMicrometerInstanceId()).isEqualTo("node-a");
+                assertThat(metricsConfig.isPrometheusEnabled()).isTrue();
+                assertThat(metricsConfig.getPrometheusHttpPort()).isEqualTo(9095);
+                assertThat(metricsConfig.isJmxEnabled()).isFalse();
+                assertThat(metricsConfig.isMonitoringEnabled()).isFalse();
+                assertThat(metricsConfig.getMonitoringInterval()).hasMinutes(2);
+                assertThat(metricsConfig.getMonitoringThreadPoolSize()).isEqualTo(6);
+                assertThat(metricsConfig.isAlertingEnabled()).isFalse();
+                assertThat(metricsConfig.getAlertingCheckInterval()).hasSeconds(20);
+                assertThat(metricsConfig.isAlertingLogEnabled()).isFalse();
+                assertThat(metricsConfig.isHealthCheckEnabled()).isTrue();
+                assertThat(metricsConfig.getHealthCheckInterval()).hasMinutes(3);
+                assertThat(metricsConfig.getHealthCheckThreadPoolSize()).isEqualTo(4);
+                assertThat(metricsConfig.isHealthCheckDetailed()).isFalse();
+            });
     }
 
-    @Nested
-    @DisplayName("配置属性测试")
-    class ConfigurationPropertiesTests {
-
-        @Test
-        @DisplayName("应该正确绑定配置属性")
-        void shouldBindConfigurationProperties() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.enabled=true",
-                    "distributed.lock.defaultTimeout=PT30S",
-                    "distributed.lock.metrics.enabled=true",
-                    "distributed.lock.metrics.micrometer.enabled=true",
-                    "distributed.lock.metrics.prometheus.enabled=true",
-                    "distributed.lock.metrics.prometheus.http-port=9090",
-                    "distributed.lock.metrics.jmx.enabled=true",
-                    "distributed.lock.aspect.enabled=true"
-                )
-                .run(context -> {
-                    DistributedLockProperties properties = context.getBean(DistributedLockProperties.class);
-                    
-                    assertThat(properties.isEnabled()).isTrue();
-                    assertThat(properties.getDefaultTimeout()).hasSeconds(30);
-                    assertThat(properties.getMetrics().isEnabled()).isTrue();
-                    assertThat(properties.getMetrics().getMicrometer().isEnabled()).isTrue();
-                    assertThat(properties.getMetrics().getPrometheus().isEnabled()).isTrue();
-                    assertThat(properties.getMetrics().getPrometheus().getHttpPort()).isEqualTo(9090);
-                    assertThat(properties.getMetrics().getJmx().isEnabled()).isTrue();
-                    assertThat(properties.getAspect().isEnabled()).isTrue();
-                });
-        }
-
-        @Test
-        @DisplayName("应该支持嵌套配置属性")
-        void shouldSupportNestedConfigurationProperties() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.retry.enabled=true",
-                    "distributed.lock.retry.max-attempts=5",
-                    "distributed.lock.retry.delay=PT1S",
-                    "distributed.lock.metrics.monitoring.interval=PT1M",
-                    "distributed.lock.metrics.alerting.check-interval=PT30S",
-                    "distributed.lock.metrics.health-check.enabled=true",
-                    "distributed.lock.metrics.health-check.interval=PT2M"
-                )
-                .run(context -> {
-                    DistributedLockProperties properties = context.getBean(DistributedLockProperties.class);
-                    
-                    assertThat(properties.getRetry().isEnabled()).isTrue();
-                    assertThat(properties.getRetry().getMaxAttempts()).isEqualTo(5);
-                    assertThat(properties.getRetry().getDelay()).hasSeconds(1);
-                    assertThat(properties.getMetrics().getMonitoring().getInterval()).hasMinutes(1);
-                    assertThat(properties.getMetrics().getAlerting().getCheckInterval()).hasSeconds(30);
-                    assertThat(properties.getMetrics().getHealthCheck().isEnabled()).isTrue();
-                    assertThat(properties.getMetrics().getHealthCheck().getInterval()).hasMinutes(2);
-                });
-        }
+    @Test
+    @DisplayName("backs off the aspect bean when the nested aspect property is disabled")
+    void shouldNotCreateAspectBeanWhenAspectDisabled() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.metrics.enabled=false",
+                "distributed.lock.aspect.enabled=false"
+            )
+            .run(context -> assertThat(context).doesNotHaveBean(DistributedLockAspect.class));
     }
 
-    @Nested
-    @DisplayName("监控和指标配置测试")
-    class MonitoringConfigurationTests {
-
-        @Test
-        @DisplayName("应该在启用时创建所有监控Bean")
-        void shouldCreateAllMonitoringBeansWhenEnabled() {
-            contextRunner
-                .withPropertyValues("distributed.lock.metrics.enabled=true")
-                .run(context -> {
-                    assertThat(context)
-                        .hasBean("metricsConfiguration")
-                        .hasBean("lockPerformanceMetrics")
-                        .hasBean("lockMetricsCollector")
-                        .hasBean("micrometerMetricsAdapter")
-                        .hasBean("prometheusMetricsExporter")
-                        .hasBean("lockMonitoringService")
-                        .hasBean("lockAlertingService")
-                        .hasBean("lockJmxManager")
-                        .hasBean("lockHealthMetrics")
-                        .hasBean("alertingRules")
-                        .hasBean("grafanaDashboardConfig");
-                });
-        }
-
-        @Test
-        @DisplayName("Prometheus配置应该正确设置")
-        void shouldConfigurePrometheusCorrectly() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.metrics.prometheus.enabled=true",
-                    "distributed.lock.metrics.prometheus.http-port=8081"
-                )
-                .run(context -> {
-                    PrometheusMetricsExporter exporter = context.getBean(PrometheusMetricsExporter.class);
-                    
-                    assertThat(exporter).isNotNull();
-                    // 验证Prometheus导出器的配置
-                });
-        }
-
-        @Test
-        @DisplayName("JMX配置应该正确设置")
-        void shouldConfigureJMXCorrectly() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.metrics.jmx.enabled=true",
-                    "distributed.lock.metrics.jmx.domain-name=custom.domain"
-                )
-                .run(context -> {
-                    LockJMXManager jmxManager = context.getBean(LockJMXManager.class);
-                    
-                    assertThat(jmxManager).isNotNull();
-                    // 验证JMX管理器的配置
-                });
-        }
-
-        @Test
-        @DisplayName("监控服务配置应该正确设置")
-        void shouldConfigureMonitoringServiceCorrectly() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.metrics.monitoring.enabled=true",
-                    "distributed.lock.metrics.monitoring.interval=PT15S",
-                    "distributed.lock.metrics.monitoring.thread-pool-size=8"
-                )
-                .run(context -> {
-                    LockMonitoringService monitoringService = context.getBean(LockMonitoringService.class);
-                    
-                    assertThat(monitoringService).isNotNull();
-                    // 验证监控服务的配置
-                });
-        }
+    @Test
+    @DisplayName("backs off the starter beans when distributed locking is disabled")
+    void shouldNotCreateStarterBeansWhenDisabled() {
+        contextRunner
+            .withPropertyValues("distributed.lock.enabled=false")
+            .run(context -> {
+                assertThat(context).doesNotHaveBean(DistributedLockFactory.class);
+                assertThat(context).doesNotHaveBean(DistributedLockAspect.class);
+                assertThat(context).doesNotHaveBean(DistributedLockHealthChecker.class);
+                assertThat(context).doesNotHaveBean(DistributedLockHealthIndicator.class);
+            });
     }
 
-    @Nested
-    @DisplayName("健康检查配置测试")
-    class HealthCheckConfigurationTests {
+    @Test
+    @DisplayName("marks health down when the delegate backend probe is unhealthy")
+    void shouldReportDownWhenDelegateHealthProbeFails() {
+        new ApplicationContextRunner()
+            .withUserConfiguration(DistributedLockAutoConfiguration.class)
+            .withBean(LockProvider.class, FailingHealthLockProvider::new)
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withPropertyValues("distributed.lock.metrics.enabled=false")
+            .run(context -> {
+                DistributedLockHealthIndicator healthIndicator = context.getBean(DistributedLockHealthIndicator.class);
 
-        @Test
-        @DisplayName("健康检查指示器应该被创建")
-        void shouldCreateHealthIndicator() {
-            contextRunner
-                .run(context -> {
-                    HealthIndicator healthIndicator = context.getBean(DistributedLockHealthIndicator.class);
-                    
-                    assertThat(healthIndicator).isNotNull();
-                    assertThat(healthIndicator).isInstanceOf(DistributedLockHealthIndicator.class);
-                });
-        }
-
-        @Test
-        @DisplayName("健康指标组件应该被创建")
-        void shouldCreateLockHealthMetrics() {
-            contextRunner
-                .withPropertyValues("distributed.lock.metrics.enabled=true")
-                .run(context -> {
-                    LockHealthMetrics healthMetrics = context.getBean(LockHealthMetrics.class);
-                    
-                    assertThat(healthMetrics).isNotNull();
-                });
-        }
-
-        @Test
-        @DisplayName("健康检查配置应该正确应用")
-        void shouldApplyHealthCheckConfiguration() {
-            contextRunner
-                .withPropertyValues(
-                    "distributed.lock.metrics.health-check.enabled=true",
-                    "distributed.lock.metrics.health-check.interval=PT45S",
-                    "distributed.lock.metrics.health-check.thread-pool-size=4",
-                    "distributed.lock.metrics.health-check.timeout=PT15S",
-                    "distributed.lock.metrics.health-check.detailed=true"
-                )
-                .run(context -> {
-                    DistributedLockProperties properties = context.getBean(DistributedLockProperties.class);
-                    
-                    assertThat(properties.getMetrics().getHealthCheck().isEnabled()).isTrue();
-                    assertThat(properties.getMetrics().getHealthCheck().getInterval()).hasSeconds(45);
-                    assertThat(properties.getMetrics().getHealthCheck().getThreadPoolSize()).isEqualTo(4);
-                    assertThat(properties.getMetrics().getHealthCheck().getTimeout()).hasSeconds(15);
-                    assertThat(properties.getMetrics().getHealthCheck().isDetailed()).isTrue();
-                });
-        }
+                assertThat(healthIndicator.health().getStatus()).isEqualTo(Status.DOWN);
+            });
     }
 
-    @Nested
-    @DisplayName("Bean条件性创建测试")
-    class ConditionalBeanCreationTests {
+    @Test
+    @DisplayName("fails fast instead of silently downgrading fair lock requests")
+    void shouldRejectFairConfiguredLocksWhenFactoryCannotHonorThem() {
+        contextRunner
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+            .withPropertyValues("distributed.lock.metrics.enabled=false")
+            .run(context -> {
+                SpringDistributedLockFactory lockFactory =
+                    (SpringDistributedLockFactory) context.getBean(DistributedLockFactory.class);
 
-        @Configuration
-        static class CustomLockProviderConfiguration {
-            @Bean
-            public com.mycorp.distributedlock.api.LockProvider mockLockProvider() {
-                return new MockLockProvider();
+                assertThatThrownBy(() -> lockFactory.getConfiguredLock("fair-lock", fairConfiguration("fair-lock")))
+                    .isInstanceOf(UnsupportedOperationException.class)
+                    .hasMessageContaining("Fair locks");
+            });
+    }
+
+    private static final class StubLockProvider implements LockProvider {
+
+        @Override
+        public String getType() {
+            return "test";
+        }
+
+        @Override
+        public com.mycorp.distributedlock.api.DistributedLock createLock(String key) {
+            com.mycorp.distributedlock.api.DistributedLock lock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
+            when(lock.getName()).thenReturn(key);
+            try {
+                when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(true);
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
             }
+            when(lock.isHeldByCurrentThread()).thenReturn(false);
+            when(lock.healthCheck()).thenReturn(new com.mycorp.distributedlock.api.DistributedLock.HealthCheckResult() {
+                @Override
+                public boolean isHealthy() {
+                    return true;
+                }
+
+                @Override
+                public String getDetails() {
+                    return "stub healthy";
+                }
+
+                @Override
+                public long getCheckTime() {
+                    return System.currentTimeMillis();
+                }
+            });
+            return lock;
         }
 
-        @Test
-        @DisplayName("有LockProvider时应该创建分布式锁工厂")
-        void shouldCreateLockFactoryWhenLockProviderExists() {
-            contextRunner
-                .withUserConfiguration(CustomLockProviderConfiguration.class)
-                .run(context -> {
-                    assertThat(context)
-                        .hasBean("distributedLockFactory")
-                        .hasSingleBean(DistributedLockFactory.class);
-                });
-        }
-
-        @Test
-        @DisplayName("没有LockProvider时不应该创建分布式锁工厂")
-        void shouldNotCreateLockFactoryWhenNoLockProvider() {
-            contextRunner
-                .run(context -> {
-                    assertThat(context)
-                        .doesNotHaveBean("distributedLockFactory");
-                });
-        }
-
-        @Test
-        @DisplayName("有MeterRegistry时应该创建Micrometer适配器")
-        void shouldCreateMicrometerAdapterWhenMeterRegistryExists() {
-            contextRunner
-                .withUserConfiguration(CustomLockProviderConfiguration.class)
-                .withBean(MeterRegistry.class, () -> {
-                    // 创建一个简单的MeterRegistry实现
-                    return io.micrometer.core.instrument.simple.SimpleMeterRegistry.builder().build();
-                })
-                .run(context -> {
-                    assertThat(context)
-                        .hasBean("micrometerMetricsAdapter")
-                        .hasSingleBean(MicrometerMetricsAdapter.class);
-                });
-        }
-
-        @Test
-        @DisplayName("有OpenTelemetry时应该创建追踪相关Bean")
-        void shouldCreateTracingBeansWhenOpenTelemetryExists() {
-            contextRunner
-                .withUserConfiguration(CustomLockProviderConfiguration.class)
-                .withBean(OpenTelemetry.class, () -> {
-                    return io.opentelemetry.api.OpenTelemetry.getDefault();
-                })
-                .run(context -> {
-                    // 验证追踪相关的Bean被创建
-                    assertThat(context.getBeansOfType(OpenTelemetry.class)).hasSize(1);
-                });
+        @Override
+        public DistributedReadWriteLock createReadWriteLock(String key) {
+            return mock(DistributedReadWriteLock.class);
         }
     }
 
-    @Nested
-    @DisplayName("初始化器测试")
-    class InitializerTests {
+    private static final class FailingHealthLockProvider implements LockProvider {
 
-        @Test
-        @DisplayName("ObservabilityInitializer应该在所有组件就绪时创建")
-        void shouldCreateObservabilityInitializerWhenAllComponentsReady() {
-            contextRunner
-                .withUserConfiguration(DistributedLockAutoConfigurationIntegrationTest.CustomLockProviderConfiguration.class)
-                .run(context -> {
-                    assertThat(context)
-                        .hasBean("observabilityInitializer");
-                });
+        @Override
+        public String getType() {
+            return "failing-health";
         }
 
-        @Test
-        @DisplayName("组件缺失时不应该创建ObservabilityInitializer")
-        void shouldNotCreateObservabilityInitializerWhenComponentsMissing() {
-            contextRunner
-                .withPropertyValues("distributed.lock.metrics.enabled=false")
-                .run(context -> {
-                    assertThat(context)
-                        .doesNotHaveBean("observabilityInitializer");
-                });
+        @Override
+        public com.mycorp.distributedlock.api.DistributedLock createLock(String key) {
+            com.mycorp.distributedlock.api.DistributedLock lock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
+            when(lock.getName()).thenReturn(key);
+            when(lock.healthCheck()).thenReturn(new com.mycorp.distributedlock.api.DistributedLock.HealthCheckResult() {
+                @Override
+                public boolean isHealthy() {
+                    return false;
+                }
+
+                @Override
+                public String getDetails() {
+                    return "backend unreachable";
+                }
+
+                @Override
+                public long getCheckTime() {
+                    return System.currentTimeMillis();
+                }
+            });
+            return lock;
+        }
+
+        @Override
+        public DistributedReadWriteLock createReadWriteLock(String key) {
+            return mock(DistributedReadWriteLock.class);
         }
     }
 
-    // Mock类定义
-    private static class MockLockProvider implements com.mycorp.distributedlock.api.LockProvider {
-        @Override
-        public String getName() {
-            return "mock";
-        }
+    private static LockConfigurationBuilder.LockConfiguration fairConfiguration(String name) {
+        return new LockConfigurationBuilder.LockConfiguration() {
+            @Override
+            public String getName() {
+                return name;
+            }
 
-        @Override
-        public boolean isHealthy() {
-            return true;
-        }
+            @Override
+            public LockConfigurationBuilder.LockType getLockType() {
+                return LockConfigurationBuilder.LockType.FAIR;
+            }
 
-        @Override
-        public com.mycorp.distributedlock.api.DistributedLock getLock(String lockName) {
-            return new MockDistributedLock();
-        }
-    }
+            @Override
+            public long getLeaseTime(TimeUnit timeUnit) {
+                return timeUnit.convert(5, TimeUnit.SECONDS);
+            }
 
-    private static class MockDistributedLock implements com.mycorp.distributedlock.api.DistributedLock {
-        @Override
-        public String getName() {
-            return "mock-lock";
-        }
+            @Override
+            public long getWaitTime(TimeUnit timeUnit) {
+                return timeUnit.convert(5, TimeUnit.SECONDS);
+            }
 
-        @Override
-        public boolean isHeldByCurrentThread() {
-            return false;
-        }
+            @Override
+            public boolean isFairLock() {
+                return true;
+            }
 
-        @Override
-        public void lock() {
-            // Mock implementation
-        }
+            @Override
+            public boolean isRetryEnabled() {
+                return false;
+            }
 
-        @Override
-        public void lockInterruptibly() throws InterruptedException {
-            // Mock implementation
-        }
+            @Override
+            public int getRetryCount() {
+                return 0;
+            }
 
-        @Override
-        public boolean tryLock() {
-            return true;
-        }
+            @Override
+            public long getRetryInterval(TimeUnit timeUnit) {
+                return 0;
+            }
 
-        @Override
-        public boolean tryLock(long time, java.util.concurrent.TimeUnit unit) throws InterruptedException {
-            return true;
-        }
+            @Override
+            public boolean isAutoRenew() {
+                return false;
+            }
 
-        @Override
-        public void unlock() {
-            // Mock implementation
-        }
+            @Override
+            public long getRenewInterval(TimeUnit timeUnit) {
+                return 0;
+            }
 
-        @Override
-        public java.util.concurrent.CompletableFuture<java.util.concurrent.locks.LockResult> tryLockAsync() {
-            return java.util.concurrent.CompletableFuture.completedFuture(new MockLockResult());
-        }
+            @Override
+            public double getRenewRatio() {
+                return 0;
+            }
 
-        @Override
-        public java.util.concurrent.CompletableFuture<java.util.concurrent.locks.LockResult> tryLockAsync(long time, java.util.concurrent.TimeUnit unit) {
-            return java.util.concurrent.CompletableFuture.completedFuture(new MockLockResult());
-        }
+            @Override
+            public LockConfigurationBuilder.TimeoutStrategy getTimeoutStrategy() {
+                return LockConfigurationBuilder.TimeoutStrategy.BLOCK_UNTIL_TIMEOUT;
+            }
 
-        @Override
-        public java.util.concurrent.CompletableFuture<Void> unlockAsync() {
-            return java.util.concurrent.CompletableFuture.completedFuture(null);
-        }
+            @Override
+            public boolean isDeadlockDetectionEnabled() {
+                return false;
+            }
 
-        @Override
-        public boolean tryRenewLease(long time, java.util.concurrent.TimeUnit unit) {
-            return true;
-        }
+            @Override
+            public long getDeadlockDetectionTimeout(TimeUnit timeUnit) {
+                return 0;
+            }
 
-        @Override
-        public java.util.concurrent.CompletableFuture<Boolean> tryRenewLeaseAsync(long time, java.util.concurrent.TimeUnit unit) {
-            return java.util.concurrent.CompletableFuture.completedFuture(true);
-        }
+            @Override
+            public boolean isEventListeningEnabled() {
+                return false;
+            }
 
-        @Override
-        public HealthCheck.HealthCheckResult healthCheck() {
-            return new HealthCheck.HealthCheckResult(HealthCheck.ComponentStatus.UP, "mock", "mock");
-        }
-    }
-
-    private static class MockLockResult implements java.util.concurrent.locks.LockResult {
-        @Override
-        public boolean isSuccess() {
-            return true;
-        }
-
-        @Override
-        public Long getElapsedTime() {
-            return 0L;
-        }
-    }
-
-    @Configuration
-    static class CustomLockProviderConfiguration {
-        @Bean
-        public com.mycorp.distributedlock.api.LockProvider mockLockProvider() {
-            return new MockLockProvider();
-        }
+            @Override
+            public java.util.Map<String, String> getProperties() {
+                return java.util.Map.of();
+            }
+        };
     }
 }

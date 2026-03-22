@@ -123,11 +123,8 @@ public interface DistributedLock extends AutoCloseable {
      * @throws InterruptedException 当线程被中断时
      */
     default boolean renewLock(long newLeaseTime, TimeUnit unit) throws InterruptedException {
-        if (isHeldByCurrentThread()) {
-            unlock();
-            lock(newLeaseTime, unit);
-            return true;
-        }
+        // Generic renew is unsafe without backend-specific compare-and-renew support.
+        // Implementations that can renew atomically should override this method.
         return false;
     }
 
@@ -147,6 +144,18 @@ public interface DistributedLock extends AutoCloseable {
                 return false;
             }
         });
+    }
+
+    /**
+     * Legacy compatibility alias used by older benchmarks/examples.
+     */
+    default boolean renewLease() {
+        try {
+            return renewLock(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     /**
@@ -292,8 +301,30 @@ public interface DistributedLock extends AutoCloseable {
      */
     default HealthCheckResult healthCheck() {
         try {
-            boolean isHealthy = isLocked() || tryLock(0, 100, TimeUnit.MILLISECONDS);
-            if (isHealthy) {
+            final boolean alreadyHeldByCurrentThread = isHeldByCurrentThread();
+            final boolean acquiredForCheck;
+            final boolean isHealthy;
+            final String details;
+
+            if (alreadyHeldByCurrentThread) {
+                acquiredForCheck = false;
+                isHealthy = true;
+                details = "Lock is held by current thread and working normally";
+            } else {
+                acquiredForCheck = tryLock(0, 100, TimeUnit.MILLISECONDS);
+                if (acquiredForCheck) {
+                    isHealthy = true;
+                    details = "Lock is accessible and working normally";
+                } else if (isLocked()) {
+                    isHealthy = true;
+                    details = "Lock is currently held by another owner but appears reachable";
+                } else {
+                    isHealthy = false;
+                    details = "Lock is not accessible";
+                }
+            }
+
+            if (acquiredForCheck) {
                 unlock();
             }
             return new HealthCheckResult() {
@@ -304,7 +335,7 @@ public interface DistributedLock extends AutoCloseable {
 
                 @Override
                 public String getDetails() {
-                    return isHealthy ? "Lock is accessible and working normally" : "Lock is not accessible";
+                    return details;
                 }
 
                 @Override

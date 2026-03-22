@@ -8,8 +8,11 @@ import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -30,10 +33,17 @@ import java.util.function.Consumer;
 public class EnhancedReentrantLockImpl implements DistributedLock {
     
     private static final Logger logger = LoggerFactory.getLogger(EnhancedReentrantLockImpl.class);
+    private static final ScheduledExecutorService RENEWAL_EXECUTOR =
+        Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "enhanced-reentrant-lock-renewal");
+            thread.setDaemon(true);
+            return thread;
+        });
     
     // 锁名称和路径
     private final String lockName;
     private final String lockPath;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
     
     // 重入锁管理
     private final ReentrantLock reentrantLock = new ReentrantLock();
@@ -44,6 +54,7 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
     // 锁状态管理
     private final AtomicLong acquisitionTime = new AtomicLong(0);
     private final AtomicLong expirationTime = new AtomicLong(0);
+    private final AtomicLong leaseDurationMillis = new AtomicLong(0);
     private final AtomicLong lockSequenceNumber = new AtomicLong(0);
     
     // 事件管理
@@ -58,6 +69,10 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
     // 续期管理
     private ScheduledFuture<?> renewalTask;
     
+    public EnhancedReentrantLockImpl(String lockName) {
+        this(lockName, lockName);
+    }
+
     public EnhancedReentrantLockImpl(String lockName, String lockPath) {
         this.lockName = lockName;
         this.lockPath = lockPath;
@@ -116,11 +131,7 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
                     context.initialize(currentThread);
                     
                     // 设置状态
-                    long now = System.currentTimeMillis();
-                    acquisitionTime.set(now);
-                    if (leaseTime > 0) {
-                        expirationTime.set(now + unit.toMillis(leaseTime));
-                    }
+                    updateLease(leaseTime, unit);
                     lockSequenceNumber.set(generateSequenceNumber());
                     
                     totalReentrantCount.incrementAndGet();
@@ -187,9 +198,14 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
             
         } finally {
             // 清理状态
+            if (renewalTask != null) {
+                renewalTask.cancel(false);
+                renewalTask = null;
+            }
             reentrantLock.unlock();
             lockOwner.set(null);
             expirationTime.set(0);
+            leaseDurationMillis.set(0);
             lockSequenceNumber.set(0);
             context.clear();
         }
@@ -265,66 +281,101 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
             renewalTask.cancel(false);
         }
         
-        renewalTask = CompletableFuture.delayedExecutor(intervalMs, TimeUnit.MILLISECONDS)
-                .scheduleWithFixedDelay(() -> {
-                    try {
-                        if (isHeldByCurrentThread() && !Thread.currentThread().isInterrupted()) {
-                            boolean renewed = renewLock(30, TimeUnit.SECONDS);
-                            if (renewalCallback != null) {
-                                renewalCallback.accept(new RenewalResult() {
-                                    @Override
-                                    public boolean isSuccess() {
-                                        return renewed;
-                                    }
-                                    
-                                    @Override
-                                    public Throwable getFailureCause() {
-                                        return renewed ? null : new RuntimeException("Renewal failed");
-                                    }
-                                    
-                                    @Override
-                                    public long getRenewalTime() {
-                                        return System.currentTimeMillis();
-                                    }
-                                    
-                                    @Override
-                                    public long getNewExpirationTime() {
-                                        return getExpirationTime() + TimeUnit.SECONDS.toMillis(30);
-                                    }
-                                });
-                            }
-                        } else {
-                            cancelAutoRenewal(renewalTask);
-                        }
-                    } catch (Exception e) {
-                        logger.error("Auto renewal failed for lock: {}", lockName, e);
-                        if (renewalCallback != null) {
-                            renewalCallback.accept(new RenewalResult() {
-                                @Override
-                                public boolean isSuccess() {
-                                    return false;
-                                }
-                                
-                                @Override
-                                public Throwable getFailureCause() {
-                                    return e;
-                                }
-                                
-                                @Override
-                                public long getRenewalTime() {
-                                    return System.currentTimeMillis();
-                                }
-                                
-                                @Override
-                                public long getNewExpirationTime() {
-                                    return 0;
-                                }
-                            });
-                        }
+        renewalTask = RENEWAL_EXECUTOR.scheduleWithFixedDelay(() -> {
+            long renewalLeaseMillis = leaseDurationMillis.get() > 0
+                ? leaseDurationMillis.get()
+                : TimeUnit.SECONDS.toMillis(30);
+
+            boolean renewed = extendLease(renewalLeaseMillis, TimeUnit.MILLISECONDS);
+            if (!renewed && renewalTask != null) {
+                renewalTask.cancel(false);
+            }
+
+            if (renewalCallback != null) {
+                renewalCallback.accept(new RenewalResult() {
+                    @Override
+                    public boolean isSuccess() {
+                        return renewed;
                     }
-                }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+
+                    @Override
+                    public Throwable getFailureCause() {
+                        return renewed ? null : new IllegalStateException("Renewal failed");
+                    }
+
+                    @Override
+                    public long getRenewalTime() {
+                        return System.currentTimeMillis();
+                    }
+
+                    @Override
+                    public long getNewExpirationTime() {
+                        return renewed ? getExpirationTime() : 0;
+                    }
+                });
+            }
+        }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
         
         return renewalTask;
+    }
+
+    @Override
+    public boolean renewLock(long newLeaseTime, TimeUnit unit) {
+        if (!isHeldByCurrentThread()) {
+            return false;
+        }
+        return extendLease(newLeaseTime, unit);
+    }
+
+    @Override
+    public LockStateInfo getLockStateInfo() {
+        return new LockStateInfo() {
+            @Override
+            public boolean isLocked() {
+                return EnhancedReentrantLockImpl.this.isLocked();
+            }
+
+            @Override
+            public boolean isHeldByCurrentThread() {
+                return EnhancedReentrantLockImpl.this.isHeldByCurrentThread();
+            }
+
+            @Override
+            public String getHolder() {
+                return getLockHolder();
+            }
+
+            @Override
+            public long getRemainingTime(TimeUnit unit) {
+                return EnhancedReentrantLockImpl.this.getRemainingTime(unit);
+            }
+
+            @Override
+            public int getReentrantCount() {
+                return EnhancedReentrantLockImpl.this.getReentrantCount();
+            }
+
+            @Override
+            public Instant getCreationTime() {
+                return Instant.ofEpochMilli(acquisitionTime.get());
+            }
+
+            @Override
+            public Instant getExpirationTime() {
+                long expiration = expirationTime.get();
+                return expiration > 0 ? Instant.ofEpochMilli(expiration) : null;
+            }
+
+            @Override
+            public LockType getLockType() {
+                return LockType.REENTRANT;
+            }
+
+            @Override
+            public String getMetadata() {
+                return "{\"path\":\"" + lockPath + "\"}";
+            }
+        };
     }
     
     @Override
@@ -402,6 +453,7 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
     
     @Override
     public void close() {
+        closed.set(true);
         if (renewalTask != null) {
             renewalTask.cancel(false);
             renewalTask = null;
@@ -417,14 +469,33 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
     }
     
     private void checkNotClosed() {
-        // 检查锁是否已关闭的逻辑
+        if (closed.get()) {
+            throw new IllegalStateException("Lock has been closed: " + lockName);
+        }
+    }
+
+    private void updateLease(long leaseTime, TimeUnit unit) {
+        acquisitionTime.set(System.currentTimeMillis());
+        extendLease(leaseTime, unit);
+    }
+
+    private boolean extendLease(long leaseTime, TimeUnit unit) {
+        if (!isLocked() || unit == null || leaseTime <= 0) {
+            return false;
+        }
+        long leaseMillis = unit.toMillis(leaseTime);
+        leaseDurationMillis.set(leaseMillis);
+        expirationTime.set(System.currentTimeMillis() + leaseMillis);
+        return true;
     }
     
     private void notifyEvent(LockEvent<?> event) {
         for (LockEventListener<DistributedLock> listener : eventListeners) {
-            if (listener.shouldHandleEvent(event)) {
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            LockEventListener rawListener = listener;
+            if (rawListener.shouldHandleEvent(event)) {
                 try {
-                    listener.onEvent(event);
+                    rawListener.onEvent(event);
                 } catch (Exception e) {
                     logger.warn("Error in lock event listener for: {}", lockName, e);
                 }
@@ -451,6 +522,7 @@ public class EnhancedReentrantLockImpl implements DistributedLock {
         
         public void initialize(Thread owner) {
             this.ownerThread = owner;
+            this.count = 1;
         }
         
         public void incrementCount() {

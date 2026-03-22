@@ -1,7 +1,0 @@
-com/mycorp/distributedlock/redis/SimpleRedisLock$2.class
-com/mycorp/distributedlock/redis/SimpleRedisLockProvider$SimpleReadWriteLock.class
-com/mycorp/distributedlock/redis/SimpleRedisLock.class
-com/mycorp/distributedlock/redis/RedisClusterFactory.class
-com/mycorp/distributedlock/redis/RedisClusterFactory$RedisMode.class
-com/mycorp/distributedlock/redis/SimpleRedisLock$1.class
-com/mycorp/distributedlock/redis/SimpleRedisLockProvider.class

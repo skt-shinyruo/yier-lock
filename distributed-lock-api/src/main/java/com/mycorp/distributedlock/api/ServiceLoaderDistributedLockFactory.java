@@ -221,12 +221,23 @@ public class ServiceLoaderDistributedLockFactory implements DistributedLockFacto
 
     @Override
     public DistributedLock getConfiguredLock(String name, LockConfigurationBuilder.LockConfiguration configuration) {
+        validateConfigurationSupport(configuration);
         return getLock(name); // 默认委托到基础方法
     }
 
     @Override
     public DistributedReadWriteLock getConfiguredReadWriteLock(String name, LockConfigurationBuilder.LockConfiguration configuration) {
+        validateConfigurationSupport(configuration);
         return getReadWriteLock(name); // 默认委托到基础方法
+    }
+
+    private void validateConfigurationSupport(LockConfigurationBuilder.LockConfiguration configuration) {
+        if (configuration == null) {
+            return;
+        }
+        if (configuration.isFairLock() || configuration.getLockType() == LockConfigurationBuilder.LockType.FAIR) {
+            throw new UnsupportedOperationException("Fair locks are not supported by ServiceLoaderDistributedLockFactory");
+        }
     }
 
     @Override

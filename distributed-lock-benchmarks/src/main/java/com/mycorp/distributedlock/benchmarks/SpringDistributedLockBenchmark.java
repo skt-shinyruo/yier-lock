@@ -4,15 +4,21 @@ import com.mycorp.distributedlock.api.DistributedLock;
 import com.mycorp.distributedlock.redis.RedisDistributedLockFactory;
 import com.mycorp.distributedlock.springboot.SpringDistributedLockFactory;
 import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
-
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.RedisURI;
-
-import org.openjdk.jmh.annotations.*;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
-import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.utility.DockerImageName;
 
@@ -29,12 +35,10 @@ public class SpringDistributedLockBenchmark {
     private GenericContainer<?> redisContainer;
     private RedisClient redisClient;
     private RedisDistributedLockFactory directFactory;
-    private AnnotationConfigApplicationContext springContext;
     private SpringDistributedLockFactory springFactory;
 
     @Setup(Level.Trial)
     public void setupTrial() throws Exception {
-        // Start Redis container
         redisContainer = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
                 .withExposedPorts(6379);
         redisContainer.start();
@@ -47,21 +51,14 @@ public class SpringDistributedLockBenchmark {
                 .withPort(redisPort)
                 .build());
 
-        // Direct (non-Spring) factory for comparison
         directFactory = new RedisDistributedLockFactory(redisClient);
-
-        // Minimal Spring context for SpringDistributedLockFactory
-        springContext = new AnnotationConfigApplicationContext();
-        springContext.register(TestSpringConfig.class);
-        springContext.refresh();
-
-        springFactory = springContext.getBean(SpringDistributedLockFactory.class);
+        springFactory = new SpringDistributedLockFactory(redisClient, new DistributedLockProperties());
     }
 
     @TearDown(Level.Trial)
     public void tearDownTrial() {
-        if (springContext != null) {
-            springContext.close();
+        if (springFactory != null) {
+            springFactory.shutdown();
         }
         if (directFactory != null) {
             directFactory.shutdown();
@@ -75,10 +72,10 @@ public class SpringDistributedLockBenchmark {
     }
 
     /**
-     * Benchmark direct Redis lock acquisition and release (non-Spring baseline)
+     * Benchmark direct Redis lock acquisition and release (non-Spring baseline).
      */
     @Benchmark
-    public void directLockAcquireRelease(Blackhole bh) {
+    public void directLockAcquireRelease(Blackhole bh) throws InterruptedException {
         String lockKey = "bench-direct-" + Thread.currentThread().getId();
         DistributedLock lock = directFactory.getLock(lockKey);
 
@@ -91,11 +88,10 @@ public class SpringDistributedLockBenchmark {
     }
 
     /**
-     * Benchmark Spring-managed lock acquisition and release
-     * This measures the overhead of Spring factory instantiation and injection
+     * Benchmark Spring factory lock acquisition and release.
      */
     @Benchmark
-    public void springLockAcquireRelease(Blackhole bh) {
+    public void springLockAcquireRelease(Blackhole bh) throws InterruptedException {
         String lockKey = "bench-spring-" + Thread.currentThread().getId();
         DistributedLock lock = springFactory.getLock(lockKey);
 
@@ -107,34 +103,4 @@ public class SpringDistributedLockBenchmark {
         }
     }
 
-    /**
-     * To measure AOP overhead (from @DistributedLock annotation):
-     * 1. Run the above benchmarks with AOP enabled (default).
-     * 2. Temporarily disable the AOP Aspect in DistributedLockAutoConfiguration
-     *    by commenting out @EnableAspectJAutoProxy or the Aspect bean.
-     * 3. Rebuild and rerun benchmarks.
-     * 4. Compare springLockAcquireRelease results: difference is AOP proxy overhead.
-     * Note: This benchmark uses manual lock calls, so AOP overhead is in factory/AutoConfig,
-     * not annotation processing. For full annotation AOP, create a Spring @Service with
-     * @DistributedLock method and benchmark its invocation vs direct call.
-     */
-
-    @Configuration
-    static class TestSpringConfig {
-
-        @Bean
-        public DistributedLockProperties distributedLockProperties() {
-            DistributedLockProperties properties = new DistributedLockProperties();
-            // Default config; customize as needed for benchmark
-            return properties;
-        }
-
-        @Bean
-        public SpringDistributedLockFactory springDistributedLockFactory(
-                RedisClient redisClient,
-                DistributedLockProperties properties) {
-            // Manually wire for minimal context (bypasses full AutoConfiguration for benchmark isolation)
-            return new SpringDistributedLockFactory(redisClient, properties);
-        }
-    }
 }

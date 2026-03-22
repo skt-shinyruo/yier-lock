@@ -25,7 +25,7 @@ public class UnifiedLockConfiguration {
 
     public UnifiedLockConfiguration(Config config, Environment environment) {
         this.environment = environment;
-        this.config = config.withFallback(buildUnifiedConfig());
+        this.config = buildUnifiedConfig().withFallback(config);
     }
 
     /**

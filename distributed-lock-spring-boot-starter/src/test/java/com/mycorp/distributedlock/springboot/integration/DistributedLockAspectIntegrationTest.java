@@ -1,15 +1,15 @@
 package com.mycorp.distributedlock.springboot.integration;
 
-import com.mycorp.distributedlock.api.DistributedLock;
 import com.mycorp.distributedlock.api.DistributedLockFactory;
-import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
-import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
+import com.mycorp.distributedlock.api.LockConfigurationBuilder;
+import com.mycorp.distributedlock.api.annotation.DistributedLock;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionException;
-import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.lang.reflect.MethodSignature;
-import org.junit.jupiter.api.*;
+import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
+import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Bean;
@@ -18,356 +18,172 @@ import org.springframework.context.annotation.EnableAspectJAutoProxy;
 import org.springframework.stereotype.Service;
 import org.springframework.test.context.TestPropertySource;
 
-import java.lang.annotation.*;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
-/**
- * 分布式锁AOP切面集成测试
- * 
- * @since 3.0.0
- */
 @SpringBootTest(classes = {
-    DistributedLockAutoConfiguration.class,
-    DistributedLockAspectIntegrationTest.TestService.class
+    DistributedLockAspectIntegrationTest.AspectTestConfiguration.class,
+    DistributedLockAspectIntegrationTest.AspectTestService.class
 })
-@TestPropertySource(properties = {
-    "distributed.lock.aspect.enabled=true",
-    "distributed.lock.aspect.default-timeout=PT10S",
-    "distributed.lock.aspect.log-parameters=false"
-})
-@DisplayName("分布式锁AOP切面集成测试")
+@TestPropertySource(properties = "distributed.lock.aspect.default-timeout=PT9S")
+@DisplayName("Distributed lock aspect integration")
 class DistributedLockAspectIntegrationTest {
 
     @Autowired
-    private TestService testService;
+    private AspectTestService testService;
 
     @MockBean
     private DistributedLockFactory lockFactory;
 
-    @Nested
-    @DisplayName("注解驱动的锁功能测试")
-    class AnnotationDrivenLockTests {
+    @Test
+    @DisplayName("uses the annotation value and timeoutSeconds with the real tryLock signature")
+    void shouldAcquireLockUsingAnnotationValueAndTimeoutSeconds() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(true);
+        when(lockFactory.getLock("annotated-key")).thenReturn(lock);
 
-        @Test
-        @DisplayName("应该为带有@DistributedLock注解的方法自动添加锁功能")
-        void shouldAddLockingToAnnotatedMethods() throws Exception {
-            // Given
-            when(lockFactory.getLock("test-key")).thenReturn(mockLock());
-            
-            // When
-            String result = testService.annotatedMethod("test-arg");
-            
-            // Then
-            assertThat(result).isEqualTo("result-test-arg");
-            verify(lockFactory).getLock("test-key");
-        }
+        assertThat(testService.annotatedMethod()).isEqualTo("annotated");
 
-        @Test
-        @DisplayName("应该使用自定义锁键")
-        void shouldUseCustomLockKey() throws Exception {
-            // Given
-            when(lockFactory.getLock("custom-key")).thenReturn(mockLock());
-            
-            // When
-            String result = testService.customKeyMethod();
-            
-            // Then
-            assertThat(result).isEqualTo("custom-result");
-            verify(lockFactory).getLock("custom-key");
-        }
-
-        @Test
-        @DisplayName("应该生成基于方法签名的默认锁键")
-        void shouldGenerateDefaultLockKeyFromMethodSignature() throws Exception {
-            // Given
-            when(lockFactory.getLock(contains("TestService.defaultLockMethod"))).thenReturn(mockLock());
-            
-            // When
-            String result = testService.defaultLockMethod();
-            
-            // Then
-            assertThat(result).isEqualTo("default-result");
-            verify(lockFactory).getLock(contains("TestService.defaultLockMethod"));
-        }
-
-        @Test
-        @DisplayName("应该支持不同的锁类型配置")
-        void shouldSupportDifferentLockTypeConfigurations() throws Exception {
-            // Given
-            when(lockFactory.getLock("read-type")).thenReturn(mockLock());
-            when(lockFactory.getLock("write-type")).thenReturn(mockLock());
-            
-            // When
-            String readResult = testService.readLockMethod();
-            String writeResult = testService.writeLockMethod();
-            
-            // Then
-            assertThat(readResult).isEqualTo("read-result");
-            assertThat(writeResult).isEqualTo("write-result");
-            verify(lockFactory).getLock("read-type");
-            verify(lockFactory).getLock("write-type");
-        }
-
-        @Test
-        @DisplayName("应该在锁获取失败时返回默认值")
-        void shouldReturnDefaultValueOnLockFailure() throws Exception {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(mockLock.tryLock(anyLong(), any())).thenReturn(false);
-            when(lockFactory.getLock("fail-key")).thenReturn(mockLock);
-            
-            // When
-            String result = testService.failOnLockMethod();
-            
-            // Then
-            assertThat(result).isNull();
-            verify(mockLock).tryLock(anyLong(), any());
-        }
-
-        @Test
-        @DisplayName("应该在设置throwExceptionOnFailure时抛出异常")
-        void shouldThrowExceptionWhenConfigured() {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(mockLock.tryLock(anyLong(), any())).thenReturn(false);
-            when(lockFactory.getLock("exception-key")).thenReturn(mockLock);
-            
-            // When & Then
-            assertThatThrownBy(() -> testService.exceptionOnLockMethod())
-                .isInstanceOf(LockAcquisitionException.class)
-                .hasMessageContaining("Failed to acquire lock");
-        }
+        verify(lockFactory).getLock("annotated-key");
+        verify(lock).tryLock(7L, 7L, TimeUnit.SECONDS);
+        verify(lock).unlock();
     }
 
-    @Nested
-    @DisplayName("异步方法测试")
-    class AsyncMethodTests {
+    @Test
+    @DisplayName("falls back to the configured aspect timeout when the annotation timeout is non-positive")
+    void shouldUseConfiguredDefaultTimeoutWhenAnnotationTimeoutIsNonPositive() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(true);
+        when(lockFactory.getLock("default-timeout-key")).thenReturn(lock);
 
-        @Test
-        @DisplayName("应该支持异步方法")
-        void shouldSupportAsyncMethods() throws Exception {
-            // Given
-            when(lockFactory.getLock("async-key")).thenReturn(mockLock());
-            
-            // When
-            CompletableFuture<String> result = testService.asyncMethod();
-            
-            // Then
-            assertThat(result).isCompletedWithValue("async-result");
-            verify(lockFactory).getLock("async-key");
-        }
+        assertThat(testService.defaultTimeoutMethod()).isEqualTo("default-timeout");
 
-        @Test
-        @DisplayName("应该正确处理CompletableFuture返回值")
-        void shouldHandleCompletableFutureReturnType() throws Exception {
-            // Given
-            when(lockFactory.getLock("future-key")).thenReturn(mockLock());
-            
-            // When
-            CompletableFuture<String> result = testService.futureReturnMethod();
-            
-            // Then
-            assertThat(result.get(5, TimeUnit.SECONDS)).isEqualTo("future-result");
-        }
+        verify(lock).tryLock(9L, 9L, TimeUnit.SECONDS);
+        verify(lock).unlock();
     }
 
-    @Nested
-    @DisplayName("锁续期和超时测试")
-    class LockRenewalAndTimeoutTests {
+    @Test
+    @DisplayName("generates a default key from the target type and method name when annotation value is empty")
+    void shouldGenerateDefaultLockKeyWhenAnnotationValueIsEmpty() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(true);
+        when(lockFactory.getLock("AspectTestService.defaultKeyMethod")).thenReturn(lock);
 
-        @Test
-        @DisplayName("应该使用注解中指定的超时时间")
-        void shouldUseSpecifiedTimeoutFromAnnotation() throws Exception {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(lockFactory.getLock("timeout-key")).thenReturn(mockLock);
-            
-            // When
-            testService.customTimeoutMethod();
-            
-            // Then
-            verify(mockLock).tryLock(eq(5000L), eq(TimeUnit.MILLISECONDS));
-        }
+        assertThat(testService.defaultKeyMethod()).isEqualTo("default-key");
 
-        @Test
-        @DisplayName("应该使用注解中指定的租约时间")
-        void shouldUseSpecifiedLeaseTimeFromAnnotation() throws Exception {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(lockFactory.getLock("lease-key")).thenReturn(mockLock);
-            
-            // When
-            testService.customLeaseTimeMethod();
-            
-            // Then
-            verify(mockLock).tryLock(anyLong(), eq(TimeUnit.MILLISECONDS));
-        }
+        verify(lockFactory).getLock("AspectTestService.defaultKeyMethod");
+        verify(lock).tryLock(2L, 2L, TimeUnit.SECONDS);
     }
 
-    @Nested
-    @DisplayName("错误处理和恢复测试")
-    class ErrorHandlingAndRecoveryTests {
+    @Test
+    @DisplayName("routes fair annotations through configured lock acquisition")
+    void shouldUseConfiguredLockWhenFairLockIsRequested() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(true);
+        when(lockFactory.getConfiguredLock(eq("fair-key"), any())).thenReturn(lock);
 
-        @Test
-        @DisplayName("应该在方法执行异常时正确释放锁")
-        void shouldReleaseLockOnMethodExecutionException() throws Exception {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(lockFactory.getLock("exception-exec-key")).thenReturn(mockLock);
-            
-            // When
-            assertThatThrownBy(() -> testService.methodThrowsException())
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("Test exception");
-            
-            // Then
-            verify(mockLock).tryLock(anyLong(), any());
-            verify(mockLock).unlock();
-        }
+        assertThat(testService.fairMethod()).isEqualTo("fair");
 
-        @Test
-        @DisplayName("应该在锁获取成功后执行清理操作")
-        void shouldPerformCleanupAfterSuccessfulLockAcquisition() throws Exception {
-            // Given
-            var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-            when(mockLock.tryLock(anyLong(), any())).thenReturn(true);
-            when(lockFactory.getLock("cleanup-key")).thenReturn(mockLock);
-            
-            // When
-            testService.normalExecutionMethod();
-            
-            // Then
-            verify(mockLock).unlock();
-        }
+        verify(lockFactory).getConfiguredLock(
+            eq("fair-key"),
+            argThat(configuration ->
+                configuration != null
+                    && "fair-key".equals(configuration.getName())
+                    && configuration.isFairLock()
+                    && configuration.getWaitTime(TimeUnit.SECONDS) == 5L
+                    && configuration.getLeaseTime(TimeUnit.SECONDS) == 5L
+            )
+        );
+        verify(lock).tryLock(5L, 5L, TimeUnit.SECONDS);
+        verify(lock).unlock();
     }
 
-    @Nested
-    @DisplayName("配置和条件测试")
-    class ConfigurationAndConditionTests {
+    @Test
+    @DisplayName("throws LockAcquisitionException when the lock cannot be obtained")
+    void shouldThrowWhenLockCannotBeAcquired() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(false);
+        when(lockFactory.getLock("failing-key")).thenReturn(lock);
 
-        @Test
-        @DisplayName("应该在禁用AOP时不创建切面Bean")
-        void shouldNotCreateAspectWhenDisabled() {
-            // 这个测试需要不同的Spring上下文配置
-            // 实际实现会通过不同的配置文件或条件来测试
-        }
+        assertThatThrownBy(() -> testService.failingMethod())
+            .isInstanceOf(LockAcquisitionException.class)
+            .hasMessageContaining("failing-key");
 
-        @Test
-        @DisplayName("应该支持方法级配置覆盖")
-        void shouldSupportMethodLevelConfigurationOverride() throws Exception {
-            // Given
-            when(lockFactory.getLock("override-key")).thenReturn(mockLock());
-            
-            // When
-            String result = testService.overrideConfigMethod();
-            
-            // Then
-            assertThat(result).isEqualTo("override-result");
-            verify(lockFactory).getLock("override-key");
-        }
+        verify(lock).tryLock(3L, 3L, TimeUnit.SECONDS);
+        verify(lockFactory).getLock("failing-key");
     }
 
-    // 辅助方法
-    private com.mycorp.distributedlock.api.DistributedLock mockLock() {
-        var mockLock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
-        when(mockLock.tryLock(anyLong(), any())).thenReturn(true);
-        return mockLock;
+    @Test
+    @DisplayName("releases the lock when the intercepted method throws")
+    void shouldReleaseLockWhenInterceptedMethodThrows() throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mockLock(true);
+        when(lockFactory.getLock("exception-key")).thenReturn(lock);
+
+        assertThatThrownBy(() -> testService.exceptionMethod())
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessage("boom");
+
+        verify(lock).tryLock(4L, 4L, TimeUnit.SECONDS);
+        verify(lock).unlock();
     }
 
-    // 测试服务类
-    @Service
-    static class TestService {
+    @Configuration
+    @EnableAspectJAutoProxy
+    @EnableConfigurationProperties(DistributedLockProperties.class)
+    static class AspectTestConfiguration {
 
-        @DistributedLock(key = "test-key")
-        public String annotatedMethod(String arg) {
-            return "result-" + arg;
-        }
-
-        @DistributedLock(key = "custom-key")
-        public String customKeyMethod() {
-            return "custom-result";
-        }
-
-        @DistributedLock
-        public String defaultLockMethod() {
-            return "default-result";
-        }
-
-        @DistributedLock(key = "read-type", lockType = DistributedLock.LockType.READ)
-        public String readLockMethod() {
-            return "read-result";
-        }
-
-        @DistributedLock(key = "write-type", lockType = DistributedLock.LockType.WRITE)
-        public String writeLockMethod() {
-            return "write-result";
-        }
-
-        @DistributedLock(key = "fail-key", throwExceptionOnFailure = false)
-        public String failOnLockMethod() {
-            return "fail-result";
-        }
-
-        @DistributedLock(key = "exception-key", throwExceptionOnFailure = true)
-        public String exceptionOnLockMethod() {
-            return "exception-result";
-        }
-
-        @DistributedLock(key = "async-key")
-        public CompletableFuture<String> asyncMethod() {
-            return CompletableFuture.supplyAsync(() -> "async-result");
-        }
-
-        @DistributedLock(key = "future-key")
-        public CompletableFuture<String> futureReturnMethod() {
-            return CompletableFuture.completedFuture("future-result");
-        }
-
-        @DistributedLock(key = "timeout-key", waitTime = "5s")
-        public String customTimeoutMethod() {
-            return "timeout-result";
-        }
-
-        @DistributedLock(key = "lease-key", leaseTime = "30s")
-        public String customLeaseTimeMethod() {
-            return "lease-result";
-        }
-
-        @DistributedLock(key = "exception-exec-key")
-        public String methodThrowsException() {
-            throw new RuntimeException("Test exception");
-        }
-
-        @DistributedLock(key = "cleanup-key")
-        public String normalExecutionMethod() {
-            return "cleanup-result";
-        }
-
-        @DistributedLock(
-            key = "override-key",
-            lockType = DistributedLock.LockType.WRITE,
-            waitTime = "15s",
-            leaseTime = "60s"
-        )
-        public String overrideConfigMethod() {
-            return "override-result";
-        }
-    }
-}
-
-// 测试配置类
-@Configuration
-@EnableAspectJAutoProxy
-class TestConfiguration {
-    @Bean
-    public DistributedLockAspect distributedLockAspect(
+        @Bean
+        DistributedLockAspect distributedLockAspect(
             DistributedLockFactory lockFactory,
-            com.mycorp.distributedlock.core.config.UnifiedLockConfiguration configuration) {
-        return new DistributedLockAspect(lockFactory, configuration);
+            DistributedLockProperties properties
+        ) {
+            return new DistributedLockAspect(lockFactory, properties);
+        }
+    }
+
+    @Service
+    static class AspectTestService {
+
+        @DistributedLock(value = "annotated-key", timeoutSeconds = 7)
+        String annotatedMethod() {
+            return "annotated";
+        }
+
+        @DistributedLock(value = "default-timeout-key", timeoutSeconds = 0)
+        String defaultTimeoutMethod() {
+            return "default-timeout";
+        }
+
+        @DistributedLock(timeoutSeconds = 2)
+        String defaultKeyMethod() {
+            return "default-key";
+        }
+
+        @DistributedLock(value = "fair-key", timeoutSeconds = 5, fair = true)
+        String fairMethod() {
+            return "fair";
+        }
+
+        @DistributedLock(value = "failing-key", timeoutSeconds = 3)
+        String failingMethod() {
+            return "unreachable";
+        }
+
+        @DistributedLock(value = "exception-key", timeoutSeconds = 4)
+        String exceptionMethod() {
+            throw new IllegalStateException("boom");
+        }
+    }
+
+    private static com.mycorp.distributedlock.api.DistributedLock mockLock(boolean acquired) throws Exception {
+        com.mycorp.distributedlock.api.DistributedLock lock = mock(com.mycorp.distributedlock.api.DistributedLock.class);
+        when(lock.tryLock(anyLong(), anyLong(), any(TimeUnit.class))).thenReturn(acquired);
+        when(lock.isHeldByCurrentThread()).thenReturn(acquired);
+        return lock;
     }
 }

@@ -8,561 +8,641 @@ import io.lettuce.core.api.sync.RedisCommands;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.*;
-import java.util.concurrent.*;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
-import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
- * Redis批量锁操作实现
- * 
- * 特性：
- * - 事务性批量操作
- * - 多种锁获取策略
- * - 死锁检测和预防
- * - 回滚机制
- * - 性能优化
- * - 事件驱动通知
+ * Minimal compile-safe Redis batch operations facade for the current branch.
+ *
+ * <p>The previous implementation had drifted well past the current
+ * {@link BatchLockOperations} API. This version keeps the constructors and
+ * helper methods still referenced elsewhere, but reduces behavior to a thin
+ * sequential wrapper that is easy to reason about and compile.</p>
  */
 public class RedisBatchLockOperations implements BatchLockOperations<DistributedLock> {
-    
+
     private static final Logger logger = LoggerFactory.getLogger(RedisBatchLockOperations.class);
-    
-    // Redis键命名空间
-    private static final String BATCH_LOCK_PREFIX = "batch-lock:";
-    private static final String BATCH_SESSION_PREFIX = "batch-session:";
-    private static final String BATCH_LOCKS_SET_PREFIX = "batch-locks-set:";
-    private static final String BATCH_TIMEOUT_SET_PREFIX = "batch-timeout:";
-    
-    // 配置参数
-    private static final int MAX_BATCH_SIZE = 100;
-    private static final int DEFAULT_BATCH_TIMEOUT = 30000; // 30秒
-    private static final int CLEANUP_INTERVAL = 60000; // 60秒
-    
-    // 锁相关
+    private static final long DEFAULT_LEASE_TIME_SECONDS = 30L;
+    private static final ScheduledExecutorService LOCAL_RENEWAL_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread thread = new Thread(r, "redis-batch-local-renewal");
+                thread.setDaemon(true);
+                return thread;
+            });
+
     private final RedisCommands<String, String> commands;
     private final long defaultLeaseTimeSeconds;
-    
-    // 状态管理
-    private final AtomicBoolean isClosed = new AtomicBoolean(false);
-    private final AtomicLong sessionIdGenerator = new AtomicLong(0);
-    private final Map<String, BatchLockSession> activeSessions = new ConcurrentHashMap<>();
-    
-    // 线程池
-    private final ExecutorService batchOperationExecutor;
-    private final ScheduledExecutorService cleanupExecutor;
-    
-    // 事件管理
-    private final java.util.List<LockEventListener<DistributedLock>> eventListeners = 
-            new java.util.concurrent.CopyOnWriteArrayList<>();
-    
-    // 性能指标
-    private final AtomicLong totalBatchOperations = new AtomicLong(0);
-    private final AtomicLong successfulBatchOperations = new AtomicLong(0);
-    private final AtomicLong failedBatchOperations = new AtomicLong(0);
-    private final AtomicLong totalBatchLocksAcquired = new AtomicLong(0);
-    private final AtomicLong totalBatchLocksReleased = new AtomicLong(0);
-    private final AtomicLong totalRollbackOperations = new AtomicLong(0);
-    
+    private final Function<String, DistributedLock> lockSupplier;
+    private final ExecutorService executor;
+    private final AtomicBoolean closed = new AtomicBoolean(false);
+    private final AtomicBoolean deadlockDetectionEnabled = new AtomicBoolean(false);
+    private final AtomicLong sessionSequence = new AtomicLong();
+    private final AtomicLong totalBatchOperations = new AtomicLong();
+    private final AtomicLong successfulBatchOperations = new AtomicLong();
+    private final AtomicLong failedBatchOperations = new AtomicLong();
+    private final AtomicLong totalBatchLocksAcquired = new AtomicLong();
+    private final AtomicLong totalBatchLocksReleased = new AtomicLong();
+    private final AtomicLong totalRollbackOperations = new AtomicLong();
+    private final AtomicLong totalOperationTimeMs = new AtomicLong();
+    private final ConcurrentMap<String, BatchSession> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, DistributedLock> heldLocksByThreadAndName = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, LocalLockState> localLockStates = new ConcurrentHashMap<>();
+    private final List<LockEventListener<DistributedLock>> eventListeners = new CopyOnWriteArrayList<>();
+    private volatile LockStrategy batchStrategy = LockStrategy.ALL_OR_NOTHING;
+
     public RedisBatchLockOperations(RedisCommands<String, String> commands, long leaseTimeSeconds) {
         this.commands = commands;
-        this.defaultLeaseTimeSeconds = leaseTimeSeconds;
-        
-        // 初始化线程池
-        this.batchOperationExecutor = Executors.newFixedThreadPool(
-            Runtime.getRuntime().availableProcessors(), r -> {
-                Thread t = new Thread(r, "redis-batch-lock-ops");
-                t.setDaemon(true);
-                return t;
-            }
-        );
-        
-        this.cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "redis-batch-cleanup");
-            t.setDaemon(true);
-            return t;
-        });
-        
-        // 启动清理任务
-        startCleanupTask();
-        
-        logger.debug("RedisBatchLockOperations initialized");
+        this.defaultLeaseTimeSeconds = Math.max(1L, leaseTimeSeconds);
+        this.lockSupplier = this::createCommandBackedLock;
+        this.executor = createExecutor("redis-batch-ops");
     }
-    
+
+    /**
+     * Legacy constructor retained for benchmark code on this branch.
+     *
+     * <p>The concrete factory type has drifted and is not always available in
+     * this module, so the facade accepts {@link Object} and uses reflection to
+     * call {@code getLock(String)} or {@code createLock(String)} when present.</p>
+     */
+    public RedisBatchLockOperations(Object lockFactory) {
+        this.commands = null;
+        this.defaultLeaseTimeSeconds = DEFAULT_LEASE_TIME_SECONDS;
+        this.lockSupplier = resolveFactorySupplier(lockFactory, this::createInMemoryLock);
+        this.executor = createExecutor("redis-batch-factory");
+    }
+
     @Override
-    public BatchLockResult<DistributedLock> batchLock(List<String> lockNames, long leaseTime, TimeUnit unit) 
+    public BatchLockResult<DistributedLock> batchLock(List<String> lockNames, long leaseTime, TimeUnit unit)
             throws InterruptedException {
         checkNotClosed();
-        
-        if (lockNames == null || lockNames.isEmpty()) {
-            throw new IllegalArgumentException("Lock names cannot be null or empty");
-        }
-        
-        if (lockNames.size() > MAX_BATCH_SIZE) {
-            throw new IllegalArgumentException("Batch size cannot exceed " + MAX_BATCH_SIZE);
-        }
-        
-        long startTime = System.currentTimeMillis();
-        String sessionId = generateSessionId();
+        validateLockNames(lockNames);
+
+        TimeUnit resolvedUnit = unit != null ? unit : TimeUnit.SECONDS;
+        long startedAt = System.currentTimeMillis();
+        long expirationTime = startedAt + Math.max(0L, resolvedUnit.toMillis(leaseTime));
+        BatchSession session = new BatchSession(nextSessionId(), lockNames, startedAt, expirationTime);
+        activeSessions.put(session.getSessionId(), session);
+
         List<DistributedLock> acquiredLocks = new ArrayList<>();
         List<String> failedLockNames = new ArrayList<>();
-        
+
         try {
-            // 创建批处理会话
-            BatchLockSession session = new BatchLockSession(sessionId, lockNames, 
-                                                           System.currentTimeMillis() + unit.toMillis(leaseTime));
-            activeSessions.put(sessionId, session);
-            
-            // 执行批量锁获取
-            boolean allAcquired = executeBatchLockOperation(lockNames, leaseTime, unit, 
-                                                           acquiredLocks, failedLockNames, session);
-            
-            long operationTime = System.currentTimeMillis() - startTime;
-            totalBatchOperations.incrementAndGet();
-            
-            if (allAcquired && failedLockNames.isEmpty()) {
-                successfulBatchOperations.incrementAndGet();
-                totalBatchLocksAcquired.addAndGet(acquiredLocks.size());
-                
-                logger.debug("Batch lock operation completed successfully: {} locks acquired in {}ms", 
-                           acquiredLocks.size(), operationTime);
-            } else {
-                failedBatchOperations.incrementAndGet();
-                
-                // 如果部分失败，清理已获取的锁
-                cleanupPartialAcquisition(acquiredLocks);
-                logger.debug("Batch lock operation failed: {} locks failed, {} locks released", 
-                           failedLockNames.size(), acquiredLocks.size());
+            for (String lockName : lockNames) {
+                DistributedLock lock = getLock(lockName);
+                boolean acquired = lock.tryLock(0L, leaseTime, resolvedUnit);
+                if (!acquired) {
+                    failedLockNames.add(lockName);
+                    notifyAcquisitionFailed(lockName, null);
+                    if (shouldRollbackOnFailure()) {
+                        rollbackAcquiredLocks(acquiredLocks);
+                        session.markAsRolledBack();
+                        acquiredLocks.clear();
+                        break;
+                    }
+                    continue;
+                }
+
+                acquiredLocks.add(lock);
+                session.addAcquiredLock(lock);
+                notifyAcquired(lock);
             }
-            
-            return new BatchLockResultImpl(acquiredLocks, failedLockNames, 
-                                         failedLockNames.isEmpty(), operationTime);
-            
-        } catch (Exception e) {
-            // 发生异常，清理已获取的锁
-            cleanupPartialAcquisition(acquiredLocks);
-            totalBatchOperations.incrementAndGet();
-            failedBatchOperations.incrementAndGet();
-            
-            logger.error("Batch lock operation failed with exception", e);
+
+            boolean allSuccessful = failedLockNames.isEmpty();
+            long operationTimeMs = System.currentTimeMillis() - startedAt;
+            recordOperation(allSuccessful, acquiredLocks.size(), operationTimeMs);
+
+            if (allSuccessful) {
+                session.markAsCompleted();
+            }
+
+            return new SimpleBatchLockResult(acquiredLocks, failedLockNames, allSuccessful, operationTimeMs);
+        } catch (InterruptedException e) {
+            rollbackAcquiredLocks(acquiredLocks);
+            session.markAsRolledBack();
             throw e;
-            
+        } catch (RuntimeException e) {
+            rollbackAcquiredLocks(acquiredLocks);
+            session.markAsRolledBack();
+            throw e;
         } finally {
-            // 清理会话
-            activeSessions.remove(sessionId);
+            activeSessions.remove(session.getSessionId());
         }
     }
-    
+
     @Override
-    public CompletableFuture<BatchLockResult<DistributedLock>> batchLockAsync(List<String> lockNames, 
-                                                                             long leaseTime, TimeUnit unit) {
+    public CompletableFuture<BatchLockResult<DistributedLock>> batchLockAsync(List<String> lockNames,
+                                                                               long leaseTime,
+                                                                               TimeUnit unit) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 return batchLock(lockNames, leaseTime, unit);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw new CompletionException("Batch lock operation interrupted", e);
-            } catch (Exception e) {
-                throw new CompletionException("Batch lock operation failed", e);
+                throw new IllegalStateException("Batch lock interrupted", e);
             }
-        }, batchOperationExecutor);
+        }, executor);
     }
-    
+
     @Override
     public boolean batchUnlock(List<DistributedLock> locks) {
         checkNotClosed();
-        
         if (locks == null || locks.isEmpty()) {
             return true;
         }
-        
-        boolean allSuccess = true;
-        List<DistributedLock> locksToUnlock = new ArrayList<>(locks);
-        
-        try {
-            // 按相反顺序释放锁，避免死锁
-            Collections.reverse(locksToUnlock);
-            
-            for (DistributedLock lock : locksToUnlock) {
-                try {
-                    if (lock.isHeldByCurrentThread()) {
-                        lock.unlock();
-                        totalBatchLocksReleased.incrementAndGet();
-                    }
-                } catch (Exception e) {
-                    logger.warn("Failed to release lock: {}", lock.getName(), e);
-                    allSuccess = false;
-                }
+
+        boolean allSucceeded = true;
+        for (DistributedLock lock : locks) {
+            if (!releaseLockInstance(lock)) {
+                allSucceeded = false;
             }
-            
-            logger.debug("Batch unlock completed: {} locks, success: {}", locks.size(), allSuccess);
-            return allSuccess;
-            
-        } catch (Exception e) {
-            logger.error("Batch unlock operation failed", e);
-            return false;
         }
+        return allSucceeded;
     }
-    
+
     @Override
     public CompletableFuture<Boolean> batchUnlockAsync(List<DistributedLock> locks) {
-        return CompletableFuture.supplyAsync(() -> batchUnlock(locks), batchOperationExecutor);
+        return CompletableFuture.supplyAsync(() -> batchUnlock(locks), executor);
     }
-    
+
     @Override
-    public <R> R executeInTransaction(List<String> lockNames, long leaseTime, TimeUnit unit,
-                                    TransactionalLockCallback<R, DistributedLock> transactionCallback) throws Exception {
-        checkNotClosed();
-        
-        List<DistributedLock> acquiredLocks = new ArrayList<>();
-        List<String> failedLockNames = new ArrayList<>();
-        
+    public <R> R executeInTransaction(List<String> lockNames,
+                                      long leaseTime,
+                                      TimeUnit unit,
+                                      TransactionalLockCallback<R, DistributedLock> transactionCallback) throws Exception {
+        Objects.requireNonNull(transactionCallback, "transactionCallback");
+
+        BatchLockResult<DistributedLock> result = batchLock(lockNames, leaseTime, unit);
+        if (!result.isAllSuccessful()) {
+            throw new IllegalStateException("Failed to acquire all requested locks: " + result.getFailedLockNames());
+        }
+
         try {
-            // 获取所有锁
-            BatchLockResult<DistributedLock> result = batchLock(lockNames, leaseTime, unit);
-            acquiredLocks.addAll(result.getSuccessfulLocks());
-            failedLockNames.addAll(result.getFailedLockNames());
-            
-            if (!result.isAllSuccessful()) {
-                throw new RuntimeException("Failed to acquire all locks for transaction: " + failedLockNames);
-            }
-            
-            // 执行事务操作
-            R transactionResult = transactionCallback.execute(acquiredLocks);
-            
-            logger.debug("Transaction executed successfully with {} locks", acquiredLocks.size());
-            return transactionResult;
-            
-        } catch (Exception e) {
-            // 事务失败，释放已获取的锁
-            if (!acquiredLocks.isEmpty()) {
-                batchUnlock(acquiredLocks);
-            }
-            
-            logger.error("Transaction failed, rolled back {} locks", acquiredLocks.size(), e);
-            throw e;
-            
+            return transactionCallback.execute(result.getSuccessfulLocks());
         } finally {
-            // 确保释放所有锁
-            if (!acquiredLocks.isEmpty()) {
-                try {
-                    batchUnlock(acquiredLocks);
-                } catch (Exception e) {
-                    logger.warn("Error releasing locks after transaction", e);
-                }
-            }
+            batchUnlock(result.getSuccessfulLocks());
         }
     }
-    
+
     @Override
-    public <R> CompletableFuture<R> executeInTransactionAsync(List<String> lockNames, long leaseTime, TimeUnit unit,
-                                                            TransactionalLockCallback<R, DistributedLock> transactionCallback) {
+    public <R> CompletableFuture<R> executeInTransactionAsync(List<String> lockNames,
+                                                              long leaseTime,
+                                                              TimeUnit unit,
+                                                              TransactionalLockCallback<R, DistributedLock> transactionCallback) {
         return CompletableFuture.supplyAsync(() -> {
             try {
                 return executeInTransaction(lockNames, leaseTime, unit, transactionCallback);
             } catch (Exception e) {
-                throw new CompletionException("Transaction execution failed", e);
+                throw new IllegalStateException("Batch transaction failed", e);
             }
-        }, batchOperationExecutor);
+        }, executor);
     }
-    
+
     @Override
     public DistributedLock getLock(String name) {
         checkNotClosed();
-        return new FairRedisLock(BATCH_LOCK_PREFIX + name, commands, defaultLeaseTimeSeconds);
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Lock name cannot be null or blank");
+        }
+        return lockSupplier.apply(name);
     }
-    
+
     /**
-     * 添加事件监听器
+     * Legacy helper retained for benchmark code on this branch.
      */
+    public Map<String, Boolean> acquireMultipleLocks(List<String> lockNames,
+                                                     long waitTime,
+                                                     long leaseTime,
+                                                     TimeUnit unit) {
+        checkNotClosed();
+        validateLockNames(lockNames);
+
+        TimeUnit resolvedUnit = unit != null ? unit : TimeUnit.MILLISECONDS;
+        long startedAt = System.currentTimeMillis();
+        LinkedHashMap<String, Boolean> results = new LinkedHashMap<>();
+        LinkedHashMap<String, DistributedLock> acquiredLocks = new LinkedHashMap<>();
+
+        try {
+            for (String lockName : lockNames) {
+                DistributedLock lock = getLock(lockName);
+                boolean acquired = lock.tryLock(waitTime, leaseTime, resolvedUnit);
+                results.put(lockName, acquired);
+
+                if (acquired) {
+                    acquiredLocks.put(lockName, lock);
+                    notifyAcquired(lock);
+                    continue;
+                }
+
+                notifyAcquisitionFailed(lockName, null);
+                if (shouldRollbackOnFailure()) {
+                    rollbackNamedLocks(acquiredLocks);
+                    markAllAsFailed(lockNames, results);
+                    recordOperation(false, 0, System.currentTimeMillis() - startedAt);
+                    return results;
+                }
+            }
+
+            for (Map.Entry<String, DistributedLock> entry : acquiredLocks.entrySet()) {
+                rememberHeldLock(entry.getKey(), entry.getValue());
+            }
+
+            int successfulCount = (int) results.values().stream().filter(Boolean::booleanValue).count();
+            recordOperation(successfulCount == lockNames.size(), successfulCount, System.currentTimeMillis() - startedAt);
+            return results;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            rollbackNamedLocks(acquiredLocks);
+            markAllAsFailed(lockNames, results);
+            recordOperation(false, 0, System.currentTimeMillis() - startedAt);
+            return results;
+        } catch (RuntimeException e) {
+            rollbackNamedLocks(acquiredLocks);
+            markAllAsFailed(lockNames, results);
+            recordOperation(false, 0, System.currentTimeMillis() - startedAt);
+            throw e;
+        }
+    }
+
+    /**
+     * Legacy helper retained for benchmark code on this branch.
+     */
+    public Map<String, Boolean> releaseMultipleLocks(List<String> lockNames) {
+        checkNotClosed();
+
+        LinkedHashMap<String, Boolean> results = new LinkedHashMap<>();
+        if (lockNames == null || lockNames.isEmpty()) {
+            return results;
+        }
+
+        for (String lockName : lockNames) {
+            DistributedLock lock = heldLocksByThreadAndName.remove(threadLockKey(lockName));
+            boolean released = releaseLockInstance(lock);
+            results.put(lockName, released);
+        }
+        return results;
+    }
+
+    /**
+     * Legacy helper retained for benchmark code on this branch.
+     */
+    public Map<String, Boolean> renewMultipleLocks(List<String> lockNames) {
+        checkNotClosed();
+
+        LinkedHashMap<String, Boolean> results = new LinkedHashMap<>();
+        if (lockNames == null || lockNames.isEmpty()) {
+            return results;
+        }
+
+        for (String lockName : lockNames) {
+            DistributedLock lock = heldLocksByThreadAndName.get(threadLockKey(lockName));
+            boolean renewed = false;
+            if (lock != null) {
+                try {
+                    renewed = lock.renewLock(defaultLeaseTimeSeconds, TimeUnit.SECONDS);
+                    if (renewed) {
+                        notifyRenewed(lock, Instant.now().plusSeconds(defaultLeaseTimeSeconds));
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    renewed = false;
+                }
+            }
+            results.put(lockName, renewed);
+        }
+
+        return results;
+    }
+
     public void addLockEventListener(LockEventListener<DistributedLock> listener) {
         if (listener != null) {
             eventListeners.add(listener);
         }
     }
-    
-    /**
-     * 移除事件监听器
-     */
+
     public void removeLockEventListener(LockEventListener<DistributedLock> listener) {
         eventListeners.remove(listener);
     }
-    
-    /**
-     * 获取批处理统计信息
-     */
+
     public BatchOperationsStatistics getStatistics() {
         return new BatchOperationsStatistics(
-            totalBatchOperations.get(),
-            successfulBatchOperations.get(),
-            failedBatchOperations.get(),
-            totalBatchLocksAcquired.get(),
-            totalBatchLocksReleased.get(),
-            totalRollbackOperations.get(),
-            getAverageOperationTime(),
-            activeSessions.size()
+                totalBatchOperations.get(),
+                successfulBatchOperations.get(),
+                failedBatchOperations.get(),
+                totalBatchLocksAcquired.get(),
+                totalBatchLocksReleased.get(),
+                totalRollbackOperations.get(),
+                averageOperationTimeMs(),
+                activeSessions.size()
         );
     }
-    
-    /**
-     * 获取活跃会话信息
-     */
+
     public List<BatchLockSessionInfo> getActiveSessions() {
-        return activeSessions.values().stream()
-                .map(session -> new BatchLockSessionInfo(
-                    session.getSessionId(),
-                    session.getLockNames(),
-                    session.getCreationTime(),
-                    session.getExpirationTime(),
-                    session.getStatus()
-                ))
-                .collect(java.util.stream.Collectors.toList());
+        List<BatchLockSessionInfo> sessions = new ArrayList<>();
+        for (BatchSession session : activeSessions.values()) {
+            sessions.add(session.toInfo());
+        }
+        return sessions;
     }
-    
-    /**
-     * 清理过期的批处理会话
-     */
+
     public void cleanupExpiredSessions() {
-        long currentTime = System.currentTimeMillis();
-        List<String> expiredSessionIds = new ArrayList<>();
-        
-        for (Map.Entry<String, BatchLockSession> entry : activeSessions.entrySet()) {
-            if (entry.getValue().isExpired(currentTime)) {
-                expiredSessionIds.add(entry.getKey());
+        long now = System.currentTimeMillis();
+        for (BatchSession session : new ArrayList<>(activeSessions.values())) {
+            if (!session.isExpired(now)) {
+                continue;
             }
-        }
-        
-        for (String sessionId : expiredSessionIds) {
-            try {
-                cleanupSession(sessionId);
-            } catch (Exception e) {
-                logger.warn("Error cleaning up expired session: {}", sessionId, e);
+
+            if (activeSessions.remove(session.getSessionId(), session)) {
+                session.markAsExpired();
+                rollbackAcquiredLocks(session.getAcquiredLocks());
             }
-        }
-        
-        if (!expiredSessionIds.isEmpty()) {
-            logger.info("Cleaned up {} expired batch lock sessions", expiredSessionIds.size());
         }
     }
-    
-    /**
-     * 设置批处理策略
-     */
+
     public void setBatchStrategy(LockStrategy strategy) {
-        // 策略配置逻辑
-        logger.debug("Batch strategy set to: {}", strategy);
+        if (strategy != null) {
+            this.batchStrategy = strategy;
+        }
     }
-    
-    /**
-     * 启用死锁检测
-     */
+
     public void enableDeadlockDetection() {
-        // 死锁检测逻辑
-        logger.debug("Deadlock detection enabled");
+        deadlockDetectionEnabled.set(true);
     }
-    
-    /**
-     * 禁用死锁检测
-     */
+
     public void disableDeadlockDetection() {
-        // 死锁检测禁用逻辑
-        logger.debug("Deadlock detection disabled");
+        deadlockDetectionEnabled.set(false);
     }
-    
-    /**
-     * 手动回滚批处理操作
-     */
+
     public boolean rollbackBatchOperation(String sessionId) {
-        BatchLockSession session = activeSessions.get(sessionId);
+        BatchSession session = activeSessions.remove(sessionId);
         if (session == null) {
-            logger.warn("Session not found for rollback: {}", sessionId);
             return false;
         }
-        
-        try {
-            List<DistributedLock> locks = session.getAcquiredLocks();
-            if (!locks.isEmpty()) {
-                batchUnlock(locks);
-            }
-            
-            session.markAsRolledBack();
-            totalRollbackOperations.incrementAndGet();
-            
-            logger.debug("Batch operation rolled back successfully: {}", sessionId);
-            return true;
-            
-        } catch (Exception e) {
-            logger.error("Failed to rollback batch operation: {}", sessionId, e);
-            return false;
-        }
+
+        session.markAsRolledBack();
+        rollbackAcquiredLocks(session.getAcquiredLocks());
+        return true;
     }
-    
+
     @Override
     public void close() {
-        if (isClosed.getAndSet(true)) {
+        if (!closed.compareAndSet(false, true)) {
             return;
         }
-        
-        logger.debug("Closing RedisBatchLockOperations");
-        
-        try {
-            // 清理所有活跃会话
-            for (String sessionId : new ArrayList<>(activeSessions.keySet())) {
-                cleanupSession(sessionId);
-            }
-            
-            // 关闭线程池
-            batchOperationExecutor.shutdown();
-            cleanupExecutor.shutdown();
-            
-            if (!batchOperationExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                batchOperationExecutor.shutdownNow();
-            }
-            if (!cleanupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
-                cleanupExecutor.shutdownNow();
-            }
-            
-            // 清理事件监听器
-            eventListeners.clear();
-            
-            logger.debug("RedisBatchLockOperations closed");
-        } catch (Exception e) {
-            logger.error("Error closing RedisBatchLockOperations", e);
-        }
-    }
-    
-    // 私有方法
-    
-    private boolean executeBatchLockOperation(List<String> lockNames, long leaseTime, TimeUnit unit,
-                                            List<DistributedLock> acquiredLocks, List<String> failedLockNames,
-                                            BatchLockSession session) {
-        // 按锁名排序，确保获取顺序一致
-        List<String> sortedLockNames = new ArrayList<>(lockNames);
-        Collections.sort(sortedLockNames);
-        
-        boolean allSuccess = true;
-        
-        for (String lockName : sortedLockNames) {
+
+        for (DistributedLock lock : heldLocksByThreadAndName.values()) {
             try {
-                DistributedLock lock = getLock(lockName);
-                boolean acquired = lock.tryLock(0, leaseTime, unit);
-                
-                if (acquired) {
-                    acquiredLocks.add(lock);
-                    session.addAcquiredLock(lock);
-                    
-                    // 通知事件
-                    notifyEvent(LockEvent.ofLockAcquired(lock, createMetadata()));
-                } else {
-                    failedLockNames.add(lockName);
-                    allSuccess = false;
-                    
-                    // 通知事件
-                    notifyEvent(LockEvent.ofLockAcquisitionFailed(lockName, 
-                                                               new RuntimeException("Failed to acquire lock"), 
-                                                               createMetadata()));
+                if (lock != null && lock.isHeldByCurrentThread()) {
+                    lock.close();
                 }
-                
-            } catch (Exception e) {
-                failedLockNames.add(lockName);
-                allSuccess = false;
-                
-                // 通知事件
-                notifyEvent(LockEvent.ofLockAcquisitionFailed(lockName, e, createMetadata()));
+            } catch (RuntimeException e) {
+                logger.debug("Failed to close held lock {}", lock != null ? lock.getName() : "<null>", e);
             }
         }
-        
-        return allSuccess;
+
+        heldLocksByThreadAndName.clear();
+        activeSessions.clear();
+        eventListeners.clear();
+        executor.shutdownNow();
     }
-    
-    private void cleanupPartialAcquisition(List<DistributedLock> locks) {
-        for (DistributedLock lock : locks) {
-            try {
-                if (lock.isHeldByCurrentThread()) {
-                    lock.unlock();
-                    notifyEvent(LockEvent.ofLockReleased(lock, createMetadata()));
-                }
-            } catch (Exception e) {
-                logger.warn("Error cleaning up lock during partial acquisition cleanup: {}", 
-                           lock.getName(), e);
-            }
+
+    private ExecutorService createExecutor(String threadPrefix) {
+        return Executors.newCachedThreadPool(r -> {
+            Thread thread = new Thread(r, threadPrefix);
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private Function<String, DistributedLock> resolveFactorySupplier(Object lockFactory,
+                                                                     Function<String, DistributedLock> fallback) {
+        if (lockFactory == null) {
+            return fallback;
         }
-    }
-    
-    private void cleanupSession(String sessionId) {
-        BatchLockSession session = activeSessions.remove(sessionId);
-        if (session != null) {
-            try {
-                List<DistributedLock> locks = session.getAcquiredLocks();
-                if (!locks.isEmpty()) {
-                    batchUnlock(locks);
-                }
-                
-                // 清理Redis中的会话数据
-                cleanupRedisSessionData(sessionId);
-                
-                logger.debug("Session cleaned up: {}", sessionId);
-            } catch (Exception e) {
-                logger.warn("Error cleaning up session: {}", sessionId, e);
-            }
-        }
-    }
-    
-    private void cleanupRedisSessionData(String sessionId) {
-        try {
-            String sessionKey = BATCH_SESSION_PREFIX + sessionId;
-            String locksSetKey = BATCH_LOCKS_SET_PREFIX + sessionId;
-            String timeoutKey = BATCH_TIMEOUT_SET_PREFIX + sessionId;
-            
-            commands.del(sessionKey);
-            commands.del(locksSetKey);
-            commands.del(timeoutKey);
-        } catch (Exception e) {
-            logger.debug("Failed to cleanup Redis session data for: {}", sessionId, e);
-        }
-    }
-    
-    private void startCleanupTask() {
-        cleanupExecutor.scheduleAtFixedRate(() -> {
-            try {
-                cleanupExpiredSessions();
-            } catch (Exception e) {
-                logger.debug("Cleanup task error", e);
-            }
-        }, CLEANUP_INTERVAL, CLEANUP_INTERVAL, TimeUnit.MILLISECONDS);
-    }
-    
-    private String generateSessionId() {
-        return "batch-" + System.currentTimeMillis() + "-" + sessionIdGenerator.incrementAndGet();
-    }
-    
-    private void notifyEvent(LockEvent<?> event) {
-        for (LockEventListener<DistributedLock> listener : eventListeners) {
-            if (listener.shouldHandleEvent(event)) {
+
+        return name -> {
+            for (String methodName : List.of("getLock", "createLock")) {
                 try {
-                    listener.onEvent(event);
-                } catch (Exception e) {
-                    logger.warn("Error in batch lock event listener", e);
+                    Object value = lockFactory.getClass().getMethod(methodName, String.class).invoke(lockFactory, name);
+                    if (value instanceof DistributedLock distributedLock) {
+                        return distributedLock;
+                    }
+                } catch (ReflectiveOperationException ignored) {
+                    // Try the next known method name.
                 }
+            }
+            return fallback.apply(name);
+        };
+    }
+
+    private DistributedLock createCommandBackedLock(String name) {
+        if (commands == null) {
+            return createInMemoryLock(name);
+        }
+
+        try {
+            Class<?> lockClass = Class.forName("com.mycorp.distributedlock.redis.SimpleRedisLock");
+            Object lock = lockClass
+                    .getConstructor(String.class, RedisCommands.class, long.class)
+                    .newInstance(name, commands, defaultLeaseTimeSeconds);
+            if (lock instanceof DistributedLock distributedLock) {
+                return distributedLock;
+            }
+        } catch (ReflectiveOperationException e) {
+            logger.debug("Falling back to in-memory batch lock for {}", name, e);
+        }
+
+        return createInMemoryLock(name);
+    }
+
+    private DistributedLock createInMemoryLock(String name) {
+        LocalLockState state = localLockStates.computeIfAbsent(name, ignored -> new LocalLockState());
+        return new LocalDistributedLock(name, state, defaultLeaseTimeSeconds);
+    }
+
+    private void validateLockNames(List<String> lockNames) {
+        if (lockNames == null || lockNames.isEmpty()) {
+            throw new IllegalArgumentException("Lock names cannot be null or empty");
+        }
+    }
+
+    private void checkNotClosed() {
+        if (closed.get()) {
+            throw new IllegalStateException("RedisBatchLockOperations is closed");
+        }
+    }
+
+    private void rememberHeldLock(String lockName, DistributedLock lock) {
+        DistributedLock previous = heldLocksByThreadAndName.put(threadLockKey(lockName), lock);
+        if (previous != null && previous != lock) {
+            releaseQuietly(previous);
+        }
+    }
+
+    private boolean shouldRollbackOnFailure() {
+        return batchStrategy != LockStrategy.PARTIAL_ACCEPT;
+    }
+
+    private void rollbackAcquiredLocks(List<DistributedLock> acquiredLocks) {
+        if (acquiredLocks == null || acquiredLocks.isEmpty()) {
+            return;
+        }
+
+        totalRollbackOperations.incrementAndGet();
+        for (DistributedLock lock : acquiredLocks) {
+            releaseQuietly(lock);
+        }
+    }
+
+    private void rollbackNamedLocks(Map<String, DistributedLock> acquiredLocks) {
+        if (acquiredLocks == null || acquiredLocks.isEmpty()) {
+            return;
+        }
+
+        totalRollbackOperations.incrementAndGet();
+        for (Map.Entry<String, DistributedLock> entry : acquiredLocks.entrySet()) {
+            releaseQuietly(entry.getValue());
+        }
+        acquiredLocks.clear();
+    }
+
+    private void markAllAsFailed(List<String> lockNames, Map<String, Boolean> results) {
+        if (lockNames == null) {
+            return;
+        }
+        for (String lockName : lockNames) {
+            results.put(lockName, false);
+        }
+    }
+
+    private boolean releaseLockInstance(DistributedLock lock) {
+        if (lock == null) {
+            return false;
+        }
+
+        try {
+            if (!lock.isHeldByCurrentThread()) {
+                return false;
+            }
+
+            lock.unlock();
+            totalBatchLocksReleased.incrementAndGet();
+            notifyReleased(lock);
+            return true;
+        } catch (RuntimeException e) {
+            logger.debug("Failed to release lock {}", lock.getName(), e);
+            return false;
+        }
+    }
+
+    private void releaseQuietly(DistributedLock lock) {
+        try {
+            releaseLockInstance(lock);
+        } catch (RuntimeException ignored) {
+            // Best-effort rollback only.
+        }
+    }
+
+    private void recordOperation(boolean allSuccessful, int acquiredCount, long operationTimeMs) {
+        totalBatchOperations.incrementAndGet();
+        totalOperationTimeMs.addAndGet(Math.max(0L, operationTimeMs));
+
+        if (allSuccessful) {
+            successfulBatchOperations.incrementAndGet();
+            totalBatchLocksAcquired.addAndGet(acquiredCount);
+            return;
+        }
+
+        failedBatchOperations.incrementAndGet();
+    }
+
+    private double averageOperationTimeMs() {
+        long operationCount = totalBatchOperations.get();
+        if (operationCount == 0L) {
+            return 0.0d;
+        }
+        return (double) totalOperationTimeMs.get() / operationCount;
+    }
+
+    private String nextSessionId() {
+        return "redis-batch-session-" + sessionSequence.incrementAndGet();
+    }
+
+    private String threadLockKey(String lockName) {
+        return Thread.currentThread().getId() + ":" + lockName;
+    }
+
+    private void notifyAcquired(DistributedLock lock) {
+        LockEvent<DistributedLock> event = LockEvent.ofLockAcquired(lock, createMetadata());
+        notifyTypedEvent(event);
+    }
+
+    private void notifyReleased(DistributedLock lock) {
+        LockEvent<DistributedLock> event = LockEvent.ofLockReleased(lock, createMetadata());
+        notifyTypedEvent(event);
+    }
+
+    private void notifyRenewed(DistributedLock lock, Instant newExpiryTime) {
+        LockEvent<DistributedLock> event = LockEvent.ofLockRenewed(lock, newExpiryTime, createMetadata());
+        notifyTypedEvent(event);
+    }
+
+    private void notifyAcquisitionFailed(String failedLockName, Throwable cause) {
+        LockEvent<?> event = LockEvent.ofLockAcquisitionFailed(failedLockName, cause, createMetadata());
+        for (LockEventListener<DistributedLock> listener : eventListeners) {
+            try {
+                @SuppressWarnings("unchecked")
+                LockEvent<DistributedLock> typedEvent = (LockEvent<DistributedLock>) event;
+                if (listener.shouldHandleEvent(typedEvent)) {
+                    listener.onEvent(typedEvent);
+                }
+            } catch (RuntimeException e) {
+                logger.debug("Batch listener failed on acquisition failure for {}", failedLockName, e);
             }
         }
     }
-    
+
+    private void notifyTypedEvent(LockEvent<DistributedLock> event) {
+        for (LockEventListener<DistributedLock> listener : eventListeners) {
+            try {
+                if (listener.shouldHandleEvent(event)) {
+                    listener.onEvent(event);
+                }
+            } catch (RuntimeException e) {
+                logger.debug("Batch listener failed for event {}", event.getType(), e);
+            }
+        }
+    }
+
     private LockEventListener.LockEventMetadata createMetadata() {
         return new LockEventListener.LockEventMetadata() {
             @Override
             public long getThreadId() {
                 return Thread.currentThread().getId();
             }
-            
+
             @Override
             public String getThreadName() {
                 return Thread.currentThread().getName();
             }
-            
+
             @Override
             public String getCallStack() {
                 StackTraceElement[] stack = Thread.currentThread().getStackTrace();
@@ -573,116 +653,106 @@ public class RedisBatchLockOperations implements BatchLockOperations<Distributed
                 }
                 return "";
             }
-            
+
             @Override
             public Object getCustomData() {
-                return "RedisBatchLockOperations Context";
+                return "RedisBatchLockOperations";
             }
         };
     }
-    
-    private double getAverageOperationTime() {
-        long totalOperations = totalBatchOperations.get();
-        return totalOperations > 0 ? (double) totalBatchOperations.get() / totalOperations : 0.0;
-    }
-    
-    private void checkNotClosed() {
-        if (isClosed.get()) {
-            throw new IllegalStateException("Batch lock operations is closed");
-        }
-    }
-    
-    // 内部类
-    
-    /**
-     * 批处理锁会话
-     */
-    private static class BatchLockSession {
+
+    private static final class BatchSession {
         private final String sessionId;
         private final List<String> lockNames;
         private final long creationTime;
         private final long expirationTime;
         private final List<DistributedLock> acquiredLocks = new ArrayList<>();
         private volatile BatchLockSessionStatus status = BatchLockSessionStatus.ACTIVE;
-        
-        public BatchLockSession(String sessionId, List<String> lockNames, long expirationTime) {
+
+        private BatchSession(String sessionId, List<String> lockNames, long creationTime, long expirationTime) {
             this.sessionId = sessionId;
             this.lockNames = new ArrayList<>(lockNames);
-            this.creationTime = System.currentTimeMillis();
+            this.creationTime = creationTime;
             this.expirationTime = expirationTime;
         }
-        
-        public String getSessionId() { return sessionId; }
-        public List<String> getLockNames() { return lockNames; }
-        public long getCreationTime() { return creationTime; }
-        public long getExpirationTime() { return expirationTime; }
-        public List<DistributedLock> getAcquiredLocks() { return acquiredLocks; }
-        public BatchLockSessionStatus getStatus() { return status; }
-        
-        public void addAcquiredLock(DistributedLock lock) {
+
+        private String getSessionId() {
+            return sessionId;
+        }
+
+        private void addAcquiredLock(DistributedLock lock) {
             acquiredLocks.add(lock);
         }
-        
-        public void markAsRolledBack() {
-            this.status = BatchLockSessionStatus.ROLLED_BACK;
+
+        private List<DistributedLock> getAcquiredLocks() {
+            return acquiredLocks;
         }
-        
-        public boolean isExpired(long currentTime) {
-            return currentTime > expirationTime || status == BatchLockSessionStatus.EXPIRED;
+
+        private boolean isExpired(long currentTime) {
+            return currentTime >= expirationTime;
+        }
+
+        private void markAsCompleted() {
+            status = BatchLockSessionStatus.COMPLETED;
+        }
+
+        private void markAsRolledBack() {
+            status = BatchLockSessionStatus.ROLLED_BACK;
+        }
+
+        private void markAsExpired() {
+            status = BatchLockSessionStatus.EXPIRED;
+        }
+
+        private BatchLockSessionInfo toInfo() {
+            return new BatchLockSessionInfo(sessionId, lockNames, creationTime, expirationTime, status);
         }
     }
-    
-    /**
-     * 批处理锁会话状态
-     */
+
     private enum BatchLockSessionStatus {
         ACTIVE,
         COMPLETED,
         ROLLED_BACK,
         EXPIRED
     }
-    
-    /**
-     * 批处理锁结果实现
-     */
-    private static class BatchLockResultImpl implements BatchLockResult<DistributedLock> {
+
+    private static final class SimpleBatchLockResult implements BatchLockResult<DistributedLock> {
         private final List<DistributedLock> successfulLocks;
         private final List<String> failedLockNames;
         private final boolean allSuccessful;
-        private final long operationTime;
-        
-        public BatchLockResultImpl(List<DistributedLock> successfulLocks, List<String> failedLockNames,
-                                 boolean allSuccessful, long operationTime) {
-            this.successfulLocks = new ArrayList<>(successfulLocks);
-            this.failedLockNames = new ArrayList<>(failedLockNames);
+        private final long operationTimeMs;
+
+        private SimpleBatchLockResult(List<DistributedLock> successfulLocks,
+                                      List<String> failedLockNames,
+                                      boolean allSuccessful,
+                                      long operationTimeMs) {
+            this.successfulLocks = Collections.unmodifiableList(new ArrayList<>(successfulLocks));
+            this.failedLockNames = Collections.unmodifiableList(new ArrayList<>(failedLockNames));
             this.allSuccessful = allSuccessful;
-            this.operationTime = operationTime;
+            this.operationTimeMs = operationTimeMs;
         }
-        
+
         @Override
         public List<DistributedLock> getSuccessfulLocks() {
             return successfulLocks;
         }
-        
+
         @Override
         public List<String> getFailedLockNames() {
             return failedLockNames;
         }
-        
+
         @Override
         public boolean isAllSuccessful() {
             return allSuccessful;
         }
-        
+
         @Override
         public long getOperationTimeMs() {
-            return operationTime;
+            return operationTimeMs;
         }
     }
-    
-    /**
-     * 批处理操作统计信息
-     */
+
     public static class BatchOperationsStatistics {
         private final long totalBatchOperations;
         private final long successfulBatchOperations;
@@ -692,11 +762,15 @@ public class RedisBatchLockOperations implements BatchLockOperations<Distributed
         private final long totalRollbackOperations;
         private final double averageOperationTime;
         private final int activeSessions;
-        
-        public BatchOperationsStatistics(long totalBatchOperations, long successfulBatchOperations,
-                                       long failedBatchOperations, long totalBatchLocksAcquired,
-                                       long totalBatchLocksReleased, long totalRollbackOperations,
-                                       double averageOperationTime, int activeSessions) {
+
+        public BatchOperationsStatistics(long totalBatchOperations,
+                                        long successfulBatchOperations,
+                                        long failedBatchOperations,
+                                        long totalBatchLocksAcquired,
+                                        long totalBatchLocksReleased,
+                                        long totalRollbackOperations,
+                                        double averageOperationTime,
+                                        int activeSessions) {
             this.totalBatchOperations = totalBatchOperations;
             this.successfulBatchOperations = successfulBatchOperations;
             this.failedBatchOperations = failedBatchOperations;
@@ -706,54 +780,304 @@ public class RedisBatchLockOperations implements BatchLockOperations<Distributed
             this.averageOperationTime = averageOperationTime;
             this.activeSessions = activeSessions;
         }
-        
-        public long getTotalBatchOperations() { return totalBatchOperations; }
-        public long getSuccessfulBatchOperations() { return successfulBatchOperations; }
-        public long getFailedBatchOperations() { return failedBatchOperations; }
-        public long getTotalBatchLocksAcquired() { return totalBatchLocksAcquired; }
-        public long getTotalBatchLocksReleased() { return totalBatchLocksReleased; }
-        public long getTotalRollbackOperations() { return totalRollbackOperations; }
-        public double getAverageOperationTime() { return averageOperationTime; }
-        public int getActiveSessions() { return activeSessions; }
-        
-        public double getSuccessRate() {
-            return totalBatchOperations > 0 ? 
-                (double) successfulBatchOperations / totalBatchOperations : 0.0;
+
+        public long getTotalBatchOperations() {
+            return totalBatchOperations;
         }
-        
+
+        public long getSuccessfulBatchOperations() {
+            return successfulBatchOperations;
+        }
+
+        public long getFailedBatchOperations() {
+            return failedBatchOperations;
+        }
+
+        public long getTotalBatchLocksAcquired() {
+            return totalBatchLocksAcquired;
+        }
+
+        public long getTotalBatchLocksReleased() {
+            return totalBatchLocksReleased;
+        }
+
+        public long getTotalRollbackOperations() {
+            return totalRollbackOperations;
+        }
+
+        public double getAverageOperationTime() {
+            return averageOperationTime;
+        }
+
+        public int getActiveSessions() {
+            return activeSessions;
+        }
+
+        public double getSuccessRate() {
+            return totalBatchOperations == 0L
+                    ? 0.0d
+                    : (double) successfulBatchOperations / totalBatchOperations;
+        }
+
         public double getFailureRate() {
-            return totalBatchOperations > 0 ? 
-                (double) failedBatchOperations / totalBatchOperations : 0.0;
+            return totalBatchOperations == 0L
+                    ? 0.0d
+                    : (double) failedBatchOperations / totalBatchOperations;
         }
     }
-    
-    /**
-     * 批处理会话信息
-     */
+
     public static class BatchLockSessionInfo {
         private final String sessionId;
         private final List<String> lockNames;
         private final long creationTime;
         private final long expirationTime;
         private final BatchLockSessionStatus status;
-        
-        public BatchLockSessionInfo(String sessionId, List<String> lockNames, long creationTime,
-                                  long expirationTime, BatchLockSessionStatus status) {
+
+        public BatchLockSessionInfo(String sessionId,
+                                    List<String> lockNames,
+                                    long creationTime,
+                                    long expirationTime,
+                                    BatchLockSessionStatus status) {
             this.sessionId = sessionId;
-            this.lockNames = new ArrayList<>(lockNames);
+            this.lockNames = Collections.unmodifiableList(new ArrayList<>(lockNames));
             this.creationTime = creationTime;
             this.expirationTime = expirationTime;
             this.status = status;
         }
-        
-        public String getSessionId() { return sessionId; }
-        public List<String> getLockNames() { return lockNames; }
-        public long getCreationTime() { return creationTime; }
-        public long getExpirationTime() { return expirationTime; }
-        public BatchLockSessionStatus getStatus() { return status; }
-        
+
+        public String getSessionId() {
+            return sessionId;
+        }
+
+        public List<String> getLockNames() {
+            return lockNames;
+        }
+
+        public long getCreationTime() {
+            return creationTime;
+        }
+
+        public long getExpirationTime() {
+            return expirationTime;
+        }
+
+        public BatchLockSessionStatus getStatus() {
+            return status;
+        }
+
         public long getRemainingTime() {
-            return Math.max(0, expirationTime - System.currentTimeMillis());
+            return Math.max(0L, expirationTime - System.currentTimeMillis());
+        }
+    }
+
+    private static final class LocalLockState {
+        private final ReentrantLock lock = new ReentrantLock();
+        private final AtomicLong leaseTimeMs = new AtomicLong();
+        private final AtomicLong expirationTimeMs = new AtomicLong();
+        private final AtomicLong acquireTimeMs = new AtomicLong();
+        private volatile Thread owner;
+    }
+
+    private static final class LocalDistributedLock implements DistributedLock {
+        private final String name;
+        private final LocalLockState state;
+        private final long defaultLeaseTimeSeconds;
+        private volatile ScheduledFuture<?> renewalTask;
+
+        private LocalDistributedLock(String name, LocalLockState state, long defaultLeaseTimeSeconds) {
+            this.name = name;
+            this.state = state;
+            this.defaultLeaseTimeSeconds = defaultLeaseTimeSeconds;
+        }
+
+        @Override
+        public void lock(long leaseTime, TimeUnit unit) throws InterruptedException {
+            state.lock.lockInterruptibly();
+            markAcquired(leaseTime, unit);
+        }
+
+        @Override
+        public void lock() throws InterruptedException {
+            lock(defaultLeaseTimeSeconds, TimeUnit.SECONDS);
+        }
+
+        @Override
+        public boolean tryLock(long waitTime, long leaseTime, TimeUnit unit) throws InterruptedException {
+            TimeUnit resolvedUnit = unit != null ? unit : TimeUnit.MILLISECONDS;
+            boolean acquired = state.lock.tryLock(waitTime, resolvedUnit);
+            if (acquired) {
+                markAcquired(leaseTime, unit);
+            }
+            return acquired;
+        }
+
+        @Override
+        public boolean tryLock() throws InterruptedException {
+            return tryLock(0L, defaultLeaseTimeSeconds, TimeUnit.SECONDS);
+        }
+
+        @Override
+        public void unlock() {
+            if (!state.lock.isHeldByCurrentThread()) {
+                throw new IllegalMonitorStateException("Lock not held by current thread: " + name);
+            }
+
+            cancelRenewalTask();
+            state.lock.unlock();
+            if (!state.lock.isHeldByCurrentThread()) {
+                state.owner = null;
+                state.acquireTimeMs.set(0L);
+                state.expirationTimeMs.set(0L);
+            }
+        }
+
+        @Override
+        public CompletableFuture<Void> lockAsync(long leaseTime, TimeUnit unit) {
+            return CompletableFuture.runAsync(() -> {
+                try {
+                    lock(leaseTime, unit);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Local batch lock interrupted", e);
+                }
+            });
+        }
+
+        @Override
+        public CompletableFuture<Void> lockAsync() {
+            return lockAsync(defaultLeaseTimeSeconds, TimeUnit.SECONDS);
+        }
+
+        @Override
+        public CompletableFuture<Boolean> tryLockAsync(long waitTime, long leaseTime, TimeUnit unit) {
+            return CompletableFuture.supplyAsync(() -> {
+                try {
+                    return tryLock(waitTime, leaseTime, unit);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            });
+        }
+
+        @Override
+        public CompletableFuture<Boolean> tryLockAsync() {
+            return tryLockAsync(0L, defaultLeaseTimeSeconds, TimeUnit.SECONDS);
+        }
+
+        @Override
+        public CompletableFuture<Void> unlockAsync() {
+            return CompletableFuture.runAsync(this::unlock);
+        }
+
+        @Override
+        public boolean renewLock(long newLeaseTime, TimeUnit unit) {
+            if (!isHeldByCurrentThread()) {
+                return false;
+            }
+            long leaseMs = Math.max(1L, resolvedMillis(newLeaseTime, unit));
+            state.leaseTimeMs.set(leaseMs);
+            state.expirationTimeMs.set(System.currentTimeMillis() + leaseMs);
+            return true;
+        }
+
+        @Override
+        public boolean isLocked() {
+            return state.lock.isLocked();
+        }
+
+        @Override
+        public boolean isHeldByCurrentThread() {
+            return state.lock.isHeldByCurrentThread();
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public ScheduledFuture<?> scheduleAutoRenewal(long renewInterval,
+                                                      TimeUnit unit,
+                                                      java.util.function.Consumer<RenewalResult> renewalCallback) {
+            if (!isHeldByCurrentThread()) {
+                throw new IllegalMonitorStateException("Auto-renewal requires the current thread to own the lock");
+            }
+
+            long intervalMs = Math.max(1L, resolvedMillis(renewInterval, unit));
+            cancelRenewalTask();
+            renewalTask = LOCAL_RENEWAL_EXECUTOR.scheduleAtFixedRate(() -> {
+                boolean renewed = renewLock(state.leaseTimeMs.get(), TimeUnit.MILLISECONDS);
+                if (renewalCallback != null) {
+                    renewalCallback.accept(new RenewalResult() {
+                        @Override
+                        public boolean isSuccess() {
+                            return renewed;
+                        }
+
+                        @Override
+                        public Throwable getFailureCause() {
+                            return renewed ? null : new IllegalStateException("Renewal failed");
+                        }
+
+                        @Override
+                        public long getRenewalTime() {
+                            return System.currentTimeMillis();
+                        }
+
+                        @Override
+                        public long getNewExpirationTime() {
+                            return state.expirationTimeMs.get();
+                        }
+                    });
+                }
+            }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+            return renewalTask;
+        }
+
+        @Override
+        public int getReentrantCount() {
+            return state.lock.isHeldByCurrentThread() ? state.lock.getHoldCount() : 0;
+        }
+
+        @Override
+        public boolean isExpired() {
+            long expirationTime = state.expirationTimeMs.get();
+            return expirationTime > 0L && System.currentTimeMillis() > expirationTime;
+        }
+
+        @Override
+        public long getRemainingTime(TimeUnit unit) {
+            long remainingMs = Math.max(0L, state.expirationTimeMs.get() - System.currentTimeMillis());
+            TimeUnit resolvedUnit = unit != null ? unit : TimeUnit.MILLISECONDS;
+            return resolvedUnit.convert(remainingMs, TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public String getLockHolder() {
+            Thread owner = state.owner;
+            return owner != null ? owner.getName() : null;
+        }
+
+        private void markAcquired(long leaseTime, TimeUnit unit) {
+            long leaseMs = Math.max(1L, resolvedMillis(leaseTime, unit));
+            state.owner = Thread.currentThread();
+            state.acquireTimeMs.set(System.currentTimeMillis());
+            state.leaseTimeMs.set(leaseMs);
+            state.expirationTimeMs.set(System.currentTimeMillis() + leaseMs);
+        }
+
+        private long resolvedMillis(long value, TimeUnit unit) {
+            TimeUnit resolvedUnit = unit != null ? unit : TimeUnit.MILLISECONDS;
+            return resolvedUnit.toMillis(value);
+        }
+
+        private void cancelRenewalTask() {
+            ScheduledFuture<?> task = renewalTask;
+            if (task != null) {
+                task.cancel(false);
+                renewalTask = null;
+            }
         }
     }
 }

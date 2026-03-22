@@ -17,7 +17,7 @@
     <name>distributed-lock-spring-boot-starter</name>
 
     <properties>
-        <java.version>11</java.version>
+        <java.version>17</java.version>
         <spring-boot.version>2.7.18</spring-boot.version>
     </properties>
 
@@ -89,6 +89,12 @@
             <groupId>com.mycorp</groupId>
             <artifactId>distributed-lock-zookeeper</artifactId>
             <optional>true</optional>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
 

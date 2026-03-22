@@ -18,6 +18,12 @@ public class DistributedLockProperties {
     /** 默认锁超时时间 */
     private Duration defaultTimeout = Duration.ofSeconds(30);
 
+    /** 旧版基准兼容用续期间隔 */
+    private Duration renewInterval = Duration.ofSeconds(10);
+
+    /** SPI provider类型，例如 redis / zookeeper */
+    private String type;
+
     /** 重试配置 */
     private Retry retry = new Retry();
 
@@ -43,6 +49,46 @@ public class DistributedLockProperties {
 
     public void setDefaultTimeout(Duration defaultTimeout) {
         this.defaultTimeout = defaultTimeout;
+    }
+
+    public Duration getRenewInterval() {
+        return renewInterval;
+    }
+
+    public void setRenewInterval(Duration renewInterval) {
+        this.renewInterval = renewInterval;
+    }
+
+    public String getType() {
+        return type;
+    }
+
+    public void setType(String type) {
+        this.type = type;
+    }
+
+    public long getLockTimeout() {
+        return defaultTimeout.toMillis();
+    }
+
+    public void setLockTimeout(long lockTimeoutMs) {
+        this.defaultTimeout = Duration.ofMillis(lockTimeoutMs);
+    }
+
+    public long getRenewIntervalMillis() {
+        return renewInterval.toMillis();
+    }
+
+    public void setRenewInterval(long renewIntervalMs) {
+        this.renewInterval = Duration.ofMillis(renewIntervalMs);
+    }
+
+    public int getRetryAttempts() {
+        return retry.getMaxAttempts();
+    }
+
+    public void setRetryAttempts(int retryAttempts) {
+        retry.setMaxAttempts(retryAttempts);
     }
 
     public Retry getRetry() {

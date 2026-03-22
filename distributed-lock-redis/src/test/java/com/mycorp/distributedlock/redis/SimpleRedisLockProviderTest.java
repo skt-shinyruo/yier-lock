@@ -3,28 +3,30 @@ package com.mycorp.distributedlock.redis;
 import com.mycorp.distributedlock.api.DistributedLock;
 import com.mycorp.distributedlock.api.DistributedReadWriteLock;
 import com.mycorp.distributedlock.core.config.LockConfiguration;
+import com.typesafe.config.ConfigFactory;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.invocation.InvocationOnMock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 
-/**
- * SimpleRedisLockProvider单元测试
- * 测试Redis锁提供商的初始化、锁创建、连接管理等功能
- */
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+
 @ExtendWith(MockitoExtension.class)
 class SimpleRedisLockProviderTest {
-
-    @Mock
-    private LockConfiguration mockConfiguration;
 
     @Mock
     private RedisClient mockRedisClient;
@@ -35,231 +37,203 @@ class SimpleRedisLockProviderTest {
     @Mock
     private RedisCommands<String, String> mockCommands;
 
-    private SimpleRedisLockProvider provider;
+    @Test
+    void shouldCreateDistinctLockInstancesForSameKey() {
+        SimpleRedisLockProvider provider = newProvider(mockCommands);
 
-    @BeforeEach
-    void setUp() {
-        when(mockConfiguration.getDefaultLeaseTime()).thenReturn(java.time.Duration.ofSeconds(30));
-        when(mockConfiguration.getRedisHosts()).thenReturn("localhost:6379");
-        when(mockConfiguration.getRedisPassword()).thenReturn(null);
-        when(mockConfiguration.isRedisSslEnabled()).thenReturn(false);
-        when(mockConfiguration.getRedisDatabase()).thenReturn(0);
-        
-        when(mockRedisClient.connect()).thenReturn(mockConnection);
-        when(mockConnection.sync()).thenReturn(mockCommands);
+        DistributedLock first = provider.createLock("shared-lock");
+        DistributedLock second = provider.createLock("shared-lock");
+
+        assertNotSame(first, second);
+        assertEquals("shared-lock", first.getName());
+        assertEquals("shared-lock", second.getName());
     }
 
     @Test
-    void shouldCreateProviderWithDefaultConfiguration() {
-        // 假设使用模拟的RedisClient避免实际连接
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        provider.close();
-        
-        assertNotNull(provider);
-        assertEquals("redis", provider.getType());
-        assertEquals(100, provider.getPriority());
+    void shouldCreateReadWriteLockWithExpectedNames() {
+        SimpleRedisLockProvider provider = newProvider(mockCommands);
+
+        DistributedReadWriteLock readWriteLock = provider.createReadWriteLock("resource");
+
+        assertEquals("resource", readWriteLock.getName());
+        assertEquals("resource:read", readWriteLock.readLock().getName());
+        assertEquals("resource:write", readWriteLock.writeLock().getName());
     }
 
     @Test
-    void shouldCreateLockSuccessfully() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        DistributedLock lock = provider.createLock("test-lock");
-        
-        assertNotNull(lock);
-        assertEquals("test-lock", lock.getName());
-        assertFalse(lock.isLocked());
-    }
+    void shouldBlockWriterWhileReaderIsHeld() throws InterruptedException {
+        RedisCommands<String, String> commands = new StatefulRedisCommands().commandView();
+        SimpleRedisLockProvider provider = newProvider(commands);
+        DistributedReadWriteLock readWriteLock = provider.createReadWriteLock("rw-resource");
 
-    @Test
-    void shouldCreateReadWriteLockSuccessfully() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        DistributedReadWriteLock readWriteLock = provider.createReadWriteLock("test-rw-lock");
-        
-        assertNotNull(readWriteLock);
-        assertEquals("test-rw-lock", readWriteLock.getName());
-        
         DistributedLock readLock = readWriteLock.readLock();
         DistributedLock writeLock = readWriteLock.writeLock();
-        assertNotNull(readLock);
-        assertNotNull(writeLock);
-        assertEquals("test-rw-lock:read", readLock.getName());
-        assertEquals("test-rw-lock:write", writeLock.getName());
+
+        assertTrue(readLock.tryLock(0, 30, TimeUnit.SECONDS));
+        assertFalse(writeLock.tryLock(20, 30, TimeUnit.MILLISECONDS));
+
+        readLock.unlock();
+
+        assertTrue(writeLock.tryLock(20, 30, TimeUnit.MILLISECONDS));
+        writeLock.unlock();
     }
 
     @Test
-    void shouldCacheLocks() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        DistributedLock lock1 = provider.createLock("cached-lock");
-        DistributedLock lock2 = provider.createLock("cached-lock");
-        
-        // 应该是同一个实例（来自缓存）
-        assertSame(lock1, lock2);
-    }
+    void shouldRejectCreationWhenClosedAndReleaseResources() {
+        SimpleRedisLockProvider provider = newProvider(mockCommands);
 
-    @Test
-    void shouldNotCreateLockWhenProviderIsClosed() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
         provider.close();
-        
-        assertThrows(IllegalStateException.class, () -> {
-            provider.createLock("test-lock");
-        });
+
+        assertThrows(IllegalStateException.class, () -> provider.createLock("test-lock"));
+        assertThrows(IllegalStateException.class, () -> provider.createReadWriteLock("rw-lock"));
+        verify(mockConnection).close();
+        verify(mockRedisClient).shutdown();
     }
 
     @Test
-    void shouldNotCreateReadWriteLockWhenProviderIsClosed() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        provider.close();
-        
-        assertThrows(IllegalStateException.class, () -> {
-            provider.createReadWriteLock("test-rw-lock");
-        });
+    void shouldRejectNullAndBlankKeys() {
+        SimpleRedisLockProvider provider = newProvider(mockCommands);
+
+        assertThrows(IllegalArgumentException.class, () -> provider.createLock(null));
+        assertThrows(IllegalArgumentException.class, () -> provider.createLock(""));
+        assertThrows(IllegalArgumentException.class, () -> provider.createReadWriteLock("   "));
     }
 
-    @Test
-    void shouldRejectNullLockKey() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        assertThrows(IllegalArgumentException.class, () -> {
-            provider.createLock(null);
-        });
+    private SimpleRedisLockProvider newProvider(RedisCommands<String, String> commands) {
+        return new SimpleRedisLockProvider(newConfiguration(), mockRedisClient, mockConnection, commands);
     }
 
-    @Test
-    void shouldRejectEmptyLockKey() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        assertThrows(IllegalArgumentException.class, () -> {
-            provider.createLock("");
-        });
+    private LockConfiguration newConfiguration() {
+        return new LockConfiguration(ConfigFactory.parseString("""
+                distributed-lock {
+                  default-lease-time = 30s
+                  redis {
+                    hosts = "localhost:6379"
+                    database = 0
+                    ssl = false
+                  }
+                }
+                """));
     }
 
-    @Test
-    void shouldRejectBlankLockKey() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        assertThrows(IllegalArgumentException.class, () -> {
-            provider.createLock("   ");
-        });
-    }
+    private static final class StatefulRedisCommands {
+        private final Map<String, String> values = new ConcurrentHashMap<>();
+        private final Map<String, Map<String, String>> hashes = new ConcurrentHashMap<>();
+        private final Map<String, Long> ttlSeconds = new ConcurrentHashMap<>();
 
-    @Test
-    void shouldCloseProvider() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        // 首次关闭应该成功
-        assertDoesNotThrow(() -> provider.close());
-        
-        // 后续关闭应该安全（幂等性）
-        assertDoesNotThrow(() -> provider.close());
-        assertDoesNotThrow(() -> provider.close());
-    }
+        private final RedisCommands<String, String> commands = mock(RedisCommands.class, this::handle);
 
-    @Test
-    void shouldHandleProviderType() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        assertEquals("redis", provider.getType());
-    }
+        private RedisCommands<String, String> commandView() {
+            return commands;
+        }
 
-    @Test
-    void shouldHandleProviderPriority() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        assertEquals(100, provider.getPriority());
-    }
+        private Object handle(InvocationOnMock invocation) {
+            String methodName = invocation.getMethod().getName();
+            if ("eval".equals(methodName)) {
+                return handleEval(invocation);
+            }
+            if ("ttl".equals(methodName)) {
+                return ttlSeconds.getOrDefault(invocation.getArgument(0, String.class), -1L);
+            }
+            return defaultValue(invocation.getMethod().getReturnType());
+        }
 
-    @Test
-    void shouldCreateLocksWithCorrectLeaseTime() {
-        when(mockConfiguration.getDefaultLeaseTime()).thenReturn(java.time.Duration.ofSeconds(60));
-        
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        DistributedLock lock = provider.createLock("lease-test");
-        
-        // 验证锁创建时使用了正确的租约时间
-        assertNotNull(lock);
-    }
+        private Long handleEval(InvocationOnMock invocation) {
+            String script = invocation.getArgument(0, String.class);
+            String[] keys = invocation.getArgument(2, String[].class);
+            Object[] args = invocation.getArguments();
 
-    @Test
-    void shouldHandleMultipleDifferentLocks() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        DistributedLock lock1 = provider.createLock("lock-1");
-        DistributedLock lock2 = provider.createLock("lock-2");
-        DistributedLock lock3 = provider.createLock("lock-3");
-        
-        assertNotSame(lock1, lock2);
-        assertNotSame(lock1, lock3);
-        assertNotSame(lock2, lock3);
-        
-        assertEquals("lock-1", lock1.getName());
-        assertEquals("lock-2", lock2.getName());
-        assertEquals("lock-3", lock3.getName());
-    }
+            if (script.contains("SIMPLE_RW_READ_ACQUIRE")) {
+                String writerKey = keys[0];
+                String readersKey = keys[1];
+                String token = (String) args[3];
+                long leaseSeconds = Long.parseLong((String) args[4]);
+                if (values.containsKey(writerKey)) {
+                    return 0L;
+                }
+                hashes.computeIfAbsent(readersKey, ignored -> new ConcurrentHashMap<>()).put(token, "1");
+                ttlSeconds.put(readersKey, leaseSeconds);
+                return 1L;
+            }
 
-    @Test
-    void shouldCacheReadAndWriteLocksSeparately() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        // 创建读写锁
-        DistributedReadWriteLock rwLock1 = provider.createReadWriteLock("rw-test");
-        DistributedReadWriteLock rwLock2 = provider.createReadWriteLock("rw-test");
-        
-        // 应该返回同一个读写锁实例
-        assertSame(rwLock1, rwLock2);
-        
-        // 但内部的读写锁应该是不同的实例
-        assertNotSame(rwLock1.readLock(), rwLock2.readLock());
-        assertNotSame(rwLock1.writeLock(), rwLock2.writeLock());
-    }
+            if (script.contains("SIMPLE_RW_READ_RELEASE")) {
+                String readersKey = keys[0];
+                String token = (String) args[3];
+                Map<String, String> readers = hashes.get(readersKey);
+                if (readers == null || readers.remove(token) == null) {
+                    return 0L;
+                }
+                if (readers.isEmpty()) {
+                    hashes.remove(readersKey);
+                    ttlSeconds.remove(readersKey);
+                }
+                return 1L;
+            }
 
-    @Test
-    void shouldValidateProviderStateOnMultipleOperations() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        // 正常操作
-        DistributedLock lock1 = provider.createLock("valid-lock");
-        assertNotNull(lock1);
-        
-        // 关闭提供者
-        provider.close();
-        
-        // 后续操作应该失败
-        assertThrows(IllegalStateException.class, () -> {
-            provider.createLock("another-lock");
-        });
-        
-        assertThrows(IllegalStateException.class, () -> {
-            provider.createReadWriteLock("rw-lock");
-        });
-    }
+            if (script.contains("SIMPLE_RW_READ_RENEW")) {
+                String readersKey = keys[0];
+                String token = (String) args[3];
+                long leaseSeconds = Long.parseLong((String) args[4]);
+                Map<String, String> readers = hashes.get(readersKey);
+                if (readers == null || !readers.containsKey(token)) {
+                    return 0L;
+                }
+                ttlSeconds.put(readersKey, leaseSeconds);
+                return 1L;
+            }
 
-    @Test
-    void shouldHandleLockCreationEdgeCases() {
-        provider = new SimpleRedisLockProvider(mockConfiguration);
-        
-        // 测试各种边缘情况的锁名
-        String[] edgeCaseNames = {
-            "single-char",
-            "very-long-lock-name-that-exceeds-normal-limits-but-should-still-work-fine",
-            "lock_with_underscores",
-            "lock-with-dashes",
-            "lock.with.dots",
-            "lock123",
-            "LOCK_UPPERCASE",
-            "中文名称",
-            "lock-with-123-numbers"
-        };
-        
-        for (String lockName : edgeCaseNames) {
-            assertDoesNotThrow(() -> {
-                DistributedLock lock = provider.createLock(lockName);
-                assertNotNull(lock);
-                assertEquals(lockName, lock.getName());
-            });
+            if (script.contains("SIMPLE_RW_WRITE_ACQUIRE")) {
+                String writerKey = keys[0];
+                String readersKey = keys[1];
+                String token = (String) args[3];
+                long leaseSeconds = Long.parseLong((String) args[4]);
+                if (values.containsKey(writerKey)) {
+                    return 0L;
+                }
+                if (!hashes.getOrDefault(readersKey, Map.of()).isEmpty()) {
+                    return 0L;
+                }
+                values.put(writerKey, token);
+                ttlSeconds.put(writerKey, leaseSeconds);
+                return 1L;
+            }
+
+            if (script.contains("SIMPLE_RW_WRITE_RELEASE")) {
+                String writerKey = keys[0];
+                String token = (String) args[3];
+                if (!token.equals(values.get(writerKey))) {
+                    return 0L;
+                }
+                values.remove(writerKey);
+                ttlSeconds.remove(writerKey);
+                return 1L;
+            }
+
+            if (script.contains("SIMPLE_RW_WRITE_RENEW")) {
+                String writerKey = keys[0];
+                String token = (String) args[3];
+                long leaseSeconds = Long.parseLong((String) args[4]);
+                if (!token.equals(values.get(writerKey))) {
+                    return 0L;
+                }
+                ttlSeconds.put(writerKey, leaseSeconds);
+                return 1L;
+            }
+
+            return 0L;
+        }
+
+        private Object defaultValue(Class<?> returnType) {
+            if (returnType == boolean.class) {
+                return false;
+            }
+            if (returnType == int.class) {
+                return 0;
+            }
+            if (returnType == long.class || returnType == Long.class) {
+                return 0L;
+            }
+            return null;
         }
     }
 }

@@ -1,223 +1,50 @@
 # 分布式锁测试套件配置
 
-## 概述
-本文档描述了分布式锁项目测试套件的完整配置，包括测试环境、依赖和运行说明。
+本文档描述当前分支仍然有效的测试入口和常用执行命令。
 
-## 测试模块统计
+## 当前维护的测试范围
 
-### 已完成的测试文件
+- API 单元测试
+  - `DistributedLockApiTest`
+  - `DistributedReadWriteLockApiTest`
+  - `DistributedLockFactoryApiTest`
+  - `ServiceLoaderDistributedLockFactoryTest`
+- Core 单元测试
+  - `LockConfigurationTest`
+  - `EnhancedReentrantLockImplTest`
+  - `LockKeyUtilsTest`
+- Redis 单元测试
+  - `SimpleRedisLockTest`
+  - `SimpleRedisLockProviderTest`
+  - `RedisDistributedLockFactoryTest`
+- ZooKeeper 测试
+  - `ZooKeeperBatchLockOperationsTest`
+  - `ZooKeeperDistributedLockIntegrationTest` (`@Tag("integration")`)
+- Spring Boot 集成测试
+  - `DistributedLockAspectIntegrationTest`
+  - `DistributedLockAutoConfigurationIntegrationTest`
+- Benchmarks 测试
+  - `StressAndPerformanceTest`
 
-#### 1. API接口单元测试
-- `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedLockApiTest.java`
-  - 50+ 测试方法
-  - 覆盖同步、异步、续期、自动关闭等API功能
-  - 测试重入、异常处理、健康检查等场景
+## 推荐命令
 
-- `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedReadWriteLockApiTest.java`
-  - 45+ 测试方法
-  - 专门测试读写锁功能
-  - 覆盖锁升级降级、多读者单写者等场景
-
-- `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedLockFactoryApiTest.java`
-  - 60+ 测试方法
-  - 测试工厂模式和企业级功能
-  - 验证批量操作、健康检查、配置管理等
-
-#### 2. 核心模块单元测试
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/config/LockConfigurationTest.java`
-  - 35+ 测试方法
-  - 测试配置验证和更新
-  - 覆盖Redis、Zookeeper、监控等各种配置
-
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/observability/LockMonitoringServiceTest.java`
-  - 40+ 测试方法
-  - 测试监控服务完整功能
-  - 验证阈值检查、告警触发、性能分析
-
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/event/LockEventManagerTest.java`
-  - 45+ 测试方法
-  - 测试事件管理系统
-  - 覆盖事件发布、异步处理、死锁检测
-
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/lock/EnhancedReentrantLockImplTest.java`
-  - 30+ 测试方法
-  - 测试可重入锁实现
-  - 验证重入逻辑、多线程竞争、锁续期
-
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/util/LockKeyUtilsTest.java`
-  - 50+ 测试方法
-  - 全面测试工具类功能
-  - 覆盖命名空间、哈希计算、模式匹配等
-
-#### 3. Redis实现单元测试
-- `distributed-lock-redis/src/test/java/com/mycorp/distributedlock/redis/SimpleRedisLockTest.java`
-  - 40+ 测试方法
-  - 测试Redis锁完整功能
-  - 验证Lua脚本、自动续期、重入逻辑
-
-- `distributed-lock-redis/src/test/java/com/mycorp/distributedlock/redis/SimpleRedisLockProviderTest.java`
-  - 25+ 测试方法
-  - 测试Redis提供商
-  - 验证连接管理、锁缓存、资源清理
-
-#### 4. Spring Boot集成测试
-- `distributed-lock-spring-boot-starter/src/test/java/com/mycorp/distributedlock/springboot/integration/DistributedLockAutoConfigurationIntegrationTest.java`
-  - 60+ 测试方法
-  - 测试Spring Boot自动配置
-  - 验证Bean创建、条件配置、监控集成
-
-- `distributed-lock-spring-boot-starter/src/test/java/com/mycorp/distributedlock/springboot/integration/DistributedLockAspectIntegrationTest.java`
-  - 45+ 测试方法
-  - 测试AOP切面功能
-  - 验证注解驱动的锁管理、异步操作、错误处理
-
-#### 5. 高级特性测试
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/advanced/AdvancedFeaturesIntegrationTest.java`
-  - 35+ 测试方法
-  - 测试公平锁、读写锁、批量操作等高级特性
-  - 验证并发安全、锁升级降级、原子性操作
-
-#### 6. 监控和指标测试
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/observability/monitoring/MonitoringAndMetricsIntegrationTest.java`
-  - 50+ 测试方法
-  - 测试监控和指标收集功能
-  - 验证性能分析、告警系统、Prometheus导出
-
-#### 7. 压力和性能测试
-- `distributed-lock-benchmarks/src/test/java/com/mycorp/distributedlock/stress/StressAndPerformanceTest.java`
-  - 25+ 测试方法
-  - 测试高并发、大规模场景性能
-  - 验证内存使用、吞吐量、延迟分布
-
-#### 8. 故障容错测试
-- `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/faulttolerance/FaultToleranceTest.java`
-  - 30+ 测试方法
-  - 测试网络分区、节点故障、服务重启恢复
-  - 验证数据一致性、优雅降级、重试机制
-
-#### 9. 端到端测试
-- `examples/src/test/java/com/mycorp/distributedlock/e2e/EndToEndTest.java`
-  - 20+ 测试方法
-  - 测试完整业务场景
-  - 验证电商订单处理、分布式系统协调、性能监控
-
-## 测试统计汇总
-
-### 测试文件总数
-- **9个测试模块**
-- **总计约460+个测试方法**
-- **预计代码覆盖率 >90%**
-
-### 测试类型分布
-- **单元测试**: 60% (主要模块)
-- **集成测试**: 25% (Spring Boot、监控等)
-- **压力测试**: 8% (性能基准)
-- **端到端测试**: 7% (业务场景)
-
-### 按后端分类
-- **API接口测试**: 155+ 方法
-- **Redis实现测试**: 65+ 方法
-- **Zookeeper实现测试**: 待补充
-- **Spring Boot集成**: 105+ 方法
-- **监控和指标**: 50+ 方法
-- **高级特性**: 35+ 方法
-
-## 测试执行命令
-
-### 运行所有测试
 ```bash
-# 在项目根目录执行
-mvn clean test
+# 全仓非集成测试
+mvn test -Dgroups=!integration
 
-# 运行特定模块测试
-mvn clean test -pl distributed-lock-api
-mvn clean test -pl distributed-lock-core
-mvn clean test -pl distributed-lock-redis
-mvn clean test -pl distributed-lock-spring-boot-starter
-mvn clean test -pl distributed-lock-benchmarks
-mvn clean test -pl examples
+# Redis / ZooKeeper / Starter 修复回归
+mvn -pl distributed-lock-redis,distributed-lock-zookeeper,distributed-lock-spring-boot-starter -am \
+  -Dtest=SimpleRedisLockTest,RedisDistributedLockFactoryTest,ZooKeeperBatchLockOperationsTest,DistributedLockAutoConfigurationIntegrationTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+
+# 仅跑 ZooKeeper 集成测试
+mvn -pl distributed-lock-zookeeper -am -Dtest=ZooKeeperDistributedLockIntegrationTest test
 ```
 
-### 运行特定测试类
-```bash
-# API接口测试
-mvn test -Dtest=DistributedLockApiTest
-mvn test -Dtest=DistributedReadWriteLockApiTest
-mvn test -Dtest=DistributedLockFactoryApiTest
+## 维护说明
 
-# 核心模块测试
-mvn test -Dtest=LockConfigurationTest
-mvn test -Dtest=LockMonitoringServiceTest
-mvn test -Dtest=LockEventManagerTest
-mvn test -Dtest=EnhancedReentrantLockImplTest
-mvn test -Dtest=LockKeyUtilsTest
-
-# Redis实现测试
-mvn test -Dtest=SimpleRedisLockTest
-mvn test -Dtest=SimpleRedisLockProviderTest
-
-# Spring Boot集成测试
-mvn test -Dtest=DistributedLockAutoConfigurationIntegrationTest
-mvn test -Dtest=DistributedLockAspectIntegrationTest
-
-# 高级特性测试
-mvn test -Dtest=AdvancedFeaturesIntegrationTest
-
-# 监控和指标测试
-mvn test -Dtest=MonitoringAndMetricsIntegrationTest
-
-# 压力和性能测试
-mvn test -Dtest=StressAndPerformanceTest
-
-# 故障容错测试
-mvn test -Dtest=FaultToleranceTest
-
-# 端到端测试
-mvn test -Dtest=EndToEndTest
-```
-
-### 生成测试报告
-```bash
-# 生成HTML测试报告
-mvn surefire-report:report
-
-# 查看覆盖率报告
-mvn jacoco:report
-
-# 生成集成测试报告
-mvn verify
-
-# 运行性能基准测试
-mvn clean package -pl distributed-lock-benchmarks -am
-java -jar distributed-lock-benchmarks/target/benchmarks.jar
-```
-
-## 测试覆盖率目标
-
-### 覆盖率要求
-- **行覆盖率**: >90%
-- **分支覆盖率**: >85%
-- **方法覆盖率**: >95%
-- **类覆盖率**: >95%
-
-### 性能基准
-- **单个锁操作**: <10ms
-- **并发获取100个锁**: <1s
-- **内存使用**: <100MB
-- **CPU使用率**: <10%
-
-### 可靠性标准
-- **故障恢复时间**: <30s
-- **数据一致性**: 100%
-- **无死锁和活锁**
-- **网络分区自动恢复**
-
-## 依赖管理
-
-### 核心测试依赖
-```xml
-<!-- JUnit 5 -->
-<dependency>
+- 旧文档中出现的监控、事件、故障容错和端到端测试条目，当前分支已经删除或停止维护。
+- `examples` 目录未纳入根 `pom.xml` 的 reactor，旧示例测试不再视为有效回归资产。
     <groupId>org.junit.jupiter</groupId>
     <artifactId>junit-jupiter</artifactId>
     <scope>test</scope>

@@ -1,223 +1,47 @@
-# 分布式锁完整测试套件
+# 分布式锁测试套件
 
-## 📋 测试套件概述
+本目录的文档只记录当前仓库里仍然存在、且在当前分支维护的测试入口。
 
-本测试套件为分布式锁项目提供了全面的测试覆盖，包括单元测试、集成测试、性能测试等多个层面。
+## 当前测试布局
 
-## 🏗️ 测试架构
+- `distributed-lock-api`
+  - `DistributedLockApiTest`
+  - `DistributedReadWriteLockApiTest`
+  - `DistributedLockFactoryApiTest`
+  - `ServiceLoaderDistributedLockFactoryTest`
+- `distributed-lock-core`
+  - `LockConfigurationTest`
+  - `EnhancedReentrantLockImplTest`
+  - `LockKeyUtilsTest`
+- `distributed-lock-redis`
+  - `SimpleRedisLockTest`
+  - `SimpleRedisLockProviderTest`
+  - `RedisDistributedLockFactoryTest`
+- `distributed-lock-zookeeper`
+  - `ZooKeeperBatchLockOperationsTest`
+  - `ZooKeeperDistributedLockIntegrationTest` (`@Tag("integration")`)
+- `distributed-lock-spring-boot-starter`
+  - `DistributedLockAspectIntegrationTest`
+  - `DistributedLockAutoConfigurationIntegrationTest`
+- `distributed-lock-benchmarks`
+  - `StressAndPerformanceTest`
 
-### 测试分层结构
+## 执行命令
+
+```bash
+# 当前默认的非集成测试回归入口
+mvn test -Dgroups=!integration
+
+# 定向验证 Redis/Starter/ZooKeeper 修复
+mvn -pl distributed-lock-redis,distributed-lock-zookeeper,distributed-lock-spring-boot-starter -am \
+  -Dtest=SimpleRedisLockTest,RedisDistributedLockFactoryTest,ZooKeeperBatchLockOperationsTest,DistributedLockAutoConfigurationIntegrationTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
 ```
-分布式锁测试套件
-├── API接口测试 (单元测试)
-├── 核心模块测试 (单元测试)
-├── Redis实现测试 (单元测试)
-├── Zookeeper实现测试 (单元测试)
-├── Spring Boot集成测试
-├── 高级特性测试
-├── 监控和指标测试
-├── 压力和性能测试
-├── 故障容错测试
-└── 端到端测试
-```
 
-## 📁 已创建的测试文件
+## 说明
 
-### 1. API接口单元测试
-
-#### `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedLockApiTest.java`
-- **功能**: 分布式锁API接口的完整单元测试
-- **测试覆盖**:
-  - 同步锁操作 (lock, tryLock, unlock)
-  - 异步锁操作 (lockAsync, tryLockAsync, unlockAsync)
-  - 重入锁功能
-  - 自动续期机制
-  - 锁状态管理
-  - 健康检查
-  - 异常处理
-- **测试方法**: 50+ 个测试用例
-- **关键测试场景**:
-  - 锁获取和释放
-  - 重入锁验证
-  - 超时处理
-  - 中断异常处理
-  - 锁状态一致性
-
-#### `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedReadWriteLockApiTest.java`
-- **功能**: 分布式读写锁API接口的完整单元测试
-- **测试覆盖**:
-  - 读写锁获取和释放
-  - 锁升级降级
-  - 多读锁并发
-  - 读写互斥
-  - 健康检查
-  - 异步操作
-- **测试方法**: 45+ 个测试用例
-- **关键测试场景**:
-  - 读写锁互斥性验证
-  - 锁升级降级逻辑
-  - 多读锁并发安全性
-  - 锁状态查询
-
-#### `distributed-lock-api/src/test/java/com/mycorp/distributedlock/api/DistributedLockFactoryApiTest.java`
-- **功能**: 分布式锁工厂API接口的完整单元测试
-- **测试覆盖**:
-  - 锁工厂管理
-  - 批量锁操作
-  - 异步操作
-  - 健康检查
-  - 配置管理
-  - 事件监听
-  - 优雅关闭
-- **测试方法**: 60+ 个测试用例
-- **关键测试场景**:
-  - 工厂生命周期管理
-  - 批量锁操作原子性
-  - 异步操作可靠性
-  - 配置动态更新
-
-### 2. 核心模块单元测试
-
-#### `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/config/LockConfigurationTest.java`
-- **功能**: 锁配置管理单元测试
-- **测试覆盖**:
-  - 配置读取和解析
-  - 配置验证
-  - 动态配置更新
-  - 配置监听器
-  - Redis和Zookeeper配置
-- **测试方法**: 35+ 个测试用例
-- **关键测试场景**:
-  - 配置默认值验证
-  - 配置格式验证
-  - 配置变更通知
-  - 环境变量支持
-
-#### `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/observability/LockMonitoringServiceTest.java`
-- **功能**: 锁监控服务单元测试
-- **测试覆盖**:
-  - 监控服务启动停止
-  - 性能指标收集
-  - 告警管理
-  - 趋势分析
-  - 数据清理
-- **测试方法**: 40+ 个测试用例
-- **关键测试场景**:
-  - 实时监控数据收集
-  - 告警阈值触发
-  - 性能趋势分析
-  - 历史数据管理
-
-#### `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/event/LockEventManagerTest.java`
-- **功能**: 锁事件管理器单元测试
-- **测试覆盖**:
-  - 事件发布订阅
-  - 事件监听器管理
-  - 异步事件处理
-  - 死锁检测
-  - 事件历史
-- **测试方法**: 45+ 个测试用例
-- **关键测试场景**:
-  - 事件发布订阅机制
-  - 异步事件处理性能
-  - 事件过滤和路由
-  - 死锁检测算法
-
-#### `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/lock/EnhancedReentrantLockImplTest.java`
-- **功能**: 增强可重入锁实现单元测试
-- **测试覆盖**:
-  - 重入锁逻辑
-  - 并发安全性
-  - 锁续期机制
-  - 自动续期
-- **测试方法**: 30+ 个测试用例
-- **关键测试场景**:
-  - 多层嵌套重入
-  - 并发锁竞争
-  - 锁续期可靠性
-  - 自动续期调度
-
-#### `distributed-lock-core/src/test/java/com/mycorp/distributedlock/core/util/LockKeyUtilsTest.java`
-- **功能**: 锁键工具类单元测试
-- **测试覆盖**:
-  - 锁键生成
-  - 锁键验证
-  - 键名规范化
-  - 哈希生成
-  - 批量操作
-- **测试方法**: 50+ 个测试用例
-- **关键测试场景**:
-  - 复杂锁键场景
-  - 特殊字符处理
-  - 并发生成安全性
-  - 键名规范化
-
-### 3. Redis实现单元测试
-
-#### `distributed-lock-redis/src/test/java/com/mycorp/distributedlock/redis/SimpleRedisLockTest.java`
-- **功能**: Redis分布式锁实现单元测试
-- **测试覆盖**:
-  - 锁获取释放
-  - 重入锁支持
-  - 自动续期
-  - Lua脚本安全删除
-  - 异步操作
-- **测试方法**: 40+ 个测试用例
-- **关键测试场景**:
-  - Redis连接异常处理
-  - 锁过期自动续期
-  - 并发锁竞争
-  - 原子性保证
-
-#### `distributed-lock-redis/src/test/java/com/mycorp/distributedlock/redis/SimpleRedisLockProviderTest.java`
-- **功能**: Redis锁提供商单元测试
-- **测试覆盖**:
-  - 提供商初始化
-  - 锁创建缓存
-  - 连接管理
-  - 读写锁实现
-- **测试方法**: 25+ 个测试用例
-- **关键测试场景**:
-  - Redis连接管理
-  - 锁实例缓存
-  - 异常情况处理
-
-## 📊 测试覆盖统计
-
-### 测试文件统计
-- **总测试文件数**: 8个
-- **总测试方法数**: 420+个
-- **代码覆盖率目标**: >90%
-
-### 按模块分类
-| 模块 | 测试文件数 | 预计测试方法数 | 覆盖率目标 |
-|------|------------|----------------|------------|
-| API接口 | 3 | 155 | >95% |
-| 核心模块 | 5 | 200 | >90% |
-| Redis实现 | 2 | 65 | >85% |
-| **总计** | **8** | **420** | **>90%** |
-
-### 测试类型分布
-- **单元测试**: 100% (所有测试文件)
-- **集成测试**: 待实现
-- **性能测试**: 待实现
-- **端到端测试**: 待实现
-
-## 🛠️ 测试技术栈
-
-### 测试框架
-- **JUnit 5**: 主要测试框架
-- **Mockito**: 模拟框架
-- **TestContainers**: 容器化测试 (计划中)
-
-### 测试工具
-- **JaCoCo**: 代码覆盖率分析
-- **Maven Surefire**: 测试报告
-- **Spring Boot Test**: 集成测试 (计划中)
-
-### 依赖管理
-```xml
-<!-- 核心测试依赖 -->
+- 早期文档里提到的监控、事件、故障容错和端到端测试文件，当前分支已经删除或不再维护，不应再作为现行测试清单引用。
+- `examples` 目录当前不在根 `pom.xml` 的 reactor 中，因此不再把其中的旧测试文件视为有效回归入口。
 <dependency>
     <groupId>org.junit.jupiter</groupId>
     <artifactId>junit-jupiter</artifactId>

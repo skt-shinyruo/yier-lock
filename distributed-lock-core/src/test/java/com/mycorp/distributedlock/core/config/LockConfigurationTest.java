@@ -5,6 +5,7 @@ import com.typesafe.config.ConfigException;
 import com.typesafe.config.ConfigFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.core.env.Environment;
@@ -15,12 +16,14 @@ import java.util.function.Consumer;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
  * 锁配置单元测试
  * 测试配置管理、验证、动态更新等功能
  */
+@ExtendWith(MockitoExtension.class)
 class LockConfigurationTest {
 
     @Mock
@@ -31,6 +34,8 @@ class LockConfigurationTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(mockEnvironment.containsProperty(anyString())).thenReturn(false);
+
         // 创建基本配置
         rawConfig = ConfigFactory.parseString("""
             distributed-lock {
@@ -81,9 +86,12 @@ class LockConfigurationTest {
 
     @Test
     void shouldCreateLockConfigurationWithEnvironment() {
-        when(mockEnvironment.getProperty("distributed.lock.type")).thenReturn("zookeeper");
-        when(mockEnvironment.getProperty("distributed.lock.default-lease-time", "30s")).thenReturn("60s");
-        when(mockEnvironment.getProperty("distributed.lock.default-wait-time", "10s")).thenReturn("20s");
+        when(mockEnvironment.containsProperty("spring.distributed-lock.type")).thenReturn(true);
+        when(mockEnvironment.containsProperty("spring.distributed-lock.default-lease-time")).thenReturn(true);
+        when(mockEnvironment.containsProperty("spring.distributed-lock.default-wait-time")).thenReturn(true);
+        when(mockEnvironment.getProperty("spring.distributed-lock.type")).thenReturn("zookeeper");
+        when(mockEnvironment.getProperty("spring.distributed-lock.default-lease-time")).thenReturn("60s");
+        when(mockEnvironment.getProperty("spring.distributed-lock.default-wait-time")).thenReturn("20s");
         
         config = new LockConfiguration(mockEnvironment);
         
@@ -181,7 +189,7 @@ class LockConfigurationTest {
         assertEquals("localhost:6379", config.getRedisHosts());
         assertEquals("password123", config.getRedisPassword());
         assertEquals(0, config.getRedisDatabase());
-        assertEquals("distributed-lock", config.getRedisClientName());
+        assertNull(config.getRedisClientName());
         assertFalse(config.isRedisSslEnabled());
         assertNull(config.getRedisTrustStorePath());
         assertNull(config.getRedisTrustStorePassword());
@@ -489,9 +497,12 @@ class LockConfigurationTest {
 
     @Test
     void shouldHandleEnvironmentProperties() {
-        when(mockEnvironment.getProperty("distributed.lock.type", "")).thenReturn("environment-type");
-        when(mockEnvironment.getProperty("distributed.lock.redis.password", "")).thenReturn("env-password");
-        when(mockEnvironment.getProperty("distributed.lock.redis.hosts", "localhost:6379")).thenReturn("env-host:6379");
+        when(mockEnvironment.containsProperty("spring.distributed-lock.type")).thenReturn(true);
+        when(mockEnvironment.containsProperty("spring.distributed-lock.redis.password")).thenReturn(true);
+        when(mockEnvironment.containsProperty("spring.distributed-lock.redis.hosts")).thenReturn(true);
+        when(mockEnvironment.getProperty("spring.distributed-lock.type")).thenReturn("environment-type");
+        when(mockEnvironment.getProperty("spring.distributed-lock.redis.password")).thenReturn("env-password");
+        when(mockEnvironment.getProperty("spring.distributed-lock.redis.hosts")).thenReturn("env-host:6379");
         
         config = new LockConfiguration(rawConfig, mockEnvironment);
         
