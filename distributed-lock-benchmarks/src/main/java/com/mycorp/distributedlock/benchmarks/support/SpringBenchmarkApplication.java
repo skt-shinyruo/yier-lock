@@ -20,13 +20,13 @@ public class SpringBenchmarkApplication {
             this.lockManager = lockManager;
         }
 
-        public void programmatic(String id) throws InterruptedException {
+        public int programmatic(String id) throws InterruptedException {
             MutexLock lock = lockManager.mutex("bench:spring:programmatic:" + id);
             if (!lock.tryLock(Duration.ofMillis(250))) {
                 throw new IllegalStateException("Failed to acquire programmatic benchmark lock");
             }
             try (lock) {
-                // Keep the critical section intentionally tiny.
+                return id.hashCode();
             }
         }
     }
@@ -35,8 +35,8 @@ public class SpringBenchmarkApplication {
     public static class AnnotatedBenchmarkService {
 
         @DistributedLock(key = "bench:spring:annotated:#{#p0}", waitFor = "250ms")
-        public void annotated(String id) {
-            // Keep the critical section intentionally tiny.
+        public int annotated(String id) {
+            return id.hashCode();
         }
     }
 }
