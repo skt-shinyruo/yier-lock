@@ -10,39 +10,38 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>distributed-lock-core</artifactId>
-    <name>Distributed Lock Core</name>
-    <description>Backend-neutral core for distributed lock 2.0</description>
+    <artifactId>distributed-lock-examples</artifactId>
+    <name>Distributed Lock Examples</name>
+    <description>Examples for distributed lock 2.0</description>
 
     <dependencies>
         <dependency>
             <groupId>com.mycorp</groupId>
             <artifactId>distributed-lock-api</artifactId>
         </dependency>
-
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-runtime</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <scope>test</scope>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-redis</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
-            <scope>test</scope>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-zookeeper</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

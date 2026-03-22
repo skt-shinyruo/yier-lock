@@ -10,11 +10,24 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>distributed-lock-api</artifactId>
-    <name>Distributed Lock API</name>
-    <description>Minimal public API for distributed lock 2.0</description>
+    <artifactId>distributed-lock-runtime</artifactId>
+    <name>Distributed Lock Runtime</name>
+    <description>Runtime assembly and backend loading for distributed lock 2.0</description>
 
     <dependencies>
+        <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

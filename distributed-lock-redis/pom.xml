@@ -11,8 +11,8 @@
     </parent>
 
     <artifactId>distributed-lock-redis</artifactId>
-    <name>Distributed Lock Redis Implementation</name>
-    <description>Redis-based implementation using Lettuce client</description>
+    <name>Distributed Lock Redis Adapter</name>
+    <description>Redis backend adapter for distributed lock 2.0</description>
 
     <dependencies>
         <dependency>
@@ -24,6 +24,10 @@
             <artifactId>distributed-lock-core</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-runtime</artifactId>
+        </dependency>
+        <dependency>
             <groupId>io.lettuce</groupId>
             <artifactId>lettuce-core</artifactId>
         </dependency>
@@ -31,8 +35,7 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
-        
-        <!-- Test dependencies -->
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -61,6 +64,11 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

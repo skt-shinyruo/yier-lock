@@ -11,8 +11,8 @@
     </parent>
 
     <artifactId>distributed-lock-zookeeper</artifactId>
-    <name>Distributed Lock ZooKeeper Implementation</name>
-    <description>ZooKeeper-based implementation using Apache Curator</description>
+    <name>Distributed Lock ZooKeeper Adapter</name>
+    <description>ZooKeeper backend adapter for distributed lock 2.0</description>
 
     <dependencies>
         <dependency>
@@ -22,6 +22,10 @@
         <dependency>
             <groupId>com.mycorp</groupId>
             <artifactId>distributed-lock-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-runtime</artifactId>
         </dependency>
         <dependency>
             <groupId>org.apache.curator</groupId>
@@ -35,11 +39,15 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
         </dependency>
-        
-        <!-- Test dependencies -->
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.curator</groupId>
+            <artifactId>curator-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -50,12 +58,6 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.curator</groupId>
-            <artifactId>curator-test</artifactId>
-            <version>${curator.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -71,6 +73,11 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

@@ -10,14 +10,32 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>distributed-lock-api</artifactId>
-    <name>Distributed Lock API</name>
-    <description>Minimal public API for distributed lock 2.0</description>
+    <artifactId>distributed-lock-testkit</artifactId>
+    <name>Distributed Lock Testkit</name>
+    <description>Shared contract tests for distributed lock 2.0</description>
 
     <dependencies>
         <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mycorp</groupId>
+            <artifactId>distributed-lock-runtime</artifactId>
+        </dependency>
+
+        <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -28,11 +46,6 @@
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
