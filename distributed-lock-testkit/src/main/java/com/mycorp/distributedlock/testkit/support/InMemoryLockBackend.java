@@ -1,0 +1,94 @@
+package com.mycorp.distributedlock.testkit.support;
+
+import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.core.backend.LockMode;
+import com.mycorp.distributedlock.core.backend.LockResource;
+import com.mycorp.distributedlock.core.backend.WaitPolicy;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+
+public final class InMemoryLockBackend implements LockBackend {
+
+    private final Map<String, InMemoryLockState> lockStates = new ConcurrentHashMap<>();
+
+    @Override
+    public BackendLockHandle acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+        InMemoryLockState state = lockStates.computeIfAbsent(resource.key(), ignored -> new InMemoryLockState());
+        boolean acquired = switch (mode) {
+            case MUTEX -> acquireMutex(state, waitPolicy);
+            case READ -> acquireRead(state, waitPolicy);
+            case WRITE -> acquireWrite(state, waitPolicy);
+        };
+
+        if (!acquired) {
+            return null;
+        }
+
+        return new InMemoryBackendLockHandle(resource.key(), mode);
+    }
+
+    @Override
+    public void release(BackendLockHandle handle) {
+        InMemoryLockState state = lockStates.get(handle.key());
+        if (state == null) {
+            return;
+        }
+
+        switch (handle.mode()) {
+            case MUTEX -> state.mutex.unlock();
+            case READ -> state.readWrite.readLock().unlock();
+            case WRITE -> state.readWrite.writeLock().unlock();
+        }
+    }
+
+    @Override
+    public boolean isHeldByCurrentExecution(BackendLockHandle handle) {
+        InMemoryLockState state = lockStates.get(handle.key());
+        if (state == null) {
+            return false;
+        }
+
+        return switch (handle.mode()) {
+            case MUTEX -> state.mutex.isHeldByCurrentThread();
+            case READ -> state.readWrite.getReadHoldCount() > 0;
+            case WRITE -> state.readWrite.isWriteLockedByCurrentThread();
+        };
+    }
+
+    private static boolean acquireMutex(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
+        if (waitPolicy.unbounded()) {
+            state.mutex.lockInterruptibly();
+            return true;
+        }
+        return state.mutex.tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private static boolean acquireRead(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
+        if (waitPolicy.unbounded()) {
+            state.readWrite.readLock().lockInterruptibly();
+            return true;
+        }
+        return state.readWrite.readLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private static boolean acquireWrite(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
+        if (waitPolicy.unbounded()) {
+            state.readWrite.writeLock().lockInterruptibly();
+            return true;
+        }
+        return state.readWrite.writeLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private record InMemoryBackendLockHandle(String key, LockMode mode) implements BackendLockHandle {
+    }
+
+    private static final class InMemoryLockState {
+        private final ReentrantLock mutex = new ReentrantLock();
+        private final ReentrantReadWriteLock readWrite = new ReentrantReadWriteLock();
+    }
+}
