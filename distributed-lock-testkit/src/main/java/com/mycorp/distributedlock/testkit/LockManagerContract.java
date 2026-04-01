@@ -82,10 +82,20 @@ public abstract class LockManagerContract {
         MutexLock second = manager.mutex("inventory:4");
 
         first.lock();
-        second.lock();
-        second.close();
-        assertThat(first.isHeldByCurrentThread()).isTrue();
-        first.unlock();
+        try {
+            second.lock();
+            second.close();
+            assertThat(first.isHeldByCurrentThread()).isTrue();
+            assertThat(executor.submit(() -> manager.mutex("inventory:4").tryLock(Duration.ofMillis(100))).get()).isFalse();
+
+            first.unlock();
+            assertThat(executor.submit(() -> tryLockAndRelease(manager.mutex("inventory:4"), Duration.ofMillis(100))).get())
+                .isTrue();
+        } finally {
+            if (first.isHeldByCurrentThread()) {
+                first.unlock();
+            }
+        }
     }
 
     @Test
@@ -109,6 +119,8 @@ public abstract class LockManagerContract {
         writeLock.lock();
         try {
             assertThat(executor.submit(() -> tryLockAndRelease(manager.readWrite("inventory:5").readLock(), Duration.ofMillis(100))).get())
+                .isFalse();
+            assertThat(executor.submit(() -> tryLockAndRelease(manager.readWrite("inventory:5").writeLock(), Duration.ofMillis(100))).get())
                 .isFalse();
         } finally {
             writeLock.unlock();
