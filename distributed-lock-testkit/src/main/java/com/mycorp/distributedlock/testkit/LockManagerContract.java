@@ -50,12 +50,16 @@ public abstract class LockManagerContract {
         LockManager manager = runtime.lockManager();
         MutexLock first = manager.mutex("inventory:2");
         MutexLock second = manager.mutex("inventory:2");
+        boolean secondAcquired = false;
 
         first.lock();
         try {
-            assertThat(second.tryLock(Duration.ZERO)).isTrue();
+            secondAcquired = second.tryLock(Duration.ZERO);
+            assertThat(secondAcquired).isTrue();
         } finally {
-            second.unlock();
+            if (secondAcquired) {
+                second.unlock();
+            }
             first.unlock();
         }
     }
@@ -71,7 +75,9 @@ public abstract class LockManagerContract {
                 .isInstanceOf(ExecutionException.class)
                 .hasCauseInstanceOf(IllegalMonitorStateException.class);
         } finally {
-            lock.unlock();
+            if (lock.isHeldByCurrentThread()) {
+                lock.unlock();
+            }
         }
     }
 
