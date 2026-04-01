@@ -11,71 +11,21 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class DefaultLockManagerTest {
+class DefaultLockManagerOwnershipLossTest {
 
     @Test
-    void sameThreadReentryShouldBeTrackedByLogicalKeyNotHandleIdentity() throws Exception {
-        FakeLockBackend backend = new FakeLockBackend();
-        DefaultLockManager manager = new DefaultLockManager(backend);
-
-        MutexLock first = manager.mutex("orders:1");
-        MutexLock second = manager.mutex("orders:1");
-
-        first.lock();
-        assertThat(second.tryLock(Duration.ZERO)).isTrue();
-
-        second.unlock();
-        assertThat(first.isHeldByCurrentThread()).isTrue();
-    }
-
-    @Test
-    void closeShouldDetachStaleLocalHoldEvenWhenBackendOwnershipIsLost() throws Exception {
+    void staleLocalReentryMustFailAfterBackendOwnershipLoss() throws Exception {
         OwnershipLossLeaseBackend backend = new OwnershipLossLeaseBackend();
         DefaultLockManager manager = new DefaultLockManager(backend);
-        MutexLock lock = manager.mutex("orders:2");
-
+        MutexLock lock = manager.mutex("orders:77");
         lock.lock();
         backend.invalidateCurrentLease();
 
-        assertThatThrownBy(lock::close)
+        assertThatThrownBy(() -> manager.mutex("orders:77").tryLock(Duration.ZERO))
             .isInstanceOf(LockOwnershipLostException.class);
-        assertThat(manager.mutex("orders:2").tryLock(Duration.ZERO)).isTrue();
-    }
-
-    private static final class FakeLockBackend implements LockBackend {
-        private final ConcurrentHashMap<String, AtomicInteger> holds = new ConcurrentHashMap<>();
-
-        @Override
-        public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-            holds.computeIfAbsent(resource.key(), ignored -> new AtomicInteger()).incrementAndGet();
-            return new BackendLockLease() {
-                @Override
-                public String key() {
-                    return resource.key();
-                }
-
-                @Override
-                public LockMode mode() {
-                    return mode;
-                }
-
-                @Override
-                public boolean isValidForCurrentExecution() {
-                    return holds.containsKey(resource.key());
-                }
-
-                @Override
-                public void release() {
-                    holds.computeIfPresent(resource.key(), (ignored, count) -> count.decrementAndGet() == 0 ? null : count);
-                }
-            };
-        }
     }
 
     private static final class OwnershipLossLeaseBackend implements LockBackend {

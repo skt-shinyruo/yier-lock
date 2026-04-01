@@ -3,10 +3,13 @@ package com.mycorp.distributedlock.core.manager;
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
 import com.mycorp.distributedlock.api.ReadWriteLock;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
+import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
+import com.mycorp.distributedlock.core.backend.SupportedLockModes;
 import com.mycorp.distributedlock.core.backend.WaitPolicy;
 
 import java.time.Duration;
@@ -15,50 +18,73 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 
 public final class DefaultLockManager implements LockManager {
 
     private final LockBackend backend;
-    private final ConcurrentMap<String, LockState> states = new ConcurrentHashMap<>();
+    private final SupportedLockModes supportedLockModes;
+    private final ConcurrentMap<String, LockCoordinator> coordinators = new ConcurrentHashMap<>();
 
     public DefaultLockManager(LockBackend backend) {
+        this(backend, SupportedLockModes.standard());
+    }
+
+    public DefaultLockManager(LockBackend backend, SupportedLockModes supportedLockModes) {
         this.backend = Objects.requireNonNull(backend, "backend");
+        this.supportedLockModes = Objects.requireNonNull(supportedLockModes, "supportedLockModes");
     }
 
     @Override
     public MutexLock mutex(String key) {
-        return new DefaultMutexLock(this, normalizeKey(key), LockMode.MUTEX);
+        String normalizedKey = normalizeKey(key);
+        ensureModeSupported(LockMode.MUTEX);
+        return new DefaultMutexLock(this, normalizedKey, LockMode.MUTEX);
     }
 
     @Override
     public ReadWriteLock readWrite(String key) {
-        return new DefaultReadWriteLock(this, normalizeKey(key));
+        String normalizedKey = normalizeKey(key);
+        ensureReadWriteSupported();
+        return new DefaultReadWriteLock(this, normalizedKey);
     }
 
     boolean acquire(String key, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+        ensureModeSupported(mode);
         String normalizedKey = normalizeKey(key);
-        String stateKey = stateKey(normalizedKey, mode);
-        LockState state = states.computeIfAbsent(stateKey, ignored -> new LockState(backend, normalizedKey, stateKey));
-        return state.acquire(mode, waitPolicy);
+        String coordinatorStateKey = stateKey(normalizedKey, mode);
+        LockCoordinator coordinator = coordinators.computeIfAbsent(coordinatorStateKey, ignored ->
+            new LockCoordinator(coordinatorStateKey));
+        return coordinator.acquire(mode, waitPolicy);
     }
 
     void release(String key, LockMode mode) {
-        String normalizedKey = normalizeKey(key);
-        String stateKey = stateKey(normalizedKey, mode);
-        LockState state = states.get(stateKey);
-        if (state == null) {
-            throw new IllegalMonitorStateException("Current thread does not hold lock " + normalizedKey);
-        }
+        ensureModeSupported(mode);
+        requiredCoordinator(key, mode).release(mode);
+    }
 
-        if (state.release(mode)) {
-            states.remove(stateKey, state);
+    void close(String key, LockMode mode) {
+        if (!hasLocalHold(key, mode)) {
+            return;
         }
+        release(key, mode);
     }
 
     boolean isHeldByCurrentThread(String key, LockMode mode) {
         String normalizedKey = normalizeKey(key);
-        LockState state = states.get(stateKey(normalizedKey, mode));
-        return state != null && state.isHeldByCurrentThread(mode);
+        LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
+        return coordinator != null && coordinator.isHeldByCurrentThread(mode);
+    }
+
+    boolean hasLocalHold(String key, LockMode mode) {
+        String normalizedKey = normalizeKey(key);
+        LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
+        return coordinator != null && coordinator.hasLocalHold(mode);
+    }
+
+    void ensureReadWriteSupported() {
+        ensureModeSupported(LockMode.READ);
     }
 
     static WaitPolicy indefiniteWait() {
@@ -71,6 +97,30 @@ public final class DefaultLockManager implements LockManager {
             throw new IllegalArgumentException("waitTime cannot be negative");
         }
         return WaitPolicy.timed(waitTime);
+    }
+
+    private void ensureModeSupported(LockMode mode) {
+        switch (mode) {
+            case MUTEX -> {
+                if (!supportedLockModes.mutexSupported()) {
+                    throw new LockConfigurationException("Configured backend does not support mutex locks");
+                }
+            }
+            case READ, WRITE -> {
+                if (!supportedLockModes.readWriteSupported()) {
+                    throw new LockConfigurationException("Configured backend does not support read/write locks");
+                }
+            }
+        }
+    }
+
+    private LockCoordinator requiredCoordinator(String key, LockMode mode) {
+        String normalizedKey = normalizeKey(key);
+        LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
+        if (coordinator == null) {
+            throw new IllegalMonitorStateException("Current thread does not hold lock " + normalizedKey);
+        }
+        return coordinator;
     }
 
     private static String normalizeKey(String key) {
@@ -86,158 +136,276 @@ public final class DefaultLockManager implements LockManager {
         return mode == LockMode.MUTEX ? "mutex:" + key : "rw:" + key;
     }
 
-    private static final class LockState {
-        private final LockBackend backend;
+    private final class LockCoordinator {
+        private final String coordinatorStateKey;
+        private final ReentrantLock stateLock = new ReentrantLock();
+        private final Condition stateChanged = stateLock.newCondition();
         private final LockResource resource;
 
-        private Thread mutexOwner;
-        private int mutexHoldCount;
-        private BackendLockLease mutexLease;
+        private HeldLease mutexLease;
+        private HeldLease writeLease;
+        private final Map<Thread, HeldLease> readLeases = new HashMap<>();
+        private int pendingFreshAcquisitions;
 
-        private Thread writeOwner;
-        private int writeHoldCount;
-        private BackendLockLease writeLease;
-
-        private final Map<Thread, ReadHold> readHolds = new HashMap<>();
-
-        private LockState(LockBackend backend, String key, String backendKey) {
-            this.backend = backend;
-            this.resource = new LockResource(backendKey);
+        private LockCoordinator(String coordinatorStateKey) {
+            this.coordinatorStateKey = coordinatorStateKey;
+            this.resource = new LockResource(coordinatorStateKey);
         }
 
-        private synchronized boolean acquire(LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+        private boolean acquire(LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
             Thread current = Thread.currentThread();
-            return switch (mode) {
-                case MUTEX -> acquireMutex(current, waitPolicy);
-                case READ -> acquireRead(current, waitPolicy);
-                case WRITE -> acquireWrite(current, waitPolicy);
-            };
-        }
+            LockCoordinator replacement = null;
 
-        private synchronized boolean release(LockMode mode) {
-            Thread current = Thread.currentThread();
-            switch (mode) {
-                case MUTEX -> releaseMutex(current);
-                case READ -> releaseRead(current);
-                case WRITE -> releaseWrite(current);
-            }
-            return isEmpty();
-        }
+            stateLock.lock();
+            try {
+                replacement = registeredCoordinator();
+                if (replacement == this) {
+                    HeldLease existingLease = existingLease(current, mode);
+                    if (existingLease != null) {
+                        existingLease.assertValid();
+                        existingLease.increment();
+                        return true;
+                    }
 
-        private synchronized boolean isHeldByCurrentThread(LockMode mode) {
-            Thread current = Thread.currentThread();
-            return switch (mode) {
-                case MUTEX -> current == mutexOwner && mutexLease != null && mutexLease.isValidForCurrentExecution();
-                case READ -> {
-                    ReadHold hold = readHolds.get(current);
-                    yield hold != null && hold.lease != null && hold.lease.isValidForCurrentExecution();
+                    if (mode == LockMode.READ && writeLease != null && writeLease.owner() == current) {
+                        throw new IllegalStateException("Cannot acquire read lock while holding write lock");
+                    }
+                    if (mode == LockMode.WRITE && readLeases.containsKey(current)) {
+                        throw new IllegalStateException("Cannot acquire write lock while holding read lock");
+                    }
+
+                    pendingFreshAcquisitions++;
                 }
-                case WRITE -> current == writeOwner && writeLease != null && writeLease.isValidForCurrentExecution();
+            } finally {
+                stateLock.unlock();
+            }
+
+            if (replacement != this) {
+                return replacement.acquire(mode, waitPolicy);
+            }
+
+            BackendLockLease acquiredLease;
+            try {
+                acquiredLease = backend.acquire(resource, mode, waitPolicy);
+            } catch (InterruptedException | RuntimeException exception) {
+                abandonFreshAcquisition();
+                throw exception;
+            }
+
+            return finishFreshAcquisition(mode, current, acquiredLease);
+        }
+
+        private void release(LockMode mode) {
+            Thread current = Thread.currentThread();
+            HeldLease detachedLease;
+
+            stateLock.lock();
+            try {
+                detachedLease = detachForRelease(current, mode);
+                stateChanged.signalAll();
+            } finally {
+                stateLock.unlock();
+            }
+
+            if (detachedLease == null) {
+                retireIfPossible();
+                return;
+            }
+
+            try {
+                detachedLease.releaseBackendLease();
+            } finally {
+                retireIfPossible();
+            }
+        }
+
+        private boolean isHeldByCurrentThread(LockMode mode) {
+            stateLock.lock();
+            try {
+                HeldLease existingLease = existingLease(Thread.currentThread(), mode);
+                return existingLease != null && existingLease.lease.isValidForCurrentExecution();
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private boolean hasLocalHold(LockMode mode) {
+            stateLock.lock();
+            try {
+                return hasLocalHold(Thread.currentThread(), mode);
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private HeldLease existingLease(Thread owner, LockMode mode) {
+            return switch (mode) {
+                case MUTEX -> mutexLease != null && mutexLease.owner() == owner ? mutexLease : null;
+                case READ -> readLeases.get(owner);
+                case WRITE -> writeLease != null && writeLease.owner() == owner ? writeLease : null;
             };
         }
 
-        private boolean acquireMutex(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
-            if (current == mutexOwner) {
-                mutexHoldCount++;
-                return true;
-            }
-            BackendLockLease acquiredLease = backend.acquire(resource, LockMode.MUTEX, waitPolicy);
-            if (acquiredLease == null) {
-                return false;
-            }
-            mutexLease = acquiredLease;
-            mutexOwner = current;
-            mutexHoldCount = 1;
-            return true;
+        private boolean canInstallFreshLease(Thread owner, LockMode mode) {
+            return switch (mode) {
+                case MUTEX -> mutexLease == null;
+                case READ -> writeLease == null && !readLeases.containsKey(owner);
+                case WRITE -> writeLease == null && readLeases.isEmpty();
+            };
         }
 
-        private boolean acquireRead(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
-            if (current == writeOwner) {
-                throw new IllegalStateException("Cannot acquire read lock while holding write lock");
-            }
-            ReadHold hold = readHolds.get(current);
-            if (hold != null) {
-                hold.count++;
-                return true;
-            }
-
-            BackendLockLease lease = backend.acquire(resource, LockMode.READ, waitPolicy);
-            if (lease == null) {
-                return false;
-            }
-            readHolds.put(current, new ReadHold(lease));
-            return true;
-        }
-
-        private boolean acquireWrite(Thread current, WaitPolicy waitPolicy) throws InterruptedException {
-            if (readHolds.containsKey(current)) {
-                throw new IllegalStateException("Cannot acquire write lock while holding read lock");
-            }
-            if (current == writeOwner) {
-                writeHoldCount++;
-                return true;
-            }
-
-            BackendLockLease acquiredLease = backend.acquire(resource, LockMode.WRITE, waitPolicy);
-            if (acquiredLease == null) {
-                return false;
-            }
-            writeLease = acquiredLease;
-            writeOwner = current;
-            writeHoldCount = 1;
-            return true;
-        }
-
-        private void releaseMutex(Thread current) {
-            if (current != mutexOwner || mutexLease == null) {
-                throw new IllegalMonitorStateException("Current thread does not hold mutex lock");
-            }
-            mutexHoldCount--;
-            if (mutexHoldCount == 0) {
-                BackendLockLease lease = mutexLease;
-                mutexLease = null;
-                mutexOwner = null;
-                lease.release();
+        private void installFreshLease(Thread owner, BackendLockLease lease) {
+            HeldLease heldLease = new HeldLease(owner, lease);
+            switch (lease.mode()) {
+                case MUTEX -> mutexLease = heldLease;
+                case READ -> readLeases.put(owner, heldLease);
+                case WRITE -> writeLease = heldLease;
             }
         }
 
-        private void releaseRead(Thread current) {
-            ReadHold hold = readHolds.get(current);
-            if (hold == null || hold.lease == null) {
+        private HeldLease detachForRelease(Thread owner, LockMode mode) {
+            return switch (mode) {
+                case MUTEX -> detachExclusiveLease(owner, mutexLease, "mutex lock", lease -> mutexLease = lease);
+                case READ -> detachReadLease(owner);
+                case WRITE -> detachExclusiveLease(owner, writeLease, "write lock", lease -> writeLease = lease);
+            };
+        }
+
+        private HeldLease detachReadLease(Thread owner) {
+            HeldLease heldLease = readLeases.get(owner);
+            if (heldLease == null) {
                 throw new IllegalMonitorStateException("Current thread does not hold read lock");
             }
-            hold.count--;
-            if (hold.count == 0) {
-                readHolds.remove(current);
-                hold.lease.release();
+            if (!heldLease.decrementToZero()) {
+                return null;
             }
+            readLeases.remove(owner);
+            return heldLease;
         }
 
-        private void releaseWrite(Thread current) {
-            if (current != writeOwner || writeLease == null) {
-                throw new IllegalMonitorStateException("Current thread does not hold write lock");
+        private HeldLease detachExclusiveLease(
+            Thread owner,
+            HeldLease heldLease,
+            String lockType,
+            ExclusiveLeaseSetter setter
+        ) {
+            if (heldLease == null || heldLease.owner() != owner) {
+                throw new IllegalMonitorStateException("Current thread does not hold " + lockType);
             }
-            writeHoldCount--;
-            if (writeHoldCount == 0) {
-                BackendLockLease lease = writeLease;
-                writeLease = null;
-                writeOwner = null;
-                lease.release();
+            if (!heldLease.decrementToZero()) {
+                return null;
             }
+            setter.set(null);
+            return heldLease;
+        }
+
+        private boolean hasLocalHold(Thread owner, LockMode mode) {
+            return switch (mode) {
+                case MUTEX -> mutexLease != null && mutexLease.owner() == owner;
+                case READ -> readLeases.containsKey(owner);
+                case WRITE -> writeLease != null && writeLease.owner() == owner;
+            };
         }
 
         private boolean isEmpty() {
-            return mutexLease == null && writeLease == null && readHolds.isEmpty();
+            return mutexLease == null && writeLease == null && readLeases.isEmpty();
         }
 
-        private static final class ReadHold {
-            private final BackendLockLease lease;
-            private int count;
+        private LockCoordinator registeredCoordinator() {
+            LockCoordinator registered = coordinators.putIfAbsent(coordinatorStateKey, this);
+            return registered == null ? this : registered;
+        }
 
-            private ReadHold(BackendLockLease lease) {
-                this.lease = lease;
-                this.count = 1;
+        private void abandonFreshAcquisition() {
+            stateLock.lock();
+            try {
+                pendingFreshAcquisitions--;
+                stateChanged.signalAll();
+            } finally {
+                stateLock.unlock();
             }
+            retireIfPossible();
+        }
+
+        private boolean finishFreshAcquisition(LockMode mode, Thread current, BackendLockLease acquiredLease) {
+            BackendLockLease leaseToRelease = null;
+
+            stateLock.lock();
+            try {
+                pendingFreshAcquisitions--;
+                if (acquiredLease == null) {
+                    stateChanged.signalAll();
+                    retireIfPossible();
+                    return false;
+                }
+                if (!canInstallFreshLease(current, mode)) {
+                    leaseToRelease = acquiredLease;
+                } else {
+                    installFreshLease(current, acquiredLease);
+                    stateChanged.signalAll();
+                    return true;
+                }
+                stateChanged.signalAll();
+            } finally {
+                stateLock.unlock();
+            }
+
+            try {
+                leaseToRelease.release();
+            } finally {
+                retireIfPossible();
+            }
+            throw new IllegalStateException("Cannot install backend lease for key " + acquiredLease.key());
+        }
+
+        private void retireIfPossible() {
+            stateLock.lock();
+            try {
+                if (pendingFreshAcquisitions == 0 && isEmpty()) {
+                    coordinators.remove(coordinatorStateKey, this);
+                }
+            } finally {
+                stateLock.unlock();
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface ExclusiveLeaseSetter {
+        void set(HeldLease lease);
+    }
+
+    private static final class HeldLease {
+        private final Thread owner;
+        private final BackendLockLease lease;
+        private int holdCount = 1;
+
+        private HeldLease(Thread owner, BackendLockLease lease) {
+            this.owner = owner;
+            this.lease = lease;
+        }
+
+        private Thread owner() {
+            return owner;
+        }
+
+        private void assertValid() {
+            if (!lease.isValidForCurrentExecution()) {
+                throw new LockOwnershipLostException("Backend ownership lost for key " + lease.key());
+            }
+        }
+
+        private void increment() {
+            holdCount++;
+        }
+
+        private boolean decrementToZero() {
+            holdCount--;
+            return holdCount == 0;
+        }
+
+        private void releaseBackendLease() {
+            lease.release();
         }
     }
 }

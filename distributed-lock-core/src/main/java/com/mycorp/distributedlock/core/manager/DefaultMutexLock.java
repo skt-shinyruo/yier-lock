@@ -41,6 +41,11 @@ public final class DefaultMutexLock implements MutexLock {
     }
 
     @Override
+    public void close() {
+        manager.close(key, mode);
+    }
+
+    @Override
     public String key() {
         return key;
     }

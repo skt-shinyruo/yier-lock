@@ -18,11 +18,13 @@ public final class DefaultReadWriteLock implements ReadWriteLock {
 
     @Override
     public MutexLock readLock() {
+        manager.ensureReadWriteSupported();
         return new DefaultMutexLock(manager, key, LockMode.READ);
     }
 
     @Override
     public MutexLock writeLock() {
+        manager.ensureReadWriteSupported();
         return new DefaultMutexLock(manager, key, LockMode.WRITE);
     }
 }
