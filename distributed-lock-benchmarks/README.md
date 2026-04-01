@@ -7,6 +7,7 @@
 - current 2.0 artifacts installed with `mvn -q install -DskipTests`
 
 The benchmark module is intentionally outside the default root reactor. Mainline `mvn test` does not include it.
+Because of that, rerun `mvn -q install -DskipTests` after changing runtime, backend, or starter modules so this module sees the current typed-module API.
 
 ## Benchmark Suites
 
@@ -35,6 +36,8 @@ mvn -q -f distributed-lock-benchmarks/pom.xml -DskipTests compile
 ```bash
 mvn -q -f distributed-lock-benchmarks/pom.xml -Dtest=BenchmarkEnvironmentSmokeTest test
 ```
+
+The Spring smoke path relies on `distributed-lock-spring-boot-starter` plus `distributed-lock-redis-spring-boot-autoconfigure`, with Redis properties supplied through `distributed.lock.redis.*`.
 
 ### Package the runnable JMH jar
 

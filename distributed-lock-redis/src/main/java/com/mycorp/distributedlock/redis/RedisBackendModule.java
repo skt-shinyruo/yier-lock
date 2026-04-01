@@ -14,10 +14,6 @@ public final class RedisBackendModule implements BackendModule {
         this(RedisBackendConfiguration.defaultLocal());
     }
 
-    public RedisBackendModule(String redisUri) {
-        this(new RedisBackendConfiguration(redisUri, 30L));
-    }
-
     public RedisBackendModule(RedisBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
     }

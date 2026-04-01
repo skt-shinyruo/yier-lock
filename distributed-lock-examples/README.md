@@ -5,29 +5,46 @@
 ## Included examples
 
 - `ProgrammaticRedisExample`
-  - builds a `LockRuntime` explicitly
+  - selects the Redis backend explicitly
+  - builds a `LockRuntime` from a typed `RedisBackendModule`
   - acquires a mutex through `LockManager`
 - `ProgrammaticZooKeeperExample`
-  - uses the same 2.0 runtime flow against ZooKeeper
+  - selects the ZooKeeper backend explicitly
+  - uses the same typed-module runtime flow against ZooKeeper
 - `SpringBootRedisExampleApplication`
-  - shows Spring Boot 3 auto-configuration
+  - shows Spring Boot 3 auto-configuration with a backend-specific Spring module
   - demonstrates both `@DistributedLock` and programmatic `LockManager` usage
 
 ## Configuration model
 
-All examples use the 2.0 configuration namespace:
+Programmatic examples instantiate typed backend modules directly:
+
+```java
+LockRuntime runtime = LockRuntimeBuilder.create()
+    .backend("redis")
+    .backendModules(List.of(new RedisBackendModule(
+        new RedisBackendConfiguration("redis://127.0.0.1:6379", 30L)
+    )))
+    .build();
+```
+
+Spring examples use the 2.0 namespace and require the matching backend Spring auto-config module on the classpath:
 
 ```yaml
 distributed:
   lock:
     enabled: true
     backend: redis
+    redis:
+      uri: redis://127.0.0.1:6379
+      lease-time: 30s
 ```
 
-Backend-specific settings stay under `distributed.lock.redis.*` or `distributed.lock.zookeeper.*`.
+Backend-specific settings stay under `distributed.lock.redis.*` or `distributed.lock.zookeeper.*`, but the generic starter only owns generic `distributed.lock.*` runtime and annotation settings.
 
 ## Notes
 
 - These examples are part of the default reactor and must compile on every build.
 - They are documentation assets, not part of the regression test contract.
 - Running the Redis or ZooKeeper examples requires a local backend instance.
+- Spring examples also require the matching backend Spring auto-config artifact, which this module now depends on directly.

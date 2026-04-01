@@ -1,35 +1,53 @@
 # 分布式锁 2.0 测试套件
 
-本文档只记录 2.0 分支当前维护的回归入口。
+本文档记录 2.0 当前维护的主线回归入口。
 
-## 当前测试布局
+## 当前维护的测试
 
-- `distributed-lock-api`
-  - `ApiSurfaceTest`
-- `distributed-lock-core`
-  - `DefaultLockManagerTest`
-- `distributed-lock-runtime`
-  - `LockRuntimeBuilderTest`
-- `distributed-lock-testkit`
-  - `InMemoryLockManagerContractTest`
-- `distributed-lock-redis`
-  - `RedisBackendModuleTest`
-  - `RedisLockBackendContractTest`
-- `distributed-lock-zookeeper`
-  - `ZooKeeperBackendModuleTest`
-  - `ZooKeeperLockBackendContractTest`
-- `distributed-lock-spring-boot-starter`
-  - `DistributedLockAutoConfigurationIntegrationTest`
-  - `DistributedLockAspectIntegrationTest`
-  - `RedisStarterIntegrationTest`
-  - `ZooKeeperStarterIntegrationTest`
+- `ApiSurfaceTest`
+- `DefaultLockManagerTest`
+- `DefaultLockManagerBlockingTest`
+- `DefaultLockManagerOwnershipLossTest`
+- `DefaultLockManagerCapabilitiesTest`
+- `DefaultLockManagerReleaseFailureTest`
+- `LockRuntimeBuilderTest`
+- `InMemoryLockManagerContractTest`
+- `RedisBackendModuleTest`
+- `RedisLockBackendContractTest`
+- `RedisLeaseRenewalTest`
+- `RedisOwnershipLossTest`
+- `ZooKeeperBackendModuleTest`
+- `ZooKeeperLockBackendContractTest`
+- `ZooKeeperSessionLossTest`
+- `DistributedLockAutoConfigurationIntegrationTest`
+- `DistributedLockAspectIntegrationTest`
+- `DistributedLockAsyncGuardTest`
+- `RedisBackendModuleAutoConfigurationTest`
+- `ZooKeeperBackendModuleAutoConfigurationTest`
+- `RedisStarterIntegrationTest`
+- `ZooKeeperStarterIntegrationTest`
 
 ## 推荐命令
 
 ```bash
-# starter 定向验证
-mvn -pl distributed-lock-spring-boot-starter -am test \
-  -Dtest=DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
+# core / testkit 主线验证
+mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
+  -Dtest=DefaultLockManagerTest,DefaultLockManagerBlockingTest,DefaultLockManagerOwnershipLossTest,DefaultLockManagerCapabilitiesTest,DefaultLockManagerReleaseFailureTest,InMemoryLockManagerContractTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
+# runtime / starter / backend Spring 模块验证
+mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter,distributed-lock-redis-spring-boot-autoconfigure,distributed-lock-zookeeper-spring-boot-autoconfigure -am test \
+  -Dtest=LockRuntimeBuilderTest,DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,DistributedLockAsyncGuardTest,RedisBackendModuleAutoConfigurationTest,ZooKeeperBackendModuleAutoConfigurationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
+# Redis adapter 验证
+mvn -pl distributed-lock-redis -am test \
+  -Dtest=RedisBackendModuleTest,RedisLockBackendContractTest,RedisLeaseRenewalTest,RedisOwnershipLossTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
+# ZooKeeper adapter 验证
+mvn -pl distributed-lock-zookeeper -am test \
+  -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # 全仓回归

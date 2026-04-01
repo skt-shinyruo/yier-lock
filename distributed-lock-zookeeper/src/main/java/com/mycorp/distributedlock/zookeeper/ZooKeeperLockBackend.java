@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.zookeeper;
 
 import com.mycorp.distributedlock.api.exception.LockBackendException;
+import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
@@ -15,21 +16,30 @@ import org.apache.curator.retry.ExponentialBackoffRetry;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
 
     private final ZooKeeperBackendConfiguration configuration;
     private final CuratorFramework curatorFramework;
+    private final BooleanSupplier sessionValidSupplier;
     private final Map<String, InterProcessMutex> mutexes = new ConcurrentHashMap<>();
     private final Map<String, InterProcessReadWriteLock> readWriteLocks = new ConcurrentHashMap<>();
 
     public ZooKeeperLockBackend(ZooKeeperBackendConfiguration configuration) {
+        this(configuration, null);
+    }
+
+    ZooKeeperLockBackend(ZooKeeperBackendConfiguration configuration, BooleanSupplier sessionValidSupplier) {
         this.configuration = configuration;
         this.curatorFramework = CuratorFrameworkFactory.newClient(
             configuration.connectString(),
             new ExponentialBackoffRetry(1_000, 3)
         );
         this.curatorFramework.start();
+        this.sessionValidSupplier = sessionValidSupplier != null
+            ? sessionValidSupplier
+            : () -> curatorFramework.getZookeeperClient().isConnected();
         try {
             this.curatorFramework.blockUntilConnected(10, TimeUnit.SECONDS);
         } catch (InterruptedException exception) {
@@ -40,39 +50,31 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
 
     @Override
     public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
-        boolean acquired = switch (mode) {
+        return switch (mode) {
             case MUTEX -> acquireMutex(resource, waitPolicy);
             case READ -> acquireRead(resource, waitPolicy);
             case WRITE -> acquireWrite(resource, waitPolicy);
         };
-        if (!acquired) {
-            return null;
-        }
-        return new ZooKeeperLease(this, resource.key(), mode, Thread.currentThread().getId());
     }
 
     private void releaseLease(ZooKeeperLease lease) {
+        if (!lease.isValidForCurrentExecution()) {
+            throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + lease.key());
+        }
         try {
-            switch (lease.mode()) {
-                case MUTEX -> mutex(resourcePath("mutex", lease.key())).release();
-                case READ -> readWrite(resourcePath("rw", lease.key())).readLock().release();
-                case WRITE -> readWrite(resourcePath("rw", lease.key())).writeLock().release();
-            }
+            lease.acquiredLock.release();
+        } catch (LockOwnershipLostException exception) {
+            throw exception;
         } catch (Exception exception) {
             throw new LockBackendException("Failed to release ZooKeeper lock for key " + lease.key(), exception);
         }
     }
 
     private boolean isLeaseValid(ZooKeeperLease lease) {
-        if (lease.threadId() != Thread.currentThread().getId()) {
+        if (lease.threadId != Thread.currentThread().getId()) {
             return false;
         }
-
-        return switch (lease.mode()) {
-            case MUTEX -> mutex(resourcePath("mutex", lease.key())).isOwnedByCurrentThread();
-            case READ -> readWrite(resourcePath("rw", lease.key())).readLock().isOwnedByCurrentThread();
-            case WRITE -> readWrite(resourcePath("rw", lease.key())).writeLock().isOwnedByCurrentThread();
-        };
+        return sessionValidSupplier.getAsBoolean() && lease.acquiredLock.isOwnedByCurrentThread();
     }
 
     @Override
@@ -80,14 +82,17 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         curatorFramework.close();
     }
 
-    private boolean acquireMutex(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
+    private ZooKeeperLease acquireMutex(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
         try {
             InterProcessMutex lock = mutex(resourcePath("mutex", resource.key()));
             if (waitPolicy.unbounded()) {
                 lock.acquire();
-                return true;
+                return new ZooKeeperLease(resource.key(), LockMode.MUTEX, Thread.currentThread().getId(), lock);
             }
-            return lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+            if (!lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS)) {
+                return null;
+            }
+            return new ZooKeeperLease(resource.key(), LockMode.MUTEX, Thread.currentThread().getId(), lock);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw exception;
@@ -96,14 +101,17 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         }
     }
 
-    private boolean acquireRead(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
+    private ZooKeeperLease acquireRead(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
         try {
             InterProcessMutex lock = readWrite(resourcePath("rw", resource.key())).readLock();
             if (waitPolicy.unbounded()) {
                 lock.acquire();
-                return true;
+                return new ZooKeeperLease(resource.key(), LockMode.READ, Thread.currentThread().getId(), lock);
             }
-            return lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+            if (!lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS)) {
+                return null;
+            }
+            return new ZooKeeperLease(resource.key(), LockMode.READ, Thread.currentThread().getId(), lock);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw exception;
@@ -112,14 +120,17 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         }
     }
 
-    private boolean acquireWrite(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
+    private ZooKeeperLease acquireWrite(LockResource resource, WaitPolicy waitPolicy) throws InterruptedException {
         try {
             InterProcessMutex lock = readWrite(resourcePath("rw", resource.key())).writeLock();
             if (waitPolicy.unbounded()) {
                 lock.acquire();
-                return true;
+                return new ZooKeeperLease(resource.key(), LockMode.WRITE, Thread.currentThread().getId(), lock);
             }
-            return lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+            if (!lock.acquire(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS)) {
+                return null;
+            }
+            return new ZooKeeperLease(resource.key(), LockMode.WRITE, Thread.currentThread().getId(), lock);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw exception;
@@ -141,17 +152,38 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         return configuration.basePath() + "/" + kind + "/" + normalizedKey;
     }
 
-    private record ZooKeeperLease(ZooKeeperLockBackend owner, String key, LockMode mode, long threadId)
-        implements BackendLockLease {
+    private final class ZooKeeperLease implements BackendLockLease {
+
+        private final String key;
+        private final LockMode mode;
+        private final long threadId;
+        private final InterProcessMutex acquiredLock;
+
+        private ZooKeeperLease(String key, LockMode mode, long threadId, InterProcessMutex acquiredLock) {
+            this.key = key;
+            this.mode = mode;
+            this.threadId = threadId;
+            this.acquiredLock = acquiredLock;
+        }
+
+        @Override
+        public String key() {
+            return key;
+        }
+
+        @Override
+        public LockMode mode() {
+            return mode;
+        }
 
         @Override
         public boolean isValidForCurrentExecution() {
-            return owner.isLeaseValid(this);
+            return isLeaseValid(this);
         }
 
         @Override
         public void release() {
-            owner.releaseLease(this);
+            releaseLease(this);
         }
     }
 }

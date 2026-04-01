@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.exception.LockBackendException;
+import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
@@ -13,12 +14,18 @@ import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
 
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 public final class RedisLockBackend implements LockBackend, AutoCloseable {
 
     private static final String MUTEX_RELEASE_SCRIPT =
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+
+    private static final String MUTEX_REFRESH_SCRIPT =
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
 
     private static final String READ_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
@@ -32,6 +39,9 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             + "if redis.call('hlen', KEYS[1]) == 0 then redis.call('del', KEYS[1]) end "
             + "return 1";
 
+    private static final String READ_REFRESH_SCRIPT =
+        "if redis.call('hexists', KEYS[1], ARGV[1]) == 1 then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+
     private static final String WRITE_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
             + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
@@ -39,11 +49,17 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             + "return 1";
 
     private static final String WRITE_RELEASE_SCRIPT = MUTEX_RELEASE_SCRIPT;
+    private static final String WRITE_REFRESH_SCRIPT = MUTEX_REFRESH_SCRIPT;
 
     private final RedisBackendConfiguration configuration;
     private final RedisClient redisClient;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> commands;
+    private final ScheduledExecutorService renewalExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "redis-lock-renewal");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     public RedisLockBackend(RedisBackendConfiguration configuration) {
         this.configuration = configuration;
@@ -68,7 +84,13 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             };
 
             if (acquired) {
-                return new RedisLease(this, resource.key(), mode, token, Thread.currentThread().getId());
+                return new RedisLease(
+                    resource.key(),
+                    mode,
+                    token,
+                    Thread.currentThread().getId(),
+                    scheduleRenewal(resource.key(), mode, token, leaseSeconds)
+                );
             }
 
             if (!waitPolicy.unbounded() && System.nanoTime() >= deadline) {
@@ -81,6 +103,7 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
     }
 
     private void releaseLease(RedisLease lease) {
+        lease.renewalTask.cancel(false);
         try {
             Long result = switch (lease.mode()) {
                 case MUTEX -> commands.eval(
@@ -104,10 +127,10 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             };
 
             if (result == null || result == 0L) {
-                throw new LockBackendException("Lock ownership was lost before release for key " + lease.key());
+                throw new LockOwnershipLostException("Redis lock ownership lost for key " + lease.key());
             }
         } catch (RuntimeException exception) {
-            if (exception instanceof LockBackendException) {
+            if (exception instanceof LockBackendException || exception instanceof LockOwnershipLostException) {
                 throw exception;
             }
             throw new LockBackendException("Failed to release Redis lock for key " + lease.key(), exception);
@@ -132,8 +155,19 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
 
     @Override
     public void close() {
+        renewalExecutor.shutdownNow();
         connection.close();
         redisClient.shutdown();
+    }
+
+    private ScheduledFuture<?> scheduleRenewal(String key, LockMode mode, String token, long leaseSeconds) {
+        long periodMillis = Math.max(250L, TimeUnit.SECONDS.toMillis(leaseSeconds) / 3L);
+        return renewalExecutor.scheduleAtFixedRate(
+            () -> renewLease(key, mode, token, leaseSeconds),
+            periodMillis,
+            periodMillis,
+            TimeUnit.MILLISECONDS
+        );
     }
 
     private boolean tryAcquireMutex(String key, String token, long leaseSeconds) {
@@ -174,6 +208,42 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
         }
     }
 
+    private void renewLease(String key, LockMode mode, String token, long leaseSeconds) {
+        try {
+            Long result = switch (mode) {
+                case MUTEX -> commands.eval(
+                    MUTEX_REFRESH_SCRIPT,
+                    ScriptOutputType.INTEGER,
+                    new String[]{key},
+                    token,
+                    String.valueOf(leaseSeconds)
+                );
+                case READ -> commands.eval(
+                    READ_REFRESH_SCRIPT,
+                    ScriptOutputType.INTEGER,
+                    new String[]{readersKey(key)},
+                    token,
+                    String.valueOf(leaseSeconds)
+                );
+                case WRITE -> commands.eval(
+                    WRITE_REFRESH_SCRIPT,
+                    ScriptOutputType.INTEGER,
+                    new String[]{writerKey(key)},
+                    token,
+                    String.valueOf(leaseSeconds)
+                );
+            };
+            if (result == null || result == 0L) {
+                throw new LockOwnershipLostException("Redis lock ownership lost for key " + key);
+            }
+        } catch (RuntimeException exception) {
+            if (exception instanceof LockOwnershipLostException) {
+                throw exception;
+            }
+            throw new LockBackendException("Failed to renew Redis lock for key " + key, exception);
+        }
+    }
+
     private static String writerKey(String key) {
         return key + ":write";
     }
@@ -186,17 +256,48 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
         return Thread.currentThread().getId() + ":" + UUID.randomUUID();
     }
 
-    private record RedisLease(RedisLockBackend owner, String key, LockMode mode, String token, long threadId)
-        implements BackendLockLease {
+    private final class RedisLease implements BackendLockLease {
+
+        private final String key;
+        private final LockMode mode;
+        private final String token;
+        private final long threadId;
+        private final ScheduledFuture<?> renewalTask;
+
+        private RedisLease(String key, LockMode mode, String token, long threadId, ScheduledFuture<?> renewalTask) {
+            this.key = key;
+            this.mode = mode;
+            this.token = token;
+            this.threadId = threadId;
+            this.renewalTask = renewalTask;
+        }
+
+        @Override
+        public String key() {
+            return key;
+        }
+
+        @Override
+        public LockMode mode() {
+            return mode;
+        }
+
+        private String token() {
+            return token;
+        }
+
+        private long threadId() {
+            return threadId;
+        }
 
         @Override
         public boolean isValidForCurrentExecution() {
-            return owner.isLeaseValid(this);
+            return isLeaseValid(this);
         }
 
         @Override
         public void release() {
-            owner.releaseLease(this);
+            releaseLease(this);
         }
     }
 }

@@ -4,42 +4,50 @@
 
 ## 当前维护的测试范围
 
-- API
-  - `ApiSurfaceTest`
-- Core
-  - `DefaultLockManagerTest`
-- Runtime
-  - `LockRuntimeBuilderTest`
-- Contract testkit
-  - `InMemoryLockManagerContractTest`
-- Redis adapter
-  - `RedisBackendModuleTest`
-  - `RedisLockBackendContractTest`
-- ZooKeeper adapter
-  - `ZooKeeperBackendModuleTest`
-  - `ZooKeeperLockBackendContractTest`
-- Spring Boot starter
-  - `DistributedLockAutoConfigurationIntegrationTest`
-  - `DistributedLockAspectIntegrationTest`
-  - `RedisStarterIntegrationTest`
-  - `ZooKeeperStarterIntegrationTest`
+- `ApiSurfaceTest`
+- `DefaultLockManagerTest`
+- `DefaultLockManagerBlockingTest`
+- `DefaultLockManagerOwnershipLossTest`
+- `DefaultLockManagerCapabilitiesTest`
+- `DefaultLockManagerReleaseFailureTest`
+- `LockRuntimeBuilderTest`
+- `InMemoryLockManagerContractTest`
+- `RedisBackendModuleTest`
+- `RedisLockBackendContractTest`
+- `RedisLeaseRenewalTest`
+- `RedisOwnershipLossTest`
+- `ZooKeeperBackendModuleTest`
+- `ZooKeeperLockBackendContractTest`
+- `ZooKeeperSessionLossTest`
+- `DistributedLockAutoConfigurationIntegrationTest`
+- `DistributedLockAspectIntegrationTest`
+- `DistributedLockAsyncGuardTest`
+- `RedisBackendModuleAutoConfigurationTest`
+- `ZooKeeperBackendModuleAutoConfigurationTest`
+- `RedisStarterIntegrationTest`
+- `ZooKeeperStarterIntegrationTest`
 
 ## 推荐命令
 
 ```bash
-# starter 重点回归
-mvn -pl distributed-lock-spring-boot-starter -am test \
-  -Dtest=DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
+# runtime / starter / backend Spring 模块
+mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter,distributed-lock-redis-spring-boot-autoconfigure,distributed-lock-zookeeper-spring-boot-autoconfigure -am test \
+  -Dtest=LockRuntimeBuilderTest,DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,DistributedLockAsyncGuardTest,RedisBackendModuleAutoConfigurationTest,ZooKeeperBackendModuleAutoConfigurationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
-# Redis adapter 契约测试
+# Redis adapter
 mvn -pl distributed-lock-redis -am test \
-  -Dtest=RedisLockBackendContractTest,RedisBackendModuleTest \
+  -Dtest=RedisBackendModuleTest,RedisLockBackendContractTest,RedisLeaseRenewalTest,RedisOwnershipLossTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
-# ZooKeeper adapter 契约测试
+# ZooKeeper adapter
 mvn -pl distributed-lock-zookeeper -am test \
-  -Dtest=ZooKeeperLockBackendContractTest,ZooKeeperBackendModuleTest \
+  -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
+# core / testkit
+mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
+  -Dtest=DefaultLockManagerTest,DefaultLockManagerBlockingTest,DefaultLockManagerOwnershipLossTest,DefaultLockManagerCapabilitiesTest,DefaultLockManagerReleaseFailureTest,InMemoryLockManagerContractTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
 

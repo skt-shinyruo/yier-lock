@@ -2,6 +2,7 @@ distributed:
   lock:
     enabled: true
     backend: redis
+    # Requires distributed-lock-redis-spring-boot-autoconfigure on the classpath.
     redis:
       uri: redis://127.0.0.1:6379
       lease-time: 30s

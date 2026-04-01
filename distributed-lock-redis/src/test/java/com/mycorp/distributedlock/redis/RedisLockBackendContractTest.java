@@ -5,42 +5,36 @@ import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.testkit.LockManagerContract;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+
+import java.util.List;
 
 class RedisLockBackendContractTest extends LockManagerContract {
 
-    private static String containerId;
-    private static int redisPort;
+    private static RedisTestSupport.RunningRedis redis;
 
     @BeforeAll
     static void startRedis() throws Exception {
-        containerId = run("docker", "run", "-d", "-P", "redis:7-alpine").trim();
-        String portOutput = run("docker", "port", containerId, "6379/tcp").trim();
-        redisPort = Integer.parseInt(portOutput.substring(portOutput.lastIndexOf(':') + 1));
+        redis = RedisTestSupport.startRedis();
     }
 
     @AfterAll
     static void stopRedis() throws Exception {
-        if (containerId != null && !containerId.isBlank()) {
-            run("docker", "rm", "-f", containerId);
+        if (redis != null) {
+            redis.close();
         }
+    }
+
+    @BeforeEach
+    void resetRedis() {
+        redis.flushAll();
     }
 
     @Override
     protected LockRuntime createRuntime() {
-        String redisUri = "redis://127.0.0.1:%d".formatted(redisPort);
         return LockRuntimeBuilder.create()
             .backend("redis")
-            .backendModules(java.util.List.of(new RedisBackendModule(redisUri)))
+            .backendModules(List.of(new RedisBackendModule(redis.configuration(30L))))
             .build();
-    }
-
-    private static String run(String... command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes()).trim();
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new IllegalStateException("Command failed: " + String.join(" ", command) + "\n" + output);
-        }
-        return output;
     }
 }

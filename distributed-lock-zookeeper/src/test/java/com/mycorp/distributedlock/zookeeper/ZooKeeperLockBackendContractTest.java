@@ -14,7 +14,9 @@ class ZooKeeperLockBackendContractTest extends LockManagerContract {
         server = new TestingServer();
         return LockRuntimeBuilder.create()
             .backend("zookeeper")
-            .backendModules(java.util.List.of(new ZooKeeperBackendModule(server.getConnectString())))
+            .backendModules(java.util.List.of(new ZooKeeperBackendModule(
+                new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
+            )))
             .build();
     }
 }

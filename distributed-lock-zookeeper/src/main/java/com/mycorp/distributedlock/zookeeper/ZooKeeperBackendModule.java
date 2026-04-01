@@ -14,10 +14,6 @@ public final class ZooKeeperBackendModule implements BackendModule {
         this(ZooKeeperBackendConfiguration.defaultLocal());
     }
 
-    public ZooKeeperBackendModule(String connectString) {
-        this(new ZooKeeperBackendConfiguration(connectString, "/distributed-locks"));
-    }
-
     public ZooKeeperBackendModule(ZooKeeperBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
     }

@@ -17,6 +17,7 @@ public final class ProgrammaticZooKeeperExample {
 
     public static void main(String[] args) throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("zookeeper")
             .backendModules(List.of(new ZooKeeperBackendModule(new ZooKeeperBackendConfiguration(
                 "127.0.0.1:2181",
                 "/distributed-locks"

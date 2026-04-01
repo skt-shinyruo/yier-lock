@@ -17,6 +17,7 @@ public final class ProgrammaticRedisExample {
 
     public static void main(String[] args) throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("redis")
             .backendModules(List.of(new RedisBackendModule(new RedisBackendConfiguration(
                 "redis://127.0.0.1:6379",
                 30L
