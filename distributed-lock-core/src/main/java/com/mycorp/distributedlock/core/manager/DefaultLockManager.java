@@ -3,7 +3,7 @@ package com.mycorp.distributedlock.core.manager;
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
 import com.mycorp.distributedlock.api.ReadWriteLock;
-import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
@@ -92,11 +92,11 @@ public final class DefaultLockManager implements LockManager {
 
         private Thread mutexOwner;
         private int mutexHoldCount;
-        private BackendLockHandle mutexHandle;
+        private BackendLockLease mutexLease;
 
         private Thread writeOwner;
         private int writeHoldCount;
-        private BackendLockHandle writeHandle;
+        private BackendLockLease writeLease;
 
         private final Map<Thread, ReadHold> readHolds = new HashMap<>();
 
@@ -127,12 +127,12 @@ public final class DefaultLockManager implements LockManager {
         private synchronized boolean isHeldByCurrentThread(LockMode mode) {
             Thread current = Thread.currentThread();
             return switch (mode) {
-                case MUTEX -> current == mutexOwner && mutexHandle != null && backend.isHeldByCurrentExecution(mutexHandle);
+                case MUTEX -> current == mutexOwner && mutexLease != null && mutexLease.isValidForCurrentExecution();
                 case READ -> {
                     ReadHold hold = readHolds.get(current);
-                    yield hold != null && hold.handle != null && backend.isHeldByCurrentExecution(hold.handle);
+                    yield hold != null && hold.lease != null && hold.lease.isValidForCurrentExecution();
                 }
-                case WRITE -> current == writeOwner && writeHandle != null && backend.isHeldByCurrentExecution(writeHandle);
+                case WRITE -> current == writeOwner && writeLease != null && writeLease.isValidForCurrentExecution();
             };
         }
 
@@ -141,11 +141,11 @@ public final class DefaultLockManager implements LockManager {
                 mutexHoldCount++;
                 return true;
             }
-            BackendLockHandle acquiredHandle = backend.acquire(resource, LockMode.MUTEX, waitPolicy);
-            if (acquiredHandle == null) {
+            BackendLockLease acquiredLease = backend.acquire(resource, LockMode.MUTEX, waitPolicy);
+            if (acquiredLease == null) {
                 return false;
             }
-            mutexHandle = acquiredHandle;
+            mutexLease = acquiredLease;
             mutexOwner = current;
             mutexHoldCount = 1;
             return true;
@@ -161,11 +161,11 @@ public final class DefaultLockManager implements LockManager {
                 return true;
             }
 
-            BackendLockHandle handle = backend.acquire(resource, LockMode.READ, waitPolicy);
-            if (handle == null) {
+            BackendLockLease lease = backend.acquire(resource, LockMode.READ, waitPolicy);
+            if (lease == null) {
                 return false;
             }
-            readHolds.put(current, new ReadHold(handle));
+            readHolds.put(current, new ReadHold(lease));
             return true;
         }
 
@@ -178,64 +178,64 @@ public final class DefaultLockManager implements LockManager {
                 return true;
             }
 
-            BackendLockHandle acquiredHandle = backend.acquire(resource, LockMode.WRITE, waitPolicy);
-            if (acquiredHandle == null) {
+            BackendLockLease acquiredLease = backend.acquire(resource, LockMode.WRITE, waitPolicy);
+            if (acquiredLease == null) {
                 return false;
             }
-            writeHandle = acquiredHandle;
+            writeLease = acquiredLease;
             writeOwner = current;
             writeHoldCount = 1;
             return true;
         }
 
         private void releaseMutex(Thread current) {
-            if (current != mutexOwner || mutexHandle == null) {
+            if (current != mutexOwner || mutexLease == null) {
                 throw new IllegalMonitorStateException("Current thread does not hold mutex lock");
             }
             mutexHoldCount--;
             if (mutexHoldCount == 0) {
-                BackendLockHandle handle = mutexHandle;
-                mutexHandle = null;
+                BackendLockLease lease = mutexLease;
+                mutexLease = null;
                 mutexOwner = null;
-                backend.release(handle);
+                lease.release();
             }
         }
 
         private void releaseRead(Thread current) {
             ReadHold hold = readHolds.get(current);
-            if (hold == null || hold.handle == null) {
+            if (hold == null || hold.lease == null) {
                 throw new IllegalMonitorStateException("Current thread does not hold read lock");
             }
             hold.count--;
             if (hold.count == 0) {
                 readHolds.remove(current);
-                backend.release(hold.handle);
+                hold.lease.release();
             }
         }
 
         private void releaseWrite(Thread current) {
-            if (current != writeOwner || writeHandle == null) {
+            if (current != writeOwner || writeLease == null) {
                 throw new IllegalMonitorStateException("Current thread does not hold write lock");
             }
             writeHoldCount--;
             if (writeHoldCount == 0) {
-                BackendLockHandle handle = writeHandle;
-                writeHandle = null;
+                BackendLockLease lease = writeLease;
+                writeLease = null;
                 writeOwner = null;
-                backend.release(handle);
+                lease.release();
             }
         }
 
         private boolean isEmpty() {
-            return mutexHandle == null && writeHandle == null && readHolds.isEmpty();
+            return mutexLease == null && writeLease == null && readHolds.isEmpty();
         }
 
         private static final class ReadHold {
-            private final BackendLockHandle handle;
+            private final BackendLockLease lease;
             private int count;
 
-            private ReadHold(BackendLockHandle handle) {
-                this.handle = handle;
+            private ReadHold(BackendLockLease lease) {
+                this.lease = lease;
                 this.count = 1;
             }
         }

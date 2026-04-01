@@ -4,6 +4,7 @@ import java.time.Duration;
 
 /**
  * Minimal public mutex contract for distributed lock 2.0.
+ * Implementations may surface timeout or ownership loss via runtime exceptions.
  */
 public interface MutexLock extends AutoCloseable {
 

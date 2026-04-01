@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
@@ -53,7 +53,7 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
     }
 
     @Override
-    public BackendLockHandle acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+    public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
         String token = nextToken();
         long leaseSeconds = configuration.leaseSeconds();
         long deadline = waitPolicy.unbounded()
@@ -68,7 +68,7 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             };
 
             if (acquired) {
-                return new RedisBackendHandle(resource.key(), mode, token, Thread.currentThread().getId());
+                return new RedisLease(this, resource.key(), mode, token, Thread.currentThread().getId());
             }
 
             if (!waitPolicy.unbounded() && System.nanoTime() >= deadline) {
@@ -80,62 +80,53 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
         } while (true);
     }
 
-    @Override
-    public void release(BackendLockHandle handle) {
-        if (!(handle instanceof RedisBackendHandle redisHandle)) {
-            throw new LockBackendException("Unsupported backend handle: " + handle);
-        }
-
+    private void releaseLease(RedisLease lease) {
         try {
-            Long result = switch (redisHandle.mode()) {
+            Long result = switch (lease.mode()) {
                 case MUTEX -> commands.eval(
                     MUTEX_RELEASE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{redisHandle.key()},
-                    redisHandle.token()
+                    new String[]{lease.key()},
+                    lease.token()
                 );
                 case READ -> commands.eval(
                     READ_RELEASE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{readersKey(redisHandle.key())},
-                    redisHandle.token()
+                    new String[]{readersKey(lease.key())},
+                    lease.token()
                 );
                 case WRITE -> commands.eval(
                     WRITE_RELEASE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{writerKey(redisHandle.key())},
-                    redisHandle.token()
+                    new String[]{writerKey(lease.key())},
+                    lease.token()
                 );
             };
 
             if (result == null || result == 0L) {
-                throw new LockBackendException("Lock ownership was lost before release for key " + redisHandle.key());
+                throw new LockBackendException("Failed to release Redis lock for key " + lease.key());
             }
         } catch (RuntimeException exception) {
             if (exception instanceof LockBackendException) {
                 throw exception;
             }
-            throw new LockBackendException("Failed to release Redis lock for key " + redisHandle.key(), exception);
+            throw new LockBackendException("Failed to release Redis lock for key " + lease.key(), exception);
         }
     }
 
-    @Override
-    public boolean isHeldByCurrentExecution(BackendLockHandle handle) {
-        if (!(handle instanceof RedisBackendHandle redisHandle)) {
-            return false;
-        }
-        if (redisHandle.threadId() != Thread.currentThread().getId()) {
+    private boolean isLeaseValid(RedisLease lease) {
+        if (lease.threadId() != Thread.currentThread().getId()) {
             return false;
         }
 
         try {
-            return switch (redisHandle.mode()) {
-                case MUTEX -> redisHandle.token().equals(commands.get(redisHandle.key()));
-                case READ -> commands.hexists(readersKey(redisHandle.key()), redisHandle.token());
-                case WRITE -> redisHandle.token().equals(commands.get(writerKey(redisHandle.key())));
+            return switch (lease.mode()) {
+                case MUTEX -> lease.token().equals(commands.get(lease.key()));
+                case READ -> commands.hexists(readersKey(lease.key()), lease.token());
+                case WRITE -> lease.token().equals(commands.get(writerKey(lease.key())));
             };
         } catch (RuntimeException exception) {
-            throw new LockBackendException("Failed to inspect Redis lock state for key " + redisHandle.key(), exception);
+            throw new LockBackendException("Failed to inspect Redis lock state for key " + lease.key(), exception);
         }
     }
 
@@ -195,6 +186,17 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
         return Thread.currentThread().getId() + ":" + UUID.randomUUID();
     }
 
-    private record RedisBackendHandle(String key, LockMode mode, String token, long threadId) implements BackendLockHandle {
+    private record RedisLease(RedisLockBackend owner, String key, LockMode mode, String token, long threadId)
+        implements BackendLockLease {
+
+        @Override
+        public boolean isValidForCurrentExecution() {
+            return owner.isLeaseValid(this);
+        }
+
+        @Override
+        public void release() {
+            owner.releaseLease(this);
+        }
     }
 }

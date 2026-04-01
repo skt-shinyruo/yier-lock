@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.runtime;
 
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
-import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
@@ -48,8 +48,8 @@ class LockRuntimeBuilderTest {
         public LockBackend createBackend(BackendContext context) {
             return new LockBackend() {
                 @Override
-                public BackendLockHandle acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-                    return new BackendLockHandle() {
+                public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
+                    return new BackendLockLease() {
                         @Override
                         public String key() {
                             return resource.key();
@@ -59,16 +59,16 @@ class LockRuntimeBuilderTest {
                         public LockMode mode() {
                             return mode;
                         }
+
+                        @Override
+                        public boolean isValidForCurrentExecution() {
+                            return true;
+                        }
+
+                        @Override
+                        public void release() {
+                        }
                     };
-                }
-
-                @Override
-                public void release(BackendLockHandle handle) {
-                }
-
-                @Override
-                public boolean isHeldByCurrentExecution(BackendLockHandle handle) {
-                    return true;
                 }
             };
         }

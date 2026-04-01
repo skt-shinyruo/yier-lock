@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.core.manager;
 
 import com.mycorp.distributedlock.api.MutexLock;
-import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
@@ -35,19 +35,29 @@ class DefaultLockManagerTest {
         private final ConcurrentHashMap<String, AtomicInteger> holds = new ConcurrentHashMap<>();
 
         @Override
-        public BackendLockHandle acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
+        public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
             holds.computeIfAbsent(resource.key(), ignored -> new AtomicInteger()).incrementAndGet();
-            return () -> resource.key();
-        }
+            return new BackendLockLease() {
+                @Override
+                public String key() {
+                    return resource.key();
+                }
 
-        @Override
-        public void release(BackendLockHandle handle) {
-            holds.computeIfPresent(handle.key(), (ignored, count) -> count.decrementAndGet() == 0 ? null : count);
-        }
+                @Override
+                public LockMode mode() {
+                    return mode;
+                }
 
-        @Override
-        public boolean isHeldByCurrentExecution(BackendLockHandle handle) {
-            return holds.containsKey(handle.key());
+                @Override
+                public boolean isValidForCurrentExecution() {
+                    return holds.containsKey(resource.key());
+                }
+
+                @Override
+                public void release() {
+                    holds.computeIfPresent(resource.key(), (ignored, count) -> count.decrementAndGet() == 0 ? null : count);
+                }
+            };
         }
     }
 }

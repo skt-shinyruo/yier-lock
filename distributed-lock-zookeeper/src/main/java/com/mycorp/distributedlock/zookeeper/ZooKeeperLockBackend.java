@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.zookeeper;
 
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.backend.BackendLockHandle;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.backend.LockMode;
 import com.mycorp.distributedlock.core.backend.LockResource;
@@ -39,7 +39,7 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
     }
 
     @Override
-    public BackendLockHandle acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+    public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
         boolean acquired = switch (mode) {
             case MUTEX -> acquireMutex(resource, waitPolicy);
             case READ -> acquireRead(resource, waitPolicy);
@@ -48,39 +48,30 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         if (!acquired) {
             return null;
         }
-        return new ZooKeeperBackendHandle(resource.key(), mode, Thread.currentThread().getId());
+        return new ZooKeeperLease(this, resource.key(), mode, Thread.currentThread().getId());
     }
 
-    @Override
-    public void release(BackendLockHandle handle) {
-        if (!(handle instanceof ZooKeeperBackendHandle zooKeeperHandle)) {
-            throw new LockBackendException("Unsupported backend handle: " + handle);
-        }
-
+    private void releaseLease(ZooKeeperLease lease) {
         try {
-            switch (zooKeeperHandle.mode()) {
-                case MUTEX -> mutex(resourcePath("mutex", zooKeeperHandle.key())).release();
-                case READ -> readWrite(resourcePath("rw", zooKeeperHandle.key())).readLock().release();
-                case WRITE -> readWrite(resourcePath("rw", zooKeeperHandle.key())).writeLock().release();
+            switch (lease.mode()) {
+                case MUTEX -> mutex(resourcePath("mutex", lease.key())).release();
+                case READ -> readWrite(resourcePath("rw", lease.key())).readLock().release();
+                case WRITE -> readWrite(resourcePath("rw", lease.key())).writeLock().release();
             }
         } catch (Exception exception) {
-            throw new LockBackendException("Failed to release ZooKeeper lock for key " + zooKeeperHandle.key(), exception);
+            throw new LockBackendException("Failed to release ZooKeeper lock for key " + lease.key(), exception);
         }
     }
 
-    @Override
-    public boolean isHeldByCurrentExecution(BackendLockHandle handle) {
-        if (!(handle instanceof ZooKeeperBackendHandle zooKeeperHandle)) {
-            return false;
-        }
-        if (zooKeeperHandle.threadId() != Thread.currentThread().getId()) {
+    private boolean isLeaseValid(ZooKeeperLease lease) {
+        if (lease.threadId() != Thread.currentThread().getId()) {
             return false;
         }
 
-        return switch (zooKeeperHandle.mode()) {
-            case MUTEX -> mutex(resourcePath("mutex", zooKeeperHandle.key())).isOwnedByCurrentThread();
-            case READ -> readWrite(resourcePath("rw", zooKeeperHandle.key())).readLock().isOwnedByCurrentThread();
-            case WRITE -> readWrite(resourcePath("rw", zooKeeperHandle.key())).writeLock().isOwnedByCurrentThread();
+        return switch (lease.mode()) {
+            case MUTEX -> mutex(resourcePath("mutex", lease.key())).isOwnedByCurrentThread();
+            case READ -> readWrite(resourcePath("rw", lease.key())).readLock().isOwnedByCurrentThread();
+            case WRITE -> readWrite(resourcePath("rw", lease.key())).writeLock().isOwnedByCurrentThread();
         };
     }
 
@@ -150,6 +141,17 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
         return configuration.basePath() + "/" + kind + "/" + normalizedKey;
     }
 
-    private record ZooKeeperBackendHandle(String key, LockMode mode, long threadId) implements BackendLockHandle {
+    private record ZooKeeperLease(ZooKeeperLockBackend owner, String key, LockMode mode, long threadId)
+        implements BackendLockLease {
+
+        @Override
+        public boolean isValidForCurrentExecution() {
+            return owner.isLeaseValid(this);
+        }
+
+        @Override
+        public void release() {
+            owner.releaseLease(this);
+        }
     }
 }
