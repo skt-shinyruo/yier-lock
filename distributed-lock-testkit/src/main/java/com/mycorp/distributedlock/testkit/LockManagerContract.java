@@ -67,8 +67,9 @@ public abstract class LockManagerContract {
         MutexLock lock = manager.mutex("inventory:3");
         lock.lock();
         try {
-            assertThatThrownBy(() -> executor.submit(lock::unlock).get())
-                .isInstanceOf(ExecutionException.class);
+            assertThatThrownBy(() -> executor.submit(() -> manager.mutex("inventory:3").unlock()).get())
+                .isInstanceOf(ExecutionException.class)
+                .hasCauseInstanceOf(IllegalMonitorStateException.class);
         } finally {
             lock.unlock();
         }
@@ -80,18 +81,29 @@ public abstract class LockManagerContract {
         LockManager manager = runtime.lockManager();
         MutexLock first = manager.mutex("inventory:4");
         MutexLock second = manager.mutex("inventory:4");
+        MutexLock third = manager.mutex("inventory:4");
 
         first.lock();
         try {
-            second.lock();
-            second.close();
-            assertThat(first.isHeldByCurrentThread()).isTrue();
+            assertThat(second.tryLock(Duration.ZERO)).isTrue();
+            assertThat(third.tryLock(Duration.ZERO)).isTrue();
+
+            third.close();
+            assertThat(executor.submit(() -> manager.mutex("inventory:4").tryLock(Duration.ofMillis(100))).get()).isFalse();
+
+            second.unlock();
             assertThat(executor.submit(() -> manager.mutex("inventory:4").tryLock(Duration.ofMillis(100))).get()).isFalse();
 
             first.unlock();
             assertThat(executor.submit(() -> tryLockAndRelease(manager.mutex("inventory:4"), Duration.ofMillis(100))).get())
                 .isTrue();
         } finally {
+            if (third.isHeldByCurrentThread()) {
+                third.unlock();
+            }
+            if (second.isHeldByCurrentThread()) {
+                second.unlock();
+            }
             if (first.isHeldByCurrentThread()) {
                 first.unlock();
             }
