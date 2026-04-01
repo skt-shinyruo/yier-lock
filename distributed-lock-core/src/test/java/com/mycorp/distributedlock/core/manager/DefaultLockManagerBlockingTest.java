@@ -33,7 +33,7 @@ class DefaultLockManagerBlockingTest {
         });
         contender.start();
 
-        backend.awaitAcquireAttempt();
+        assertThat(backend.awaitAcquireAttempt()).isTrue();
         owner.unlock();
 
         assertThat(backend.releaseObservedWithin(Duration.ofSeconds(1))).isTrue();
@@ -48,16 +48,16 @@ class DefaultLockManagerBlockingTest {
 
         @Override
         public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
-            acquireAttempted.countDown();
             if (firstLeaseHeld.compareAndSet(false, true)) {
                 return new TestLease(resource.key(), mode, true);
             }
+            acquireAttempted.countDown();
             Thread.sleep(waitPolicy.unbounded() ? 5_000L : waitPolicy.waitTime().toMillis());
             return null;
         }
 
-        private void awaitAcquireAttempt() throws InterruptedException {
-            acquireAttempted.await(1, TimeUnit.SECONDS);
+        private boolean awaitAcquireAttempt() throws InterruptedException {
+            return acquireAttempted.await(1, TimeUnit.SECONDS);
         }
 
         private boolean releaseObservedWithin(Duration duration) throws InterruptedException {

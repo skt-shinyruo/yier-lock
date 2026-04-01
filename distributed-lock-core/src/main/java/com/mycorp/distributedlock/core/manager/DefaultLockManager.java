@@ -155,6 +155,7 @@ public final class DefaultLockManager implements LockManager {
         private boolean acquire(LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
             Thread current = Thread.currentThread();
             LockCoordinator replacement = null;
+            LockOwnershipLostException invalidLeaseFailure = null;
 
             stateLock.lock();
             try {
@@ -162,22 +163,37 @@ public final class DefaultLockManager implements LockManager {
                 if (replacement == this) {
                     HeldLease existingLease = existingLease(current, mode);
                     if (existingLease != null) {
-                        existingLease.assertValid();
-                        existingLease.increment();
-                        return true;
+                        try {
+                            existingLease.assertValid();
+                        } catch (LockOwnershipLostException exception) {
+                            clearInvalidLease(current, mode, existingLease);
+                            stateChanged.signalAll();
+                            invalidLeaseFailure = exception;
+                        }
+                        if (invalidLeaseFailure == null) {
+                            existingLease.increment();
+                            return true;
+                        }
                     }
 
-                    if (mode == LockMode.READ && writeLease != null && writeLease.owner() == current) {
+                    if (invalidLeaseFailure == null && mode == LockMode.READ && writeLease != null && writeLease.owner() == current) {
                         throw new IllegalStateException("Cannot acquire read lock while holding write lock");
                     }
-                    if (mode == LockMode.WRITE && readLeases.containsKey(current)) {
+                    if (invalidLeaseFailure == null && mode == LockMode.WRITE && readLeases.containsKey(current)) {
                         throw new IllegalStateException("Cannot acquire write lock while holding read lock");
                     }
 
-                    pendingFreshAcquisitions++;
+                    if (invalidLeaseFailure == null) {
+                        pendingFreshAcquisitions++;
+                    }
                 }
             } finally {
                 stateLock.unlock();
+            }
+
+            if (invalidLeaseFailure != null) {
+                retireIfPossible();
+                throw invalidLeaseFailure;
             }
 
             if (replacement != this) {
@@ -244,6 +260,23 @@ public final class DefaultLockManager implements LockManager {
                 case READ -> readLeases.get(owner);
                 case WRITE -> writeLease != null && writeLease.owner() == owner ? writeLease : null;
             };
+        }
+
+        private void clearInvalidLease(Thread owner, LockMode mode, HeldLease expectedLease) {
+            switch (mode) {
+                case MUTEX -> {
+                    if (mutexLease == expectedLease && mutexLease.owner() == owner) {
+                        mutexLease = null;
+                    }
+                }
+                case READ -> readLeases.computeIfPresent(owner, (ignored, currentLease) ->
+                    currentLease == expectedLease ? null : currentLease);
+                case WRITE -> {
+                    if (writeLease == expectedLease && writeLease.owner() == owner) {
+                        writeLease = null;
+                    }
+                }
+            }
         }
 
         private boolean canInstallFreshLease(Thread owner, LockMode mode) {

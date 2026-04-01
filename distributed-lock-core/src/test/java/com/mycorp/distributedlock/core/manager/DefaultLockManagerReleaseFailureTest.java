@@ -9,8 +9,11 @@ import com.mycorp.distributedlock.core.backend.LockResource;
 import com.mycorp.distributedlock.core.backend.WaitPolicy;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DefaultLockManagerReleaseFailureTest {
@@ -25,8 +28,24 @@ class DefaultLockManagerReleaseFailureTest {
         assertThatThrownBy(lock::unlock)
             .isInstanceOf(LockBackendException.class);
 
-        lock.lock();
-        lock.unlock();
+        AtomicBoolean contenderAcquired = new AtomicBoolean();
+        AtomicReference<Throwable> contenderFailure = new AtomicReference<>();
+        Thread contender = new Thread(() -> {
+            try {
+                MutexLock contenderLock = manager.mutex("orders:88");
+                if (contenderLock.tryLock(Duration.ZERO)) {
+                    contenderAcquired.set(true);
+                    contenderLock.unlock();
+                }
+            } catch (Throwable throwable) {
+                contenderFailure.set(throwable);
+            }
+        });
+        contender.start();
+        contender.join();
+
+        assertThat(contenderFailure.get()).isNull();
+        assertThat(contenderAcquired.get()).isTrue();
     }
 
     private static final class ReleaseFailureLeaseBackend implements LockBackend {

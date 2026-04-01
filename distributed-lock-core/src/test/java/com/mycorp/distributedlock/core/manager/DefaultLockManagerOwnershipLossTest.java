@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class DefaultLockManagerOwnershipLossTest {
@@ -26,6 +27,12 @@ class DefaultLockManagerOwnershipLossTest {
 
         assertThatThrownBy(() -> manager.mutex("orders:77").tryLock(Duration.ZERO))
             .isInstanceOf(LockOwnershipLostException.class);
+        assertThatThrownBy(lock::unlock)
+            .isInstanceOf(IllegalMonitorStateException.class);
+
+        MutexLock fresh = manager.mutex("orders:77");
+        assertThat(fresh.tryLock(Duration.ZERO)).isTrue();
+        fresh.unlock();
     }
 
     private static final class OwnershipLossLeaseBackend implements LockBackend {

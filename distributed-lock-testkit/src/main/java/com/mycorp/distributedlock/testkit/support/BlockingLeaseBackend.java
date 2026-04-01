@@ -19,16 +19,16 @@ public final class BlockingLeaseBackend implements LockBackend {
 
     @Override
     public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
-        acquireAttempted.countDown();
         if (firstLeaseHeld.compareAndSet(false, true)) {
             return new TestLease(resource.key(), mode, true);
         }
+        acquireAttempted.countDown();
         Thread.sleep(waitPolicy.unbounded() ? 5_000L : waitPolicy.waitTime().toMillis());
         return null;
     }
 
-    public void awaitAcquireAttempt() throws InterruptedException {
-        acquireAttempted.await(1, TimeUnit.SECONDS);
+    public boolean awaitAcquireAttempt() throws InterruptedException {
+        return acquireAttempted.await(1, TimeUnit.SECONDS);
     }
 
     public boolean releaseObservedWithin(Duration duration) throws InterruptedException {
