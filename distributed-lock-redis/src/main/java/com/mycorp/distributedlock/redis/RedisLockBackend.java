@@ -104,7 +104,7 @@ public final class RedisLockBackend implements LockBackend, AutoCloseable {
             };
 
             if (result == null || result == 0L) {
-                throw new LockBackendException("Failed to release Redis lock for key " + lease.key());
+                throw new LockBackendException("Lock ownership was lost before release for key " + lease.key());
             }
         } catch (RuntimeException exception) {
             if (exception instanceof LockBackendException) {
