@@ -83,12 +83,6 @@ public final class DefaultLockManager implements LockManager {
         return coordinator != null && coordinator.hasTrackedState(mode);
     }
 
-    boolean hasPendingLostOwnership(String key, LockMode mode) {
-        String normalizedKey = normalizeKey(key);
-        LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
-        return coordinator != null && coordinator.hasPendingLostOwnership(mode);
-    }
-
     void ensureReadWriteSupported() {
         ensureModeSupported(LockMode.READ);
     }
@@ -274,15 +268,6 @@ public final class DefaultLockManager implements LockManager {
             }
         }
 
-        private boolean hasPendingLostOwnership(LockMode mode) {
-            stateLock.lock();
-            try {
-                return hasPendingLostOwnership(Thread.currentThread(), mode);
-            } finally {
-                stateLock.unlock();
-            }
-        }
-
         private HeldLease existingLease(Thread owner, LockMode mode) {
             return switch (mode) {
                 case MUTEX -> mutexLease != null && mutexLease.owner() == owner ? mutexLease : null;
@@ -446,12 +431,14 @@ public final class DefaultLockManager implements LockManager {
                     return false;
                 }
                 if (!canInstallFreshLease(current, mode)) {
-                    leaseToRelease = acquiredLease;
-                } else {
+                    reconcileConflictingLocalState(current, mode);
+                }
+                if (canInstallFreshLease(current, mode)) {
                     installFreshLease(current, acquiredLease);
                     stateChanged.signalAll();
                     return true;
                 }
+                leaseToRelease = acquiredLease;
                 stateChanged.signalAll();
             } finally {
                 stateLock.unlock();
@@ -463,6 +450,34 @@ public final class DefaultLockManager implements LockManager {
                 retireIfPossible();
             }
             throw new IllegalStateException("Cannot install backend lease for key " + acquiredLease.key());
+        }
+
+        private void reconcileConflictingLocalState(Thread owner, LockMode mode) {
+            switch (mode) {
+                case MUTEX -> {
+                    if (mutexLease != null) {
+                        markLostOwnership(mutexLease.owner(), LockMode.MUTEX, mutexLease);
+                    }
+                }
+                case READ -> {
+                    if (writeLease != null) {
+                        markLostOwnership(writeLease.owner(), LockMode.WRITE, writeLease);
+                    }
+                }
+                case WRITE -> {
+                    if (writeLease != null) {
+                        markLostOwnership(writeLease.owner(), LockMode.WRITE, writeLease);
+                    }
+                    if (!readLeases.isEmpty()) {
+                        Map<Thread, HeldLease> staleReaders = new HashMap<>(readLeases);
+                        staleReaders.forEach((reader, heldLease) ->
+                            markLostOwnership(reader, LockMode.READ, heldLease));
+                    }
+                }
+            }
+            if (hasPendingLostOwnership(owner, mode)) {
+                consumeLostOwnership(owner, mode);
+            }
         }
 
         private void retireIfPossible() {

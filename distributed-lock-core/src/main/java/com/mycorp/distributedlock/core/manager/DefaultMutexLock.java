@@ -1,7 +1,6 @@
 package com.mycorp.distributedlock.core.manager;
 
 import com.mycorp.distributedlock.api.MutexLock;
-import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.LockMode;
 
 import java.time.Duration;
@@ -12,7 +11,6 @@ public final class DefaultMutexLock implements MutexLock {
     private final DefaultLockManager manager;
     private final String key;
     private final LockMode mode;
-    private String lostOwnershipMessage;
 
     DefaultMutexLock(DefaultLockManager manager, String key, LockMode mode) {
         this.manager = Objects.requireNonNull(manager, "manager");
@@ -22,42 +20,19 @@ public final class DefaultMutexLock implements MutexLock {
 
     @Override
     public void lock() throws InterruptedException {
-        try {
-            if (!manager.acquire(key, mode, DefaultLockManager.indefiniteWait())) {
-                throw new IllegalStateException("Failed to acquire lock for key " + key);
-            }
-            clearOwnershipLost();
-        } catch (LockOwnershipLostException exception) {
-            rememberOwnershipLost(exception);
-            throw exception;
+        if (!manager.acquire(key, mode, DefaultLockManager.indefiniteWait())) {
+            throw new IllegalStateException("Failed to acquire lock for key " + key);
         }
     }
 
     @Override
     public boolean tryLock(Duration waitTime) throws InterruptedException {
-        try {
-            boolean acquired = manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
-            if (acquired) {
-                clearOwnershipLost();
-            }
-            return acquired;
-        } catch (LockOwnershipLostException exception) {
-            rememberOwnershipLost(exception);
-            throw exception;
-        }
+        return manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
     }
 
     @Override
     public void unlock() {
-        if (lostOwnershipMessage != null && !manager.hasPendingLostOwnership(key, mode)) {
-            throw rememberedOwnershipLost();
-        }
-        try {
-            manager.release(key, mode);
-        } catch (LockOwnershipLostException exception) {
-            rememberOwnershipLost(exception);
-            throw exception;
-        }
+        manager.release(key, mode);
     }
 
     @Override
@@ -67,34 +42,11 @@ public final class DefaultMutexLock implements MutexLock {
 
     @Override
     public void close() {
-        if (lostOwnershipMessage != null && !manager.hasPendingLostOwnership(key, mode)) {
-            throw rememberedOwnershipLost();
-        }
-        try {
-            manager.close(key, mode);
-        } catch (LockOwnershipLostException exception) {
-            rememberOwnershipLost(exception);
-            throw exception;
-        }
+        manager.close(key, mode);
     }
 
     @Override
     public String key() {
         return key;
-    }
-
-    private void rememberOwnershipLost(LockOwnershipLostException exception) {
-        if (lostOwnershipMessage == null) {
-            lostOwnershipMessage = exception.getMessage();
-        }
-    }
-
-    private void clearOwnershipLost() {
-        lostOwnershipMessage = null;
-    }
-
-    private LockOwnershipLostException rememberedOwnershipLost() {
-        String message = lostOwnershipMessage != null ? lostOwnershipMessage : "Backend ownership lost for key " + key;
-        return new LockOwnershipLostException(message);
     }
 }
