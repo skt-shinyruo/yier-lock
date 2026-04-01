@@ -44,7 +44,7 @@ public final class DefaultMutexLock implements MutexLock {
 
     @Override
     public void unlock() {
-        if (lostOwnershipMessage != null) {
+        if (lostOwnershipMessage != null && !manager.hasPendingLostOwnership(key, mode)) {
             throw rememberedOwnershipLost();
         }
         try {
@@ -62,7 +62,7 @@ public final class DefaultMutexLock implements MutexLock {
 
     @Override
     public void close() {
-        if (lostOwnershipMessage != null) {
+        if (lostOwnershipMessage != null && !manager.hasPendingLostOwnership(key, mode)) {
             throw rememberedOwnershipLost();
         }
         try {

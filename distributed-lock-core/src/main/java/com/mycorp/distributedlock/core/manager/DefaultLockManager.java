@@ -83,6 +83,12 @@ public final class DefaultLockManager implements LockManager {
         return coordinator != null && coordinator.hasTrackedState(mode);
     }
 
+    boolean hasPendingLostOwnership(String key, LockMode mode) {
+        String normalizedKey = normalizeKey(key);
+        LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
+        return coordinator != null && coordinator.hasPendingLostOwnership(mode);
+    }
+
     void ensureReadWriteSupported() {
         ensureModeSupported(LockMode.READ);
     }
@@ -263,6 +269,15 @@ public final class DefaultLockManager implements LockManager {
             stateLock.lock();
             try {
                 return hasTrackedState(Thread.currentThread(), mode);
+            } finally {
+                stateLock.unlock();
+            }
+        }
+
+        private boolean hasPendingLostOwnership(LockMode mode) {
+            stateLock.lock();
+            try {
+                return hasPendingLostOwnership(Thread.currentThread(), mode);
             } finally {
                 stateLock.unlock();
             }

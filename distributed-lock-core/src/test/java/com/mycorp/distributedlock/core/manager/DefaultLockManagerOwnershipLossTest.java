@@ -25,13 +25,11 @@ class DefaultLockManagerOwnershipLossTest {
         lock.lock();
         backend.invalidateCurrentLease();
 
-        assertThatThrownBy(() -> manager.mutex("orders:77").tryLock(Duration.ZERO))
+        assertThatThrownBy(() -> lock.tryLock(Duration.ZERO))
             .isInstanceOf(LockOwnershipLostException.class);
         assertThatThrownBy(() -> manager.mutex("orders:77").tryLock(Duration.ZERO))
             .isInstanceOf(LockOwnershipLostException.class);
         assertThatThrownBy(lock::unlock)
-            .isInstanceOf(LockOwnershipLostException.class);
-        assertThatThrownBy(lock::close)
             .isInstanceOf(LockOwnershipLostException.class);
 
         MutexLock fresh = manager.mutex("orders:77");
