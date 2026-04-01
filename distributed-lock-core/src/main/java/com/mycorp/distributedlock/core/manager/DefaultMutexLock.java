@@ -26,6 +26,7 @@ public final class DefaultMutexLock implements MutexLock {
             if (!manager.acquire(key, mode, DefaultLockManager.indefiniteWait())) {
                 throw new IllegalStateException("Failed to acquire lock for key " + key);
             }
+            clearOwnershipLost();
         } catch (LockOwnershipLostException exception) {
             rememberOwnershipLost(exception);
             throw exception;
@@ -35,7 +36,11 @@ public final class DefaultMutexLock implements MutexLock {
     @Override
     public boolean tryLock(Duration waitTime) throws InterruptedException {
         try {
-            return manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
+            boolean acquired = manager.acquire(key, mode, DefaultLockManager.timedWait(waitTime));
+            if (acquired) {
+                clearOwnershipLost();
+            }
+            return acquired;
         } catch (LockOwnershipLostException exception) {
             rememberOwnershipLost(exception);
             throw exception;
@@ -82,6 +87,10 @@ public final class DefaultMutexLock implements MutexLock {
         if (lostOwnershipMessage == null) {
             lostOwnershipMessage = exception.getMessage();
         }
+    }
+
+    private void clearOwnershipLost() {
+        lostOwnershipMessage = null;
     }
 
     private LockOwnershipLostException rememberedOwnershipLost() {
