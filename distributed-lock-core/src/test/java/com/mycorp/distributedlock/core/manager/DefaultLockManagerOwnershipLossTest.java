@@ -92,6 +92,44 @@ class DefaultLockManagerOwnershipLossTest {
         assertThat(contenderReleased.get()).isTrue();
     }
 
+    @Test
+    void staleLostWriteHoldShouldSurfaceOwnershipLossBeforeReadTransitionCheck() throws Exception {
+        OwnershipLossLeaseBackend backend = new OwnershipLossLeaseBackend();
+        DefaultLockManager manager = new DefaultLockManager(backend);
+        MutexLock writeLock = manager.readWrite("orders:80").writeLock();
+        MutexLock readLock = manager.readWrite("orders:80").readLock();
+
+        writeLock.lock();
+        backend.invalidateCurrentLease();
+
+        assertThatThrownBy(() -> readLock.tryLock(Duration.ZERO))
+            .isInstanceOf(LockOwnershipLostException.class);
+        assertThatThrownBy(writeLock::unlock)
+            .isInstanceOf(LockOwnershipLostException.class);
+
+        assertThat(readLock.tryLock(Duration.ZERO)).isTrue();
+        readLock.unlock();
+    }
+
+    @Test
+    void staleLostReadHoldShouldSurfaceOwnershipLossBeforeWriteTransitionCheck() throws Exception {
+        OwnershipLossLeaseBackend backend = new OwnershipLossLeaseBackend();
+        DefaultLockManager manager = new DefaultLockManager(backend);
+        MutexLock readLock = manager.readWrite("orders:81").readLock();
+        MutexLock writeLock = manager.readWrite("orders:81").writeLock();
+
+        readLock.lock();
+        backend.invalidateCurrentLease();
+
+        assertThatThrownBy(() -> writeLock.tryLock(Duration.ZERO))
+            .isInstanceOf(LockOwnershipLostException.class);
+        assertThatThrownBy(readLock::unlock)
+            .isInstanceOf(LockOwnershipLostException.class);
+
+        assertThat(writeLock.tryLock(Duration.ZERO)).isTrue();
+        writeLock.unlock();
+    }
+
     private static final class OwnershipLossLeaseBackend implements LockBackend {
         private final AtomicInteger nextLeaseId = new AtomicInteger();
         private final AtomicInteger currentLeaseId = new AtomicInteger();

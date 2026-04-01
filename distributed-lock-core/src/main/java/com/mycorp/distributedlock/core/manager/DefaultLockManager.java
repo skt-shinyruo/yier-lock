@@ -183,6 +183,10 @@ public final class DefaultLockManager implements LockManager {
                         invalidLeaseFailure = ownershipLostFailure();
                     }
 
+                    if (invalidLeaseFailure == null) {
+                        invalidLeaseFailure = conflictingLostOwnership(current, mode);
+                    }
+
                     if (invalidLeaseFailure == null && mode == LockMode.READ && writeLease != null && writeLease.owner() == current) {
                         throw new IllegalStateException("Cannot acquire read lock while holding write lock");
                     }
@@ -274,6 +278,41 @@ public final class DefaultLockManager implements LockManager {
                 case READ -> readLeases.get(owner);
                 case WRITE -> writeLease != null && writeLease.owner() == owner ? writeLease : null;
             };
+        }
+
+        private LockOwnershipLostException conflictingLostOwnership(Thread owner, LockMode requestedMode) {
+            return switch (requestedMode) {
+                case MUTEX -> null;
+                case READ -> conflictingWriteLostOwnership(owner);
+                case WRITE -> conflictingReadLostOwnership(owner);
+            };
+        }
+
+        private LockOwnershipLostException conflictingWriteLostOwnership(Thread owner) {
+            if (writeLease != null && writeLease.owner() == owner) {
+                try {
+                    writeLease.assertValid();
+                } catch (LockOwnershipLostException exception) {
+                    markLostOwnership(owner, LockMode.WRITE, writeLease);
+                    stateChanged.signalAll();
+                    return exception;
+                }
+            }
+            return lostWriteOwner == owner ? ownershipLostFailure() : null;
+        }
+
+        private LockOwnershipLostException conflictingReadLostOwnership(Thread owner) {
+            HeldLease conflictingRead = readLeases.get(owner);
+            if (conflictingRead != null) {
+                try {
+                    conflictingRead.assertValid();
+                } catch (LockOwnershipLostException exception) {
+                    markLostOwnership(owner, LockMode.READ, conflictingRead);
+                    stateChanged.signalAll();
+                    return exception;
+                }
+            }
+            return lostReadOwners.containsKey(owner) ? ownershipLostFailure() : null;
         }
 
         private void markLostOwnership(Thread owner, LockMode mode, HeldLease expectedLease) {
