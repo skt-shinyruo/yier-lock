@@ -1,7 +1,8 @@
-package com.mycorp.distributedlock.springboot.integration;
+package com.mycorp.distributedlock.redis.springboot.integration;
 
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,7 +21,11 @@ class RedisStarterIntegrationTest {
     private static int redisPort;
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class));
+        .withConfiguration(AutoConfigurations.of(
+            AopAutoConfiguration.class,
+            DistributedLockAutoConfiguration.class,
+            RedisDistributedLockAutoConfiguration.class
+        ));
 
     @BeforeAll
     static void startRedis() throws Exception {

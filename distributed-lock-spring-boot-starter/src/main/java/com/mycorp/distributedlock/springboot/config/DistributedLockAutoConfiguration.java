@@ -31,10 +31,6 @@ public class DistributedLockAutoConfiguration {
         if (properties.getBackend() != null && !properties.getBackend().isBlank()) {
             builder.backend(properties.getBackend());
         }
-        Object backendConfiguration = properties.toBackendConfiguration();
-        if (backendConfiguration != null) {
-            builder.configuration(backendConfiguration);
-        }
 
         List<BackendModule> modules = backendModules.orderedStream().toList();
         if (!modules.isEmpty()) {

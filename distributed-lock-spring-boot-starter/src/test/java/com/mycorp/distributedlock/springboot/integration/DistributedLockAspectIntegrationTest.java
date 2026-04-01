@@ -1,5 +1,6 @@
 package com.mycorp.distributedlock.springboot.integration;
 
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
@@ -49,7 +50,7 @@ class DistributedLockAspectIntegrationTest {
                 assertThatThrownBy(secondCall::get)
                     .isInstanceOf(ExecutionException.class)
                     .cause()
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(LockAcquisitionTimeoutException.class)
                     .hasMessageContaining("Failed to acquire distributed lock");
 
                 release.countDown();

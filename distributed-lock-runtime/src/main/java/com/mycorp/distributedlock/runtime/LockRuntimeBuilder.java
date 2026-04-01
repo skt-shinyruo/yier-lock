@@ -3,20 +3,19 @@ package com.mycorp.distributedlock.runtime;
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.core.backend.SupportedLockModes;
 import com.mycorp.distributedlock.core.manager.DefaultLockManager;
-import com.mycorp.distributedlock.runtime.spi.BackendContext;
+import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.runtime.spi.ServiceLoaderBackendRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 public final class LockRuntimeBuilder {
 
     private final List<BackendModule> explicitBackendModules = new ArrayList<>();
     private String backendId;
-    private Object configuration;
 
     private LockRuntimeBuilder() {
     }
@@ -27,11 +26,6 @@ public final class LockRuntimeBuilder {
 
     public LockRuntimeBuilder backend(String backendId) {
         this.backendId = backendId;
-        return this;
-    }
-
-    public LockRuntimeBuilder configuration(Object configuration) {
-        this.configuration = configuration;
         return this;
     }
 
@@ -49,8 +43,8 @@ public final class LockRuntimeBuilder {
             : List.copyOf(explicitBackendModules);
 
         BackendModule selectedModule = selectBackendModule(availableModules);
-        LockBackend backend = selectedModule.createBackend(new BackendContext(selectedModule.id(), configuration));
-        LockManager lockManager = new DefaultLockManager(backend);
+        LockBackend backend = selectedModule.createBackend();
+        LockManager lockManager = new DefaultLockManager(backend, toSupportedLockModes(selectedModule));
         AutoCloseable backendResource = backend instanceof AutoCloseable closeable ? closeable : null;
         return new DefaultLockRuntime(lockManager, backendResource);
     }
@@ -70,5 +64,13 @@ public final class LockRuntimeBuilder {
             throw new LockConfigurationException("Cannot select backend automatically: multiple backends available");
         }
         return availableModules.get(0);
+    }
+
+    private SupportedLockModes toSupportedLockModes(BackendModule module) {
+        BackendCapabilities capabilities = module.capabilities();
+        if (capabilities == null) {
+            throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
+        }
+        return new SupportedLockModes(capabilities.mutexSupported(), capabilities.readWriteSupported());
     }
 }

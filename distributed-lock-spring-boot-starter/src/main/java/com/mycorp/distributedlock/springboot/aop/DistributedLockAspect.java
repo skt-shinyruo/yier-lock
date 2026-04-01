@@ -2,6 +2,8 @@ package com.mycorp.distributedlock.springboot.aop;
 
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
 import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
@@ -9,10 +11,13 @@ import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.boot.convert.DurationStyle;
 
+import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.CompletionStage;
 
 @Aspect
 public final class DistributedLockAspect {
@@ -33,6 +38,7 @@ public final class DistributedLockAspect {
 
     @Around("@annotation(distributedLock)")
     public Object around(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) throws Throwable {
+        ensureSynchronousReturnType(joinPoint);
         String key = lockKeyResolver.resolveKey(joinPoint, distributedLock.key());
         MutexLock lock = resolveLock(key, distributedLock.mode());
         Duration waitTimeout = resolveWaitTimeout(distributedLock);
@@ -40,7 +46,7 @@ public final class DistributedLockAspect {
         if (waitTimeout == null) {
             lock.lock();
         } else if (!lock.tryLock(waitTimeout)) {
-            throw new IllegalStateException("Failed to acquire distributed lock for key " + key);
+            throw new LockAcquisitionTimeoutException("Failed to acquire distributed lock for key " + key);
         }
 
         try (lock) {
@@ -61,5 +67,18 @@ public final class DistributedLockAspect {
             return DurationStyle.detectAndParse(distributedLock.waitFor());
         }
         return properties.getSpring().getAnnotation().getDefaultTimeout();
+    }
+
+    private void ensureSynchronousReturnType(ProceedingJoinPoint joinPoint) {
+        if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
+            return;
+        }
+
+        Method method = methodSignature.getMethod();
+        if (CompletionStage.class.isAssignableFrom(method.getReturnType())) {
+            throw new LockConfigurationException(
+                "@DistributedLock does not support async return types such as CompletionStage: " + method
+            );
+        }
     }
 }

@@ -25,10 +25,7 @@ class DistributedLockAutoConfigurationIntegrationTest {
     @Test
     void shouldRegisterLockRuntimeCoreBeansAndAspect() {
         contextRunner
-            .withPropertyValues(
-                "distributed.lock.enabled=true",
-                "distributed.lock.backend=in-memory"
-            )
+            .withPropertyValues("distributed.lock.enabled=true")
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
                 assertThat(context).hasSingleBean(LockManager.class);

@@ -36,6 +36,8 @@
         <module>distributed-lock-redis</module>
         <module>distributed-lock-zookeeper</module>
         <module>distributed-lock-spring-boot-starter</module>
+        <module>distributed-lock-redis-spring-boot-autoconfigure</module>
+        <module>distributed-lock-zookeeper-spring-boot-autoconfigure</module>
         <module>distributed-lock-examples</module>
     </modules>
 
@@ -74,6 +76,16 @@
             <dependency>
                 <groupId>com.mycorp</groupId>
                 <artifactId>distributed-lock-spring-boot-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycorp</groupId>
+                <artifactId>distributed-lock-redis-spring-boot-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycorp</groupId>
+                <artifactId>distributed-lock-zookeeper-spring-boot-autoconfigure</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

@@ -2,11 +2,13 @@ package com.mycorp.distributedlock.examples;
 
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
+import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 
 import java.time.Duration;
-import java.util.Map;
+import java.util.List;
 
 public final class ProgrammaticRedisExample {
 
@@ -15,11 +17,10 @@ public final class ProgrammaticRedisExample {
 
     public static void main(String[] args) throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
-            .backend("redis")
-            .configuration(Map.of(
-                "uri", "redis://127.0.0.1:6379",
-                "lease-seconds", 30L
-            ))
+            .backendModules(List.of(new RedisBackendModule(new RedisBackendConfiguration(
+                "redis://127.0.0.1:6379",
+                30L
+            ))))
             .build()) {
             LockManager lockManager = runtime.lockManager();
             MutexLock lock = lockManager.mutex("example:redis:order-42");

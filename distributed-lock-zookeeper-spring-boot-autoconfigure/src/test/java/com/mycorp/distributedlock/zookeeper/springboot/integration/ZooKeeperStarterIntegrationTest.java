@@ -1,8 +1,9 @@
-package com.mycorp.distributedlock.springboot.integration;
+package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
 import com.mycorp.distributedlock.api.LockManager;
 import com.mycorp.distributedlock.api.MutexLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
+import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockAutoConfiguration;
 import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -16,7 +17,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ZooKeeperStarterIntegrationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class));
+        .withConfiguration(AutoConfigurations.of(
+            AopAutoConfiguration.class,
+            DistributedLockAutoConfiguration.class,
+            ZooKeeperDistributedLockAutoConfiguration.class
+        ));
 
     @Test
     void shouldCreateWorkingZooKeeperBackedLockManager() throws Exception {

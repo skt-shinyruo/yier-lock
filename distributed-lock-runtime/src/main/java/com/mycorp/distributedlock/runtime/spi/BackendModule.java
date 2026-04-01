@@ -8,5 +8,5 @@ public interface BackendModule {
 
     BackendCapabilities capabilities();
 
-    LockBackend createBackend(BackendContext context);
+    LockBackend createBackend();
 }

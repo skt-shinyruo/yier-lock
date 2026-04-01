@@ -2,7 +2,6 @@ package com.mycorp.distributedlock.testkit.support;
 
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendContext;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 
 import java.util.Objects;
@@ -26,7 +25,7 @@ public final class InMemoryBackendModule implements BackendModule {
     }
 
     @Override
-    public LockBackend createBackend(BackendContext context) {
+    public LockBackend createBackend() {
         return new InMemoryLockBackend();
     }
 }
