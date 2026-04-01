@@ -28,7 +28,9 @@ class DefaultLockManagerOwnershipLossTest {
         assertThatThrownBy(() -> manager.mutex("orders:77").tryLock(Duration.ZERO))
             .isInstanceOf(LockOwnershipLostException.class);
         assertThatThrownBy(lock::unlock)
-            .isInstanceOf(IllegalMonitorStateException.class);
+            .isInstanceOf(LockOwnershipLostException.class);
+        assertThatThrownBy(lock::close)
+            .isInstanceOf(LockOwnershipLostException.class);
 
         MutexLock fresh = manager.mutex("orders:77");
         assertThat(fresh.tryLock(Duration.ZERO)).isTrue();

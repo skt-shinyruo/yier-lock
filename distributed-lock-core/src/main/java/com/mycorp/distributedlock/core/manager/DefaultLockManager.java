@@ -65,7 +65,7 @@ public final class DefaultLockManager implements LockManager {
     }
 
     void close(String key, LockMode mode) {
-        if (!hasLocalHold(key, mode)) {
+        if (!hasTrackedState(key, mode)) {
             return;
         }
         release(key, mode);
@@ -77,10 +77,10 @@ public final class DefaultLockManager implements LockManager {
         return coordinator != null && coordinator.isHeldByCurrentThread(mode);
     }
 
-    boolean hasLocalHold(String key, LockMode mode) {
+    boolean hasTrackedState(String key, LockMode mode) {
         String normalizedKey = normalizeKey(key);
         LockCoordinator coordinator = coordinators.get(stateKey(normalizedKey, mode));
-        return coordinator != null && coordinator.hasLocalHold(mode);
+        return coordinator != null && coordinator.hasTrackedState(mode);
     }
 
     void ensureReadWriteSupported() {
@@ -145,6 +145,9 @@ public final class DefaultLockManager implements LockManager {
         private HeldLease mutexLease;
         private HeldLease writeLease;
         private final Map<Thread, HeldLease> readLeases = new HashMap<>();
+        private Thread lostMutexOwner;
+        private Thread lostWriteOwner;
+        private final Map<Thread, Boolean> lostReadOwners = new HashMap<>();
         private int pendingFreshAcquisitions;
 
         private LockCoordinator(String coordinatorStateKey) {
@@ -166,7 +169,7 @@ public final class DefaultLockManager implements LockManager {
                         try {
                             existingLease.assertValid();
                         } catch (LockOwnershipLostException exception) {
-                            clearInvalidLease(current, mode, existingLease);
+                            markLostOwnership(current, mode, existingLease);
                             stateChanged.signalAll();
                             invalidLeaseFailure = exception;
                         }
@@ -214,13 +217,20 @@ public final class DefaultLockManager implements LockManager {
         private void release(LockMode mode) {
             Thread current = Thread.currentThread();
             HeldLease detachedLease;
+            LockOwnershipLostException lostOwnershipFailure;
 
             stateLock.lock();
             try {
-                detachedLease = detachForRelease(current, mode);
+                lostOwnershipFailure = consumeLostOwnership(current, mode);
+                detachedLease = lostOwnershipFailure == null ? detachForRelease(current, mode) : null;
                 stateChanged.signalAll();
             } finally {
                 stateLock.unlock();
+            }
+
+            if (lostOwnershipFailure != null) {
+                retireIfPossible();
+                throw lostOwnershipFailure;
             }
 
             if (detachedLease == null) {
@@ -245,10 +255,10 @@ public final class DefaultLockManager implements LockManager {
             }
         }
 
-        private boolean hasLocalHold(LockMode mode) {
+        private boolean hasTrackedState(LockMode mode) {
             stateLock.lock();
             try {
-                return hasLocalHold(Thread.currentThread(), mode);
+                return hasTrackedState(Thread.currentThread(), mode);
             } finally {
                 stateLock.unlock();
             }
@@ -262,21 +272,49 @@ public final class DefaultLockManager implements LockManager {
             };
         }
 
-        private void clearInvalidLease(Thread owner, LockMode mode, HeldLease expectedLease) {
+        private void markLostOwnership(Thread owner, LockMode mode, HeldLease expectedLease) {
             switch (mode) {
                 case MUTEX -> {
                     if (mutexLease == expectedLease && mutexLease.owner() == owner) {
                         mutexLease = null;
+                        lostMutexOwner = owner;
                     }
                 }
-                case READ -> readLeases.computeIfPresent(owner, (ignored, currentLease) ->
-                    currentLease == expectedLease ? null : currentLease);
+                case READ -> readLeases.computeIfPresent(owner, (ignored, currentLease) -> {
+                    if (currentLease == expectedLease) {
+                        lostReadOwners.put(owner, Boolean.TRUE);
+                        return null;
+                    }
+                    return currentLease;
+                });
                 case WRITE -> {
                     if (writeLease == expectedLease && writeLease.owner() == owner) {
                         writeLease = null;
+                        lostWriteOwner = owner;
                     }
                 }
             }
+        }
+
+        private LockOwnershipLostException consumeLostOwnership(Thread owner, LockMode mode) {
+            boolean lostOwnership = switch (mode) {
+                case MUTEX -> {
+                    boolean matched = lostMutexOwner == owner;
+                    if (matched) {
+                        lostMutexOwner = null;
+                    }
+                    yield matched;
+                }
+                case READ -> lostReadOwners.remove(owner) != null;
+                case WRITE -> {
+                    boolean matched = lostWriteOwner == owner;
+                    if (matched) {
+                        lostWriteOwner = null;
+                    }
+                    yield matched;
+                }
+            };
+            return lostOwnership ? ownershipLostFailure() : null;
         }
 
         private boolean canInstallFreshLease(Thread owner, LockMode mode) {
@@ -332,16 +370,25 @@ public final class DefaultLockManager implements LockManager {
             return heldLease;
         }
 
-        private boolean hasLocalHold(Thread owner, LockMode mode) {
+        private boolean hasTrackedState(Thread owner, LockMode mode) {
             return switch (mode) {
-                case MUTEX -> mutexLease != null && mutexLease.owner() == owner;
-                case READ -> readLeases.containsKey(owner);
-                case WRITE -> writeLease != null && writeLease.owner() == owner;
+                case MUTEX -> (mutexLease != null && mutexLease.owner() == owner) || lostMutexOwner == owner;
+                case READ -> readLeases.containsKey(owner) || lostReadOwners.containsKey(owner);
+                case WRITE -> (writeLease != null && writeLease.owner() == owner) || lostWriteOwner == owner;
             };
         }
 
         private boolean isEmpty() {
-            return mutexLease == null && writeLease == null && readLeases.isEmpty();
+            return mutexLease == null
+                && writeLease == null
+                && readLeases.isEmpty()
+                && lostMutexOwner == null
+                && lostWriteOwner == null
+                && lostReadOwners.isEmpty();
+        }
+
+        private LockOwnershipLostException ownershipLostFailure() {
+            return new LockOwnershipLostException("Backend ownership lost for key " + resource.key());
         }
 
         private LockCoordinator registeredCoordinator() {
