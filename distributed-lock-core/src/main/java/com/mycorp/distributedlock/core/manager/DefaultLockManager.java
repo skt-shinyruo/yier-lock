@@ -179,6 +179,10 @@ public final class DefaultLockManager implements LockManager {
                         }
                     }
 
+                    if (invalidLeaseFailure == null && hasPendingLostOwnership(current, mode)) {
+                        invalidLeaseFailure = ownershipLostFailure();
+                    }
+
                     if (invalidLeaseFailure == null && mode == LockMode.READ && writeLease != null && writeLease.owner() == current) {
                         throw new IllegalStateException("Cannot acquire read lock while holding write lock");
                     }
@@ -315,6 +319,14 @@ public final class DefaultLockManager implements LockManager {
                 }
             };
             return lostOwnership ? ownershipLostFailure() : null;
+        }
+
+        private boolean hasPendingLostOwnership(Thread owner, LockMode mode) {
+            return switch (mode) {
+                case MUTEX -> lostMutexOwner == owner;
+                case READ -> lostReadOwners.containsKey(owner);
+                case WRITE -> lostWriteOwner == owner;
+            };
         }
 
         private boolean canInstallFreshLease(Thread owner, LockMode mode) {
