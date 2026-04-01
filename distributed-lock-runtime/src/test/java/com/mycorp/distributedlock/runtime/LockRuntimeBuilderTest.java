@@ -41,6 +41,18 @@ class LockRuntimeBuilderTest {
         }
     }
 
+    @Test
+    void builderShouldRejectDuplicateBackendIdsExplicitly() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule("redis"), new StubBackendModule("redis")));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Duplicate backend modules")
+            .hasMessageContaining("redis");
+    }
+
     private static final class StubBackendModule implements BackendModule {
         private final String id;
         private final BackendCapabilities capabilities;

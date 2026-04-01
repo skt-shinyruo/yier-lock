@@ -1,5 +1,6 @@
 package com.mycorp.distributedlock.benchmarks;
 
+import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
 import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
@@ -19,7 +20,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import java.util.Map;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
@@ -58,11 +59,7 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("redis")
-                .backendModules(java.util.List.of(new RedisBackendModule(redisUri)))
-                .configuration(Map.of(
-                    "uri", redisUri,
-                    "lease-seconds", 30L
-                ))
+                .backendModules(List.of(new RedisBackendModule(new RedisBackendConfiguration(redisUri, 30L))))
                 .build(),
             "redis",
             blackhole
@@ -74,13 +71,9 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("zookeeper")
-                .backendModules(java.util.List.of(new ZooKeeperBackendModule(
+                .backendModules(List.of(new ZooKeeperBackendModule(
                     new ZooKeeperBackendConfiguration(zooKeeperConnectString, zooKeeperBasePath)
                 )))
-                .configuration(Map.of(
-                    "connect-string", zooKeeperConnectString,
-                    "base-path", zooKeeperBasePath
-                ))
                 .build(),
             "zookeeper",
             blackhole

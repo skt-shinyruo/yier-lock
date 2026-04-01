@@ -1,5 +1,11 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.core.backend.LockMode;
+import com.mycorp.distributedlock.core.backend.LockResource;
+import com.mycorp.distributedlock.core.backend.WaitPolicy;
+import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
 import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockAutoConfiguration;
@@ -7,6 +13,8 @@ import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistribut
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -46,5 +54,58 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
                 assertThat(context).doesNotHaveBean(BackendModule.class);
                 assertThat(context).doesNotHaveBean(ZooKeeperDistributedLockProperties.class);
             });
+    }
+
+    @Test
+    void shouldBackOffForUserSuppliedBackendModuleOverrideByBeanName() {
+        contextRunner
+            .withUserConfiguration(UserZooKeeperBackendOverrideConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=zookeeper"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(BackendModule.class);
+                assertThat(context.getBean("zooKeeperBackendModule")).isInstanceOf(NamedBackendModule.class);
+                assertThat(context.getBeansOfType(BackendModule.class)).hasSize(1);
+            });
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class UserZooKeeperBackendOverrideConfiguration {
+
+        @Bean
+        BackendModule zooKeeperBackendModule() {
+            return new NamedBackendModule("zookeeper");
+        }
+    }
+
+    private static final class NamedBackendModule implements BackendModule {
+
+        private final String id;
+
+        private NamedBackendModule(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public String id() {
+            return id;
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return BackendCapabilities.standard();
+        }
+
+        @Override
+        public LockBackend createBackend() {
+            return new LockBackend() {
+                @Override
+                public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
+                    return null;
+                }
+            };
+        }
     }
 }

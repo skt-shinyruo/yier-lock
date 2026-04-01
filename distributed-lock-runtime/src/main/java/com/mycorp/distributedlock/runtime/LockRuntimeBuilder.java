@@ -11,6 +11,8 @@ import com.mycorp.distributedlock.runtime.spi.ServiceLoaderBackendRegistry;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 public final class LockRuntimeBuilder {
 
@@ -50,6 +52,8 @@ public final class LockRuntimeBuilder {
     }
 
     private BackendModule selectBackendModule(List<BackendModule> availableModules) {
+        validateUniqueBackendIds(availableModules);
+
         if (backendId != null && !backendId.isBlank()) {
             return availableModules.stream()
                 .filter(module -> backendId.equals(module.id()))
@@ -72,5 +76,17 @@ public final class LockRuntimeBuilder {
             throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
         }
         return new SupportedLockModes(capabilities.mutexSupported(), capabilities.readWriteSupported());
+    }
+
+    private void validateUniqueBackendIds(List<BackendModule> availableModules) {
+        Map<String, Long> moduleCountsById = availableModules.stream()
+            .collect(Collectors.groupingBy(BackendModule::id, Collectors.counting()));
+
+        moduleCountsById.entrySet().stream()
+            .filter(entry -> entry.getValue() > 1)
+            .findFirst()
+            .ifPresent(entry -> {
+                throw new LockConfigurationException("Duplicate backend modules registered for id: " + entry.getKey());
+            });
     }
 }

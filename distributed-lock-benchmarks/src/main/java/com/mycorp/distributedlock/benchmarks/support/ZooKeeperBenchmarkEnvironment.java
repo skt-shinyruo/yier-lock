@@ -6,7 +6,7 @@ import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
 
-import java.util.Map;
+import java.util.List;
 import java.util.Objects;
 
 public final class ZooKeeperBenchmarkEnvironment implements AutoCloseable {
@@ -29,13 +29,9 @@ public final class ZooKeeperBenchmarkEnvironment implements AutoCloseable {
         String basePath = configuredBasePath();
         LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("zookeeper")
-            .backendModules(java.util.List.of(new ZooKeeperBackendModule(
+            .backendModules(List.of(new ZooKeeperBackendModule(
                 new ZooKeeperBackendConfiguration(connectString, basePath)
             )))
-            .configuration(Map.of(
-                "connect-string", connectString,
-                "base-path", basePath
-            ))
             .build();
         return new ZooKeeperBenchmarkEnvironment(connectString, basePath, runtime);
     }
