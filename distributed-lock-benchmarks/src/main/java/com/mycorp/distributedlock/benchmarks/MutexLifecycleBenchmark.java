@@ -47,26 +47,26 @@ public class MutexLifecycleBenchmark {
     }
 
     @Benchmark
-    public void redisMutexLifecycle(Blackhole blackhole) throws InterruptedException {
+    public void redisMutexLifecycle(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.unique("mutex-lifecycle", "redis", Thread.currentThread().getId());
-        BenchmarkWorkloads.mutexLifecycle(redisEnvironment.lockManager(), key, blackhole);
+        BenchmarkWorkloads.mutexLifecycle(redisEnvironment.runtime(), key, blackhole);
     }
 
     @Benchmark
-    public void zooKeeperMutexLifecycle(Blackhole blackhole) throws InterruptedException {
+    public void zooKeeperMutexLifecycle(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.unique("mutex-lifecycle", "zookeeper", Thread.currentThread().getId());
-        BenchmarkWorkloads.mutexLifecycle(zooKeeperEnvironment.lockManager(), key, blackhole);
+        BenchmarkWorkloads.mutexLifecycle(zooKeeperEnvironment.runtime(), key, blackhole);
     }
 
     @Benchmark
-    public void redisTryLockSuccess(Blackhole blackhole) throws InterruptedException {
+    public void redisTryLockSuccess(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.unique("mutex-try-lock", "redis", Thread.currentThread().getId());
-        BenchmarkWorkloads.successfulTryLock(redisEnvironment.lockManager(), key, Duration.ofMillis(250), blackhole);
+        BenchmarkWorkloads.successfulTryLock(redisEnvironment.lockClient(), key, Duration.ofMillis(250), blackhole);
     }
 
     @Benchmark
-    public void zooKeeperTryLockSuccess(Blackhole blackhole) throws InterruptedException {
+    public void zooKeeperTryLockSuccess(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.unique("mutex-try-lock", "zookeeper", Thread.currentThread().getId());
-        BenchmarkWorkloads.successfulTryLock(zooKeeperEnvironment.lockManager(), key, Duration.ofMillis(250), blackhole);
+        BenchmarkWorkloads.successfulTryLock(zooKeeperEnvironment.lockClient(), key, Duration.ofMillis(250), blackhole);
     }
 }

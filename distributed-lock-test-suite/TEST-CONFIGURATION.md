@@ -5,13 +5,11 @@
 ## 当前维护的测试范围
 
 - `ApiSurfaceTest`
-- `DefaultLockManagerTest`
-- `DefaultLockManagerBlockingTest`
-- `DefaultLockManagerOwnershipLossTest`
-- `DefaultLockManagerCapabilitiesTest`
-- `DefaultLockManagerReleaseFailureTest`
+- `LockBackendSurfaceTest`
+- `DefaultLockClientTest`
+- `DefaultLockExecutorTest`
 - `LockRuntimeBuilderTest`
-- `InMemoryLockManagerContractTest`
+- `InMemoryLockClientContractTest`
 - `RedisBackendModuleTest`
 - `RedisLockBackendContractTest`
 - `RedisLeaseRenewalTest`
@@ -47,7 +45,7 @@ mvn -pl distributed-lock-zookeeper -am test \
 
 # core / testkit
 mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
-  -Dtest=DefaultLockManagerTest,DefaultLockManagerBlockingTest,DefaultLockManagerOwnershipLossTest,DefaultLockManagerCapabilitiesTest,DefaultLockManagerReleaseFailureTest,InMemoryLockManagerContractTest \
+  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultLockExecutorTest,InMemoryLockClientContractTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
@@ -55,4 +53,5 @@ mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
 
 - 2.0 不再维护 1.x 的 factory/provider/async/batch/health 测试资产。
 - `distributed-lock-benchmarks` 不参与默认 reactor，也不作为主线验收条件。
+- `distributed-lock-benchmarks` 依赖本地已安装的 snapshot；修改 runtime/backend/starter 后要先重新执行 `mvn -q install -DskipTests`。
 - 示例代码已经迁移到 `distributed-lock-examples`，旧 `examples/` 不再是有效资产。

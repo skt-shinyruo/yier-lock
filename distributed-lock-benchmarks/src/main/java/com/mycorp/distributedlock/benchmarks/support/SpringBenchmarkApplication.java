@@ -1,7 +1,11 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
-import com.mycorp.distributedlock.api.LockManager;
-import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.stereotype.Service;
@@ -14,20 +18,22 @@ public class SpringBenchmarkApplication {
     @Service
     public static class ProgrammaticBenchmarkService {
 
-        private final LockManager lockManager;
+        private final LockExecutor lockExecutor;
 
-        public ProgrammaticBenchmarkService(LockManager lockManager) {
-            this.lockManager = lockManager;
+        public ProgrammaticBenchmarkService(LockExecutor lockExecutor) {
+            this.lockExecutor = lockExecutor;
         }
 
-        public int programmatic(String id) throws InterruptedException {
-            MutexLock lock = lockManager.mutex("bench:spring:programmatic:" + id);
-            if (!lock.tryLock(Duration.ofMillis(250))) {
-                throw new IllegalStateException("Failed to acquire programmatic benchmark lock");
-            }
-            try (lock) {
-                return id.hashCode();
-            }
+        public int programmatic(String id) throws Exception {
+            return lockExecutor.withLock(
+                new LockRequest(
+                    new LockKey("bench:spring:programmatic:" + id),
+                    LockMode.MUTEX,
+                    WaitPolicy.timed(Duration.ofMillis(250)),
+                    LeasePolicy.RELEASE_ON_CLOSE
+                ),
+                id::hashCode
+            );
         }
     }
 
