@@ -18,6 +18,7 @@ import com.mycorp.distributedlock.core.backend.LockBackend;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -56,6 +57,24 @@ class DefaultLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+    }
+
+    @Test
+    void withLockShouldExposeCurrentFencingTokenDuringAction() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        LockExecutor executor = new DefaultLockExecutor(
+            new DefaultLockClient(backend),
+            new SessionRequest(SessionPolicy.MANUAL_CLOSE)
+        );
+        AtomicLong observedToken = new AtomicLong();
+
+        String result = executor.withLock(sampleRequest(), () -> {
+            observedToken.set(CurrentLockContext.requireCurrentFencingToken().value());
+            return "ok";
+        });
+
+        assertThat(result).isEqualTo("ok");
+        assertThat(observedToken).hasValue(1L);
     }
 
     private static LockRequest sampleRequest() {

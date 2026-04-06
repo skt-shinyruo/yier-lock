@@ -1,8 +1,11 @@
 package com.mycorp.distributedlock.springboot.aop;
 
-import com.mycorp.distributedlock.api.LockManager;
-import com.mycorp.distributedlock.api.MutexLock;
-import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
@@ -23,16 +26,16 @@ import java.util.concurrent.Future;
 @Aspect
 public final class DistributedLockAspect {
 
-    private final LockManager lockManager;
+    private final LockExecutor lockExecutor;
     private final LockKeyResolver lockKeyResolver;
     private final DistributedLockProperties properties;
 
     public DistributedLockAspect(
-        LockManager lockManager,
+        LockExecutor lockExecutor,
         LockKeyResolver lockKeyResolver,
         DistributedLockProperties properties
     ) {
-        this.lockManager = Objects.requireNonNull(lockManager, "lockManager");
+        this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
         this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
         this.properties = Objects.requireNonNull(properties, "properties");
     }
@@ -40,27 +43,34 @@ public final class DistributedLockAspect {
     @Around("@annotation(distributedLock)")
     public Object around(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) throws Throwable {
         ensureSynchronousReturnType(joinPoint);
-        String key = lockKeyResolver.resolveKey(joinPoint, distributedLock.key());
-        MutexLock lock = resolveLock(key, distributedLock.mode());
-        Duration waitTimeout = resolveWaitTimeout(distributedLock);
-
-        if (waitTimeout == null) {
-            lock.lock();
-        } else if (!lock.tryLock(waitTimeout)) {
-            throw new LockAcquisitionTimeoutException("Failed to acquire distributed lock for key " + key);
-        }
-
-        try (lock) {
-            return joinPoint.proceed();
-        }
+        LockRequest request = resolveRequest(joinPoint, distributedLock);
+        return lockExecutor.withLock(request, () -> proceed(joinPoint));
     }
 
-    private MutexLock resolveLock(String key, DistributedLockMode mode) {
+    private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) {
+        String key = lockKeyResolver.resolveKey(joinPoint, distributedLock.key());
+        return new LockRequest(
+            new LockKey(key),
+            resolveMode(distributedLock.mode()),
+            resolveWaitPolicy(distributedLock),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
+    }
+
+    private LockMode resolveMode(DistributedLockMode mode) {
         return switch (mode) {
-            case MUTEX -> lockManager.mutex(key);
-            case READ -> lockManager.readWrite(key).readLock();
-            case WRITE -> lockManager.readWrite(key).writeLock();
+            case MUTEX -> LockMode.MUTEX;
+            case READ -> LockMode.READ;
+            case WRITE -> LockMode.WRITE;
         };
+    }
+
+    private WaitPolicy resolveWaitPolicy(DistributedLock distributedLock) {
+        Duration waitTimeout = resolveWaitTimeout(distributedLock);
+        if (waitTimeout == null) {
+            return WaitPolicy.indefinite();
+        }
+        return WaitPolicy.timed(waitTimeout);
     }
 
     private Duration resolveWaitTimeout(DistributedLock distributedLock) {
@@ -68,6 +78,18 @@ public final class DistributedLockAspect {
             return DurationStyle.detectAndParse(distributedLock.waitFor());
         }
         return properties.getSpring().getAnnotation().getDefaultTimeout();
+    }
+
+    private Object proceed(ProceedingJoinPoint joinPoint) throws Exception {
+        try {
+            return joinPoint.proceed();
+        } catch (Exception exception) {
+            throw exception;
+        } catch (Error error) {
+            throw error;
+        } catch (Throwable throwable) {
+            throw new IllegalStateException("Unexpected throwable from join point", throwable);
+        }
     }
 
     private void ensureSynchronousReturnType(ProceedingJoinPoint joinPoint) {

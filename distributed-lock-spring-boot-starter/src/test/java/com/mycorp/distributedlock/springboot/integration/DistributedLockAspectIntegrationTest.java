@@ -1,8 +1,10 @@
 package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.core.client.CurrentLockContext;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
+import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
@@ -19,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,6 +40,7 @@ class DistributedLockAspectIntegrationTest {
     void shouldSerializeAnnotatedMethodCallsByKey() {
         contextRunner.run(context -> {
             TestService service = context.getBean(TestService.class);
+            GuardedResource guardedResource = context.getBean(GuardedResource.class);
             ExecutorService executor = Executors.newFixedThreadPool(2);
             try {
                 CountDownLatch entered = new CountDownLatch(1);
@@ -51,11 +55,12 @@ class DistributedLockAspectIntegrationTest {
                     .isInstanceOf(ExecutionException.class)
                     .cause()
                     .isInstanceOf(LockAcquisitionTimeoutException.class)
-                    .hasMessageContaining("Failed to acquire distributed lock");
+                    .hasMessageContaining("order:42");
 
                 release.countDown();
                 assertThat(firstCall.get(1, TimeUnit.SECONDS)).isEqualTo("processed-42");
                 assertThat(service.maxConcurrentInvocations()).isEqualTo(1);
+                assertThat(guardedResource.lastObservedFencingToken()).isPositive();
             } finally {
                 executor.shutdownNow();
             }
@@ -71,24 +76,34 @@ class DistributedLockAspectIntegrationTest {
         }
 
         @Bean
-        TestService testService() {
-            return new TestService();
+        TestService testService(GuardedResource guardedResource) {
+            return new TestService(guardedResource);
+        }
+
+        @Bean
+        GuardedResource guardedResource() {
+            return new GuardedResource();
         }
     }
 
     static class TestService {
+        private final GuardedResource guardedResource;
 
         private final AtomicInteger concurrentInvocations = new AtomicInteger();
         private final AtomicInteger maxConcurrentInvocations = new AtomicInteger();
 
-        @DistributedLock(key = "job:#{#p0}", waitFor = "50ms")
+        TestService(GuardedResource guardedResource) {
+            this.guardedResource = guardedResource;
+        }
+
+        @DistributedLock(key = "order:#{#p0}", mode = DistributedLockMode.MUTEX, waitFor = "50ms")
         public String process(String jobId, CountDownLatch entered, CountDownLatch release) throws InterruptedException {
             int concurrent = concurrentInvocations.incrementAndGet();
             maxConcurrentInvocations.updateAndGet(previous -> Math.max(previous, concurrent));
             entered.countDown();
             try {
                 release.await();
-                return "processed-" + jobId;
+                return guardedResource.writeAndReturn(jobId);
             } finally {
                 concurrentInvocations.decrementAndGet();
             }
@@ -96,6 +111,21 @@ class DistributedLockAspectIntegrationTest {
 
         int maxConcurrentInvocations() {
             return maxConcurrentInvocations.get();
+        }
+    }
+
+    static class GuardedResource {
+
+        private final AtomicLong lastObservedFencingToken = new AtomicLong();
+
+        String writeAndReturn(String orderId) {
+            long token = CurrentLockContext.requireCurrentFencingToken().value();
+            lastObservedFencingToken.set(token);
+            return "processed-" + orderId;
+        }
+
+        long lastObservedFencingToken() {
+            return lastObservedFencingToken.get();
         }
     }
 }

@@ -25,7 +25,8 @@ public final class DefaultLockExecutor implements LockExecutor {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(action, "action");
         try (LockSession session = client.openSession(sessionRequest);
-             LockLease lease = session.acquire(request)) {
+             LockLease lease = session.acquire(request);
+             CurrentLockContext.Binding ignored = CurrentLockContext.bind(lease)) {
             return action.get();
         }
     }
