@@ -48,50 +48,50 @@ public class ReadWriteLockBenchmark {
     }
 
     @Benchmark
-    public void redisReadSection(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.readSection(redisEnvironment.lockManager(), BenchmarkKeys.unique("rw-read", "redis", Thread.currentThread().getId()), blackhole);
+    public void redisReadSection(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.readSection(redisEnvironment.runtime(), BenchmarkKeys.unique("rw-read", "redis", Thread.currentThread().getId()), blackhole);
     }
 
     @Benchmark
-    public void redisWriteSection(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.writeSection(redisEnvironment.lockManager(), BenchmarkKeys.unique("rw-write", "redis", Thread.currentThread().getId()), blackhole);
+    public void redisWriteSection(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.writeSection(redisEnvironment.runtime(), BenchmarkKeys.unique("rw-write", "redis", Thread.currentThread().getId()), blackhole);
     }
 
     @Benchmark
-    public void zooKeeperReadSection(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.readSection(zooKeeperEnvironment.lockManager(), BenchmarkKeys.unique("rw-read", "zookeeper", Thread.currentThread().getId()), blackhole);
+    public void zooKeeperReadSection(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.readSection(zooKeeperEnvironment.runtime(), BenchmarkKeys.unique("rw-read", "zookeeper", Thread.currentThread().getId()), blackhole);
     }
 
     @Benchmark
-    public void zooKeeperWriteSection(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.writeSection(zooKeeperEnvironment.lockManager(), BenchmarkKeys.unique("rw-write", "zookeeper", Thread.currentThread().getId()), blackhole);
+    public void zooKeeperWriteSection(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.writeSection(zooKeeperEnvironment.runtime(), BenchmarkKeys.unique("rw-write", "zookeeper", Thread.currentThread().getId()), blackhole);
     }
 
     @Benchmark
     @Group("redis_rw_mixed")
     @GroupThreads(4)
-    public void redisMixedRead(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.readSection(redisEnvironment.lockManager(), BenchmarkKeys.shared("rw-mixed", "redis"), blackhole);
+    public void redisMixedRead(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.readSection(redisEnvironment.runtime(), BenchmarkKeys.shared("rw-mixed", "redis"), blackhole);
     }
 
     @Benchmark
     @Group("redis_rw_mixed")
     @GroupThreads(1)
-    public void redisMixedWrite(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.writeSection(redisEnvironment.lockManager(), BenchmarkKeys.shared("rw-mixed", "redis"), blackhole);
+    public void redisMixedWrite(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.writeSection(redisEnvironment.runtime(), BenchmarkKeys.shared("rw-mixed", "redis"), blackhole);
     }
 
     @Benchmark
     @Group("zookeeper_rw_mixed")
     @GroupThreads(4)
-    public void zooKeeperMixedRead(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.readSection(zooKeeperEnvironment.lockManager(), BenchmarkKeys.shared("rw-mixed", "zookeeper"), blackhole);
+    public void zooKeeperMixedRead(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.readSection(zooKeeperEnvironment.runtime(), BenchmarkKeys.shared("rw-mixed", "zookeeper"), blackhole);
     }
 
     @Benchmark
     @Group("zookeeper_rw_mixed")
     @GroupThreads(1)
-    public void zooKeeperMixedWrite(Blackhole blackhole) throws InterruptedException {
-        BenchmarkWorkloads.writeSection(zooKeeperEnvironment.lockManager(), BenchmarkKeys.shared("rw-mixed", "zookeeper"), blackhole);
+    public void zooKeeperMixedWrite(Blackhole blackhole) throws Exception {
+        BenchmarkWorkloads.writeSection(zooKeeperEnvironment.runtime(), BenchmarkKeys.shared("rw-mixed", "zookeeper"), blackhole);
     }
 }

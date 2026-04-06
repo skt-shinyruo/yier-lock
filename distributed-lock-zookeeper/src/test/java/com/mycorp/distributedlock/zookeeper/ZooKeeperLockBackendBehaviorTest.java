@@ -1,7 +1,15 @@
 package com.mycorp.distributedlock.zookeeper;
 
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.manager.DefaultLockManager;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
@@ -22,14 +30,15 @@ class ZooKeeperLockBackendBehaviorTest {
                  new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
              )) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
-            DefaultLockManager manager = new DefaultLockManager(backend);
             try {
-                manager.mutex("orders:1").lock();
-                try {
-                    assertThat(executor.submit(() -> manager.mutex("orders_1").tryLock(Duration.ofMillis(100))).get())
-                        .isTrue();
-                } finally {
-                    manager.mutex("orders:1").unlock();
+                try (BackendSession firstSession = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+                     BackendLockLease ignored = firstSession.acquire(request("orders:1", Duration.ofSeconds(1)))) {
+                    assertThat(executor.submit(() -> {
+                        try (BackendSession secondSession = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+                             BackendLockLease lease = secondSession.acquire(request("orders_1", Duration.ofMillis(100)))) {
+                            return lease != null;
+                        }
+                    }).get()).isTrue();
                 }
             } finally {
                 executor.shutdownNow();
@@ -49,5 +58,14 @@ class ZooKeeperLockBackendBehaviorTest {
         ))
             .isInstanceOf(LockBackendException.class)
             .hasMessageContaining("connect");
+    }
+
+    private static LockRequest request(String key, Duration waitTime) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.MUTEX,
+            WaitPolicy.timed(waitTime),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
     }
 }

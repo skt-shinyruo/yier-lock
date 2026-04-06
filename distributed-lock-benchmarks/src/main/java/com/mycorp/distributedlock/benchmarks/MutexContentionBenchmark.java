@@ -51,32 +51,32 @@ public class MutexContentionBenchmark {
     @Benchmark
     @Group("redis_mutex_contention_4")
     @GroupThreads(4)
-    public void redisSharedTryLock4(Blackhole blackhole) throws InterruptedException {
+    public void redisSharedTryLock4(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.shared("mutex-contention-4", "redis");
-        BenchmarkWorkloads.contendedTryLock(redisEnvironment.lockManager(), key, Duration.ofMillis(50), blackhole);
+        BenchmarkWorkloads.contendedTryLock(redisEnvironment.lockClient(), key, Duration.ofMillis(50), blackhole);
     }
 
     @Benchmark
     @Group("redis_mutex_contention_8")
     @GroupThreads(8)
-    public void redisSharedTryLock8(Blackhole blackhole) throws InterruptedException {
+    public void redisSharedTryLock8(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.shared("mutex-contention-8", "redis");
-        BenchmarkWorkloads.contendedTryLock(redisEnvironment.lockManager(), key, Duration.ofMillis(50), blackhole);
+        BenchmarkWorkloads.contendedTryLock(redisEnvironment.lockClient(), key, Duration.ofMillis(50), blackhole);
     }
 
     @Benchmark
     @Group("zookeeper_mutex_contention_4")
     @GroupThreads(4)
-    public void zooKeeperSharedTryLock4(Blackhole blackhole) throws InterruptedException {
+    public void zooKeeperSharedTryLock4(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.shared("mutex-contention-4", "zookeeper");
-        BenchmarkWorkloads.contendedTryLock(zooKeeperEnvironment.lockManager(), key, Duration.ofMillis(50), blackhole);
+        BenchmarkWorkloads.contendedTryLock(zooKeeperEnvironment.lockClient(), key, Duration.ofMillis(50), blackhole);
     }
 
     @Benchmark
     @Group("zookeeper_mutex_contention_8")
     @GroupThreads(8)
-    public void zooKeeperSharedTryLock8(Blackhole blackhole) throws InterruptedException {
+    public void zooKeeperSharedTryLock8(Blackhole blackhole) throws Exception {
         String key = BenchmarkKeys.shared("mutex-contention-8", "zookeeper");
-        BenchmarkWorkloads.contendedTryLock(zooKeeperEnvironment.lockManager(), key, Duration.ofMillis(50), blackhole);
+        BenchmarkWorkloads.contendedTryLock(zooKeeperEnvironment.lockClient(), key, Duration.ofMillis(50), blackhole);
     }
 }

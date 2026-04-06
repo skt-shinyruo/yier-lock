@@ -4,7 +4,7 @@ import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 
-class InMemoryLockManagerContractTest extends LockManagerContract {
+class InMemoryLockClientContractTest extends LockClientContract {
 
     @Override
     protected LockRuntime createRuntime() {

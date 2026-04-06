@@ -1,41 +1,81 @@
 package com.mycorp.distributedlock.testkit.support;
 
+import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class ReleaseFailureLeaseBackend implements LockBackend {
 
+    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
+
     private final AtomicBoolean firstRelease = new AtomicBoolean(true);
+    private final AtomicLong fencingCounter = new AtomicLong();
 
     @Override
-    public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-        return new BackendLockLease() {
+    public LockCapabilities capabilities() {
+        return CAPABILITIES;
+    }
+
+    @Override
+    public BackendSession openSession(SessionRequest request) {
+        return new BackendSession() {
             @Override
-            public String key() {
-                return resource.key();
+            public BackendLockLease acquire(LockRequest lockRequest) {
+                FencingToken fencingToken = new FencingToken(fencingCounter.incrementAndGet());
+                return new BackendLockLease() {
+                    @Override
+                    public LockKey key() {
+                        return lockRequest.key();
+                    }
+
+                    @Override
+                    public LockMode mode() {
+                        return lockRequest.mode();
+                    }
+
+                    @Override
+                    public FencingToken fencingToken() {
+                        return fencingToken;
+                    }
+
+                    @Override
+                    public LeaseState state() {
+                        return LeaseState.ACTIVE;
+                    }
+
+                    @Override
+                    public boolean isValid() {
+                        return true;
+                    }
+
+                    @Override
+                    public void release() {
+                        if (firstRelease.compareAndSet(true, false)) {
+                            throw new LockBackendException("Synthetic release failure");
+                        }
+                    }
+                };
             }
 
             @Override
-            public LockMode mode() {
-                return mode;
+            public SessionState state() {
+                return SessionState.ACTIVE;
             }
 
             @Override
-            public boolean isValidForCurrentExecution() {
-                return true;
-            }
-
-            @Override
-            public void release() {
-                if (firstRelease.compareAndSet(true, false)) {
-                    throw new LockBackendException("Synthetic release failure");
-                }
+            public void close() {
             }
         };
     }

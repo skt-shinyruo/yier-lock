@@ -1,10 +1,9 @@
 package com.mycorp.distributedlock.redis.springboot.integration;
 
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockProperties;
@@ -17,8 +16,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
-import java.util.Map;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 class RedisBackendModuleAutoConfigurationTest {
@@ -120,8 +117,13 @@ class RedisBackendModuleAutoConfigurationTest {
         public LockBackend createBackend() {
             return new LockBackend() {
                 @Override
-                public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-                    return null;
+                public LockCapabilities capabilities() {
+                    return new LockCapabilities(true, true, true, true);
+                }
+
+                @Override
+                public BackendSession openSession(SessionRequest request) {
+                    throw new UnsupportedOperationException("not used in test");
                 }
             };
         }

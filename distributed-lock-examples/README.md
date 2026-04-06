@@ -7,13 +7,14 @@
 - `ProgrammaticRedisExample`
   - selects the Redis backend explicitly
   - builds a `LockRuntime` from a typed `RedisBackendModule`
-  - acquires a mutex through `LockManager`
+  - uses `LockRuntime.lockExecutor()` for scoped execution
 - `ProgrammaticZooKeeperExample`
   - selects the ZooKeeper backend explicitly
-  - uses the same typed-module runtime flow against ZooKeeper
+  - uses `LockRuntime.lockClient()` plus `LockSession.acquire(...)`
+  - prints the acquired lease fencing token
 - `SpringBootRedisExampleApplication`
   - shows Spring Boot 3 auto-configuration with a backend-specific Spring module
-  - demonstrates both `@DistributedLock` and programmatic `LockManager` usage
+  - demonstrates both `@DistributedLock` and programmatic `LockExecutor` usage
 
 ## Configuration model
 
@@ -26,6 +27,16 @@ LockRuntime runtime = LockRuntimeBuilder.create()
         new RedisBackendConfiguration("redis://127.0.0.1:6379", 30L)
     )))
     .build();
+
+String result = runtime.lockExecutor().withLock(
+    new LockRequest(
+        new LockKey("example:redis:order-42"),
+        LockMode.MUTEX,
+        WaitPolicy.timed(Duration.ofSeconds(2)),
+        LeasePolicy.RELEASE_ON_CLOSE
+    ),
+    () -> "Redis lease acquired"
+);
 ```
 
 Spring examples use the 2.0 namespace and require the matching backend Spring auto-config module on the classpath:

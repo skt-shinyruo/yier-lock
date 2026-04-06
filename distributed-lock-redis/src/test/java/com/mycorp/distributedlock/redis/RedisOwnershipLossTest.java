@@ -1,15 +1,21 @@
 package com.mycorp.distributedlock.redis;
 
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RedisOwnershipLossTest {
@@ -34,15 +40,18 @@ class RedisOwnershipLossTest {
     }
 
     @Test
-    void releaseShouldFailExplicitlyAfterTokenRemoval() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(30L)) {
-            BackendLockLease lease = backend.acquire(
-                new LockResource("lost:1"),
-                LockMode.MUTEX,
-                WaitPolicy.indefinite()
-            );
-            redis.commands().del("lost:1");
+    void redisShouldInvalidateLeaseAfterTokenDeletion() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession session = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             BackendLockLease lease = session.acquire(new LockRequest(
+                 new LockKey("lost:1"),
+                 LockMode.MUTEX,
+                 WaitPolicy.indefinite(),
+                 LeasePolicy.RELEASE_ON_CLOSE
+             ))) {
+            redis.commands().del(RedisLockBackend.ownerKey("lost:1", LockMode.MUTEX));
 
+            assertThat(lease.isValid()).isFalse();
             assertThatThrownBy(lease::release)
                 .isInstanceOf(LockOwnershipLostException.class);
         }

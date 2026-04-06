@@ -1,4 +1,4 @@
-package com.mycorp.distributedlock.core.backend;
+package com.mycorp.distributedlock.api;
 
 public enum LockMode {
     MUTEX,

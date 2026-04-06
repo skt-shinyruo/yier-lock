@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.springboot.config;
 
-import com.mycorp.distributedlock.api.LockManager;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
@@ -41,8 +42,14 @@ public class DistributedLockAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public LockManager lockManager(LockRuntime runtime) {
-        return runtime.lockManager();
+    public LockClient lockClient(LockRuntime runtime) {
+        return runtime.lockClient();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean
+    public LockExecutor lockExecutor(LockRuntime runtime) {
+        return runtime.lockExecutor();
     }
 
     @Bean
@@ -60,10 +67,10 @@ public class DistributedLockAutoConfiguration {
         matchIfMissing = true
     )
     public DistributedLockAspect distributedLockAspect(
-        LockManager lockManager,
+        LockExecutor lockExecutor,
         LockKeyResolver lockKeyResolver,
         DistributedLockProperties properties
     ) {
-        return new DistributedLockAspect(lockManager, lockKeyResolver, properties);
+        return new DistributedLockAspect(lockExecutor, lockKeyResolver, properties);
     }
 }

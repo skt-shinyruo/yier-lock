@@ -1,10 +1,13 @@
 package com.mycorp.distributedlock.runtime;
 
-import com.mycorp.distributedlock.api.LockManager;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.SupportedLockModes;
-import com.mycorp.distributedlock.core.manager.DefaultLockManager;
+import com.mycorp.distributedlock.core.client.DefaultLockClient;
+import com.mycorp.distributedlock.core.client.DefaultLockExecutor;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.runtime.spi.ServiceLoaderBackendRegistry;
@@ -45,10 +48,11 @@ public final class LockRuntimeBuilder {
             : List.copyOf(explicitBackendModules);
 
         BackendModule selectedModule = selectBackendModule(availableModules);
+        validateCapabilities(selectedModule);
         LockBackend backend = selectedModule.createBackend();
-        LockManager lockManager = new DefaultLockManager(backend, toSupportedLockModes(selectedModule));
-        AutoCloseable backendResource = backend instanceof AutoCloseable closeable ? closeable : null;
-        return new DefaultLockRuntime(lockManager, backendResource);
+        LockClient lockClient = new DefaultLockClient(backend);
+        LockExecutor lockExecutor = new DefaultLockExecutor(lockClient, new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+        return new DefaultLockRuntime(lockClient, lockExecutor);
     }
 
     private BackendModule selectBackendModule(List<BackendModule> availableModules) {
@@ -70,12 +74,11 @@ public final class LockRuntimeBuilder {
         return availableModules.get(0);
     }
 
-    private SupportedLockModes toSupportedLockModes(BackendModule module) {
+    private void validateCapabilities(BackendModule module) {
         BackendCapabilities capabilities = module.capabilities();
         if (capabilities == null) {
             throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
         }
-        return new SupportedLockModes(capabilities.mutexSupported(), capabilities.readWriteSupported());
     }
 
     private void validateUniqueBackendIds(List<BackendModule> availableModules) {

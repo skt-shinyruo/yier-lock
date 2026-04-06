@@ -1,7 +1,14 @@
 package com.mycorp.distributedlock.examples;
 
-import com.mycorp.distributedlock.api.LockManager;
-import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockLease;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
@@ -22,16 +29,22 @@ public final class ProgrammaticZooKeeperExample {
                 "127.0.0.1:2181",
                 "/distributed-locks"
             ))))
-            .build()) {
-            LockManager lockManager = runtime.lockManager();
-            MutexLock lock = lockManager.mutex("example:zk:inventory-7");
-            if (!lock.tryLock(Duration.ofSeconds(2))) {
-                throw new IllegalStateException("Could not acquire ZooKeeper lock");
-            }
-
-            try (lock) {
-                System.out.println("ZooKeeper lock acquired for " + lock.key());
-            }
+            .build();
+             LockSession session = runtime.lockClient().openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             LockLease lease = session.acquire(sampleRequest("example:zk:inventory-7"))) {
+            System.out.println(
+                "ZooKeeper lease acquired for " + lease.key().value()
+                    + " with fencing token " + lease.fencingToken().value()
+            );
         }
+    }
+
+    private static LockRequest sampleRequest(String key) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.MUTEX,
+            WaitPolicy.timed(Duration.ofSeconds(2)),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
     }
 }

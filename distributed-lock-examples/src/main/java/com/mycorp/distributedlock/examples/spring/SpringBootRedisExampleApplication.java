@@ -1,7 +1,11 @@
 package com.mycorp.distributedlock.examples.spring;
 
-import com.mycorp.distributedlock.api.LockManager;
-import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
@@ -19,16 +23,15 @@ public class SpringBootRedisExampleApplication {
     }
 
     @Bean
-    CommandLineRunner demoRunner(OrderService orderService, LockManager lockManager) {
+    CommandLineRunner demoRunner(OrderService orderService, LockExecutor lockExecutor) {
         return args -> {
             orderService.processOrder("42");
 
-            MutexLock lock = lockManager.mutex("example:spring:user-9");
-            if (lock.tryLock(Duration.ofSeconds(2))) {
-                try (lock) {
-                    System.out.println("Manual Spring lock acquired for " + lock.key());
-                }
-            }
+            String result = lockExecutor.withLock(
+                sampleRequest("example:spring:user-9"),
+                () -> "Manual Spring lease acquired"
+            );
+            System.out.println(result);
         };
     }
 
@@ -40,5 +43,14 @@ public class SpringBootRedisExampleApplication {
             System.out.println("Processing order " + orderId + " under distributed lock");
             Thread.sleep(100);
         }
+    }
+
+    private static LockRequest sampleRequest(String key) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.MUTEX,
+            WaitPolicy.timed(Duration.ofSeconds(2)),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
     }
 }

@@ -1,35 +1,69 @@
 package com.mycorp.distributedlock.testkit.support;
 
+import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class InMemoryLockBackend implements LockBackend {
 
+    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
+
     private final Map<String, InMemoryLockState> lockStates = new ConcurrentHashMap<>();
 
     @Override
-    public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
-        InMemoryLockState state = lockStates.computeIfAbsent(resource.key(), ignored -> new InMemoryLockState());
-        boolean acquired = switch (mode) {
-            case MUTEX -> acquireMutex(state, waitPolicy);
-            case READ -> acquireRead(state, waitPolicy);
-            case WRITE -> acquireWrite(state, waitPolicy);
+    public LockCapabilities capabilities() {
+        return CAPABILITIES;
+    }
+
+    @Override
+    public InMemoryBackendSession openSession(SessionRequest request) {
+        return new InMemoryBackendSession(lockStates);
+    }
+
+    static BackendLockLease acquireLease(Map<String, InMemoryLockState> lockStates, LockRequest request)
+        throws InterruptedException {
+        InMemoryLockState state = lockStates.computeIfAbsent(request.key().value(), ignored -> new InMemoryLockState());
+        boolean acquired = switch (request.mode()) {
+            case MUTEX -> acquireMutex(state, request.waitPolicy());
+            case READ -> acquireRead(state, request.waitPolicy());
+            case WRITE -> acquireWrite(state, request.waitPolicy());
         };
 
         if (!acquired) {
-            return null;
+            throw new LockAcquisitionTimeoutException("Timed out acquiring lock for " + request.key().value());
         }
 
-        return new InMemoryLease(resource.key(), mode, state);
+        return new InMemoryLease(
+            request.key(),
+            request.mode(),
+            new FencingToken(state.fencingCounter.incrementAndGet()),
+            state,
+            new AtomicBoolean(false)
+        );
+    }
+
+    static void unlockState(InMemoryLockState state, LockMode mode) {
+        switch (mode) {
+            case MUTEX -> state.mutex.unlock();
+            case READ -> state.readWrite.readLock().unlock();
+            case WRITE -> state.readWrite.writeLock().unlock();
+        }
     }
 
     private static boolean acquireMutex(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
@@ -56,29 +90,35 @@ public final class InMemoryLockBackend implements LockBackend {
         return state.readWrite.writeLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    private record InMemoryLease(String key, LockMode mode, InMemoryLockState state) implements BackendLockLease {
+    static final class InMemoryLockState {
+        final ReentrantLock mutex = new ReentrantLock();
+        final ReentrantReadWriteLock readWrite = new ReentrantReadWriteLock();
+        final AtomicLong fencingCounter = new AtomicLong();
+    }
+
+    private record InMemoryLease(
+        LockKey key,
+        LockMode mode,
+        FencingToken fencingToken,
+        InMemoryLockState lockState,
+        AtomicBoolean released
+    ) implements BackendLockLease {
 
         @Override
-        public boolean isValidForCurrentExecution() {
-            return switch (mode) {
-                case MUTEX -> state.mutex.isHeldByCurrentThread();
-                case READ -> state.readWrite.getReadHoldCount() > 0;
-                case WRITE -> state.readWrite.isWriteLockedByCurrentThread();
-            };
+        public LeaseState state() {
+            return released.get() ? LeaseState.RELEASED : LeaseState.ACTIVE;
+        }
+
+        @Override
+        public boolean isValid() {
+            return !released.get();
         }
 
         @Override
         public void release() {
-            switch (mode) {
-                case MUTEX -> state.mutex.unlock();
-                case READ -> state.readWrite.readLock().unlock();
-                case WRITE -> state.readWrite.writeLock().unlock();
+            if (released.compareAndSet(false, true)) {
+                unlockState(lockState, mode);
             }
         }
-    }
-
-    private static final class InMemoryLockState {
-        private final ReentrantLock mutex = new ReentrantLock();
-        private final ReentrantReadWriteLock readWrite = new ReentrantReadWriteLock();
     }
 }

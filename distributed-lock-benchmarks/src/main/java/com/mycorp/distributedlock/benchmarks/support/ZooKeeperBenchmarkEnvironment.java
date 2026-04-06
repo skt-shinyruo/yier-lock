@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
-import com.mycorp.distributedlock.api.LockManager;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
@@ -40,8 +41,12 @@ public final class ZooKeeperBenchmarkEnvironment implements AutoCloseable {
         return runtime;
     }
 
-    public LockManager lockManager() {
-        return runtime.lockManager();
+    public LockClient lockClient() {
+        return runtime.lockClient();
+    }
+
+    public LockExecutor lockExecutor() {
+        return runtime.lockExecutor();
     }
 
     public String connectString() {

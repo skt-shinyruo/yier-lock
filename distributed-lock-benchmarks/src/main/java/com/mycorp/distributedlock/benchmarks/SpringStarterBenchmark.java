@@ -46,7 +46,7 @@ public class SpringStarterBenchmark {
     }
 
     @Benchmark
-    public void programmaticPath(Blackhole blackhole) throws InterruptedException {
+    public void programmaticPath(Blackhole blackhole) throws Exception {
         String id = BenchmarkKeys.unique("spring-programmatic", "redis", Thread.currentThread().getId());
         blackhole.consume(environment.programmaticService().programmatic(id));
     }

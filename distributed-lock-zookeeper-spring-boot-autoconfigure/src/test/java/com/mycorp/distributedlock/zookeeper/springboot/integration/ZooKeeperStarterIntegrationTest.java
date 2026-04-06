@@ -1,7 +1,12 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
-import com.mycorp.distributedlock.api.LockManager;
-import com.mycorp.distributedlock.api.MutexLock;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockAutoConfiguration;
 import org.apache.curator.test.TestingServer;
@@ -24,7 +29,7 @@ class ZooKeeperStarterIntegrationTest {
         ));
 
     @Test
-    void shouldCreateWorkingZooKeeperBackedLockManager() throws Exception {
+    void shouldCreateWorkingZooKeeperBackedLockRuntime() throws Exception {
         try (TestingServer server = new TestingServer()) {
             contextRunner
                 .withPropertyValues(
@@ -33,11 +38,23 @@ class ZooKeeperStarterIntegrationTest {
                     "distributed.lock.zookeeper.connect-string=" + server.getConnectString()
                 )
                 .run(context -> {
-                    LockManager manager = context.getBean(LockManager.class);
-                    MutexLock lock = manager.mutex("zk-starter-test");
-                    assertThat(lock.tryLock(Duration.ofSeconds(1))).isTrue();
-                    lock.unlock();
+                    assertThat(context).hasSingleBean(LockClient.class);
+                    assertThat(context).hasSingleBean(LockExecutor.class);
+
+                    LockExecutor executor = context.getBean(LockExecutor.class);
+                    String result = executor.withLock(sampleRequest("zk-starter-test"), () -> "ok");
+
+                    assertThat(result).isEqualTo("ok");
                 });
         }
+    }
+
+    private static LockRequest sampleRequest(String key) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.MUTEX,
+            WaitPolicy.timed(Duration.ofSeconds(1)),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
     }
 }

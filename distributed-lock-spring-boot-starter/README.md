@@ -7,7 +7,7 @@ This starter is the Spring Boot 3 integration layer for distributed lock 2.0.
 The starter only provides:
 
 - `LockRuntime` auto-configuration
-- `LockManager` bean exposure
+- `LockClient` and `LockExecutor` bean exposure
 - `@DistributedLock` method interception
 - SpEL-based lock key resolution
 
@@ -105,21 +105,37 @@ Supported annotation fields:
 @Service
 class UserService {
 
-    private final LockManager lockManager;
+    private final LockExecutor lockExecutor;
 
-    UserService(LockManager lockManager) {
-        this.lockManager = lockManager;
+    UserService(LockExecutor lockExecutor) {
+        this.lockExecutor = lockExecutor;
     }
 
-    void updateUser(String userId) throws InterruptedException {
-        MutexLock lock = lockManager.mutex("user:" + userId);
-        if (!lock.tryLock(Duration.ofSeconds(2))) {
-            throw new IllegalStateException("lock busy");
-        }
-        try (lock) {
-            // critical section
-        }
+    int updateUser(String userId) throws Exception {
+        return lockExecutor.withLock(
+            new LockRequest(
+                new LockKey("user:" + userId),
+                LockMode.MUTEX,
+                WaitPolicy.timed(Duration.ofSeconds(2)),
+                LeasePolicy.RELEASE_ON_CLOSE
+            ),
+            userId::hashCode
+        );
     }
+}
+```
+
+If you need manual lease control or fencing tokens, inject `LockClient` instead:
+
+```java
+try (LockSession session = lockClient.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+     LockLease lease = session.acquire(new LockRequest(
+         new LockKey("user:" + userId),
+         LockMode.MUTEX,
+         WaitPolicy.timed(Duration.ofSeconds(2)),
+         LeasePolicy.RELEASE_ON_CLOSE
+     ))) {
+    System.out.println(lease.fencingToken().value());
 }
 ```
 

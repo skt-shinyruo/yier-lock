@@ -1,9 +1,14 @@
 package com.mycorp.distributedlock.redis;
 
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,17 +41,18 @@ class RedisLeaseRenewalTest {
 
     @Test
     void leaseShouldRemainValidPastBaseTtlWhenHeld() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(1L)) {
-            BackendLockLease lease = backend.acquire(
-                new LockResource("renew:1"),
-                LockMode.MUTEX,
-                WaitPolicy.indefinite()
-            );
+        try (RedisLockBackend backend = redis.newBackend(1L);
+             BackendSession session = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             BackendLockLease lease = session.acquire(new LockRequest(
+                 new LockKey("renew:1"),
+                 LockMode.MUTEX,
+                 WaitPolicy.indefinite(),
+                 LeasePolicy.RELEASE_ON_CLOSE
+             ))) {
 
             Thread.sleep(Duration.ofSeconds(3).toMillis());
 
-            assertThat(lease.isValidForCurrentExecution()).isTrue();
-            lease.release();
+            assertThat(lease.isValid()).isTrue();
         }
     }
 }
