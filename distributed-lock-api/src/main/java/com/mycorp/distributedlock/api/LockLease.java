@@ -10,6 +10,8 @@ public interface LockLease extends AutoCloseable {
 
     LeaseState state();
 
+    boolean isValid();
+
     void release();
 
     @Override

@@ -8,7 +8,9 @@ import com.mycorp.distributedlock.api.exception.LockSessionLostException;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.RecordComponent;
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -17,17 +19,18 @@ class ApiSurfaceTest {
 
     @Test
     void apiShouldExposeTheApprovedLeaseSessionFencingTypes() throws Exception {
-        assertThat(LockClient.class.getInterfaces()).isEmpty();
+        assertThat(LockClient.class.getInterfaces()).containsExactly(AutoCloseable.class);
         assertThat(LockSession.class.getMethod("acquire", LockRequest.class).getExceptionTypes())
                 .containsExactly(InterruptedException.class);
         assertThat(LockSession.class.getMethod("state").getReturnType()).isEqualTo(SessionState.class);
         assertThat(LockClient.class.getMethod("openSession", SessionRequest.class).getReturnType()).isEqualTo(LockSession.class);
         assertThat(LockLease.class.getInterfaces()).containsExactly(AutoCloseable.class);
         assertThat(LockLease.class.getMethod("close").getReturnType()).isEqualTo(void.class);
+        assertThat(LockLease.class.getMethod("isValid").getReturnType()).isEqualTo(boolean.class);
         assertThat(LockExecutor.class.getMethod("withLock", LockRequest.class, LockedSupplier.class).getReturnType())
                 .isEqualTo(Object.class);
 
-        assertThat(LockMode.values()).containsExactly(LockMode.EXCLUSIVE, LockMode.SHARED);
+        assertThat(LockMode.values()).containsExactly(LockMode.MUTEX, LockMode.READ, LockMode.WRITE);
         assertThat(LeaseState.values()).containsExactly(LeaseState.ACTIVE, LeaseState.RELEASED, LeaseState.LOST);
         assertThat(SessionState.values()).containsExactly(SessionState.ACTIVE, SessionState.CLOSED, SessionState.LOST);
         assertThat(LockCapabilities.class).isNotNull();
@@ -36,16 +39,39 @@ class ApiSurfaceTest {
     }
 
     @Test
-    void waitPolicyShouldBeOwnedByTheApiAndDurationBased() {
+    void waitPolicyShouldBeOwnedByTheApiAndUseTimedOrIndefiniteValueObjects() {
         WaitPolicy timed = WaitPolicy.timed(Duration.ofSeconds(5));
         WaitPolicy indefinite = WaitPolicy.indefinite();
 
-        assertThat(timed.duration()).isEqualTo(Duration.ofSeconds(5));
-        assertThat(indefinite.duration()).isNull();
+        assertThat(timed.waitTime()).isEqualTo(Duration.ofSeconds(5));
+        assertThat(timed.unbounded()).isFalse();
+        assertThat(indefinite.waitTime()).isEqualTo(Duration.ZERO);
+        assertThat(indefinite.unbounded()).isTrue();
     }
 
     @Test
-    void valueTypesShouldValidateTheirInputs() {
+    void requestAndValueTypesShouldMatchTheApprovedShape() {
+        RecordComponent[] sessionRequestComponents = SessionRequest.class.getRecordComponents();
+        RecordComponent[] lockCapabilitiesComponents = LockCapabilities.class.getRecordComponents();
+
+        assertThat(Arrays.stream(sessionRequestComponents)
+                .map(RecordComponent::getName))
+                .containsExactly("sessionPolicy");
+        assertThat(Arrays.stream(sessionRequestComponents)
+                .map(RecordComponent::getType))
+                .containsExactly(SessionPolicy.class);
+
+        assertThat(Arrays.stream(lockCapabilitiesComponents)
+                .map(RecordComponent::getName))
+                .containsExactly(
+                        "mutexSupported",
+                        "readWriteSupported",
+                        "fencingSupported",
+                        "renewableSessionsSupported");
+        assertThat(Arrays.stream(lockCapabilitiesComponents)
+                .map(RecordComponent::getType))
+                .containsExactly(boolean.class, boolean.class, boolean.class, boolean.class);
+
         assertThatThrownBy(() -> new LockKey(" "))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new FencingToken(0))
