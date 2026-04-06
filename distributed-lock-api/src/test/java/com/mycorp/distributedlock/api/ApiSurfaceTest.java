@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.RecordComponent;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -26,7 +27,6 @@ class ApiSurfaceTest {
         assertThat(LockClient.class.getMethod("openSession", SessionRequest.class).getReturnType()).isEqualTo(LockSession.class);
         assertThat(LockLease.class.getInterfaces()).containsExactly(AutoCloseable.class);
         assertThat(LockLease.class.getMethod("close").getReturnType()).isEqualTo(void.class);
-        assertThat(LockLease.class.getMethod("isValid").getReturnType()).isEqualTo(boolean.class);
         assertThat(LockExecutor.class.getMethod("withLock", LockRequest.class, LockedSupplier.class).getReturnType())
                 .isEqualTo(Object.class);
 
@@ -36,6 +36,17 @@ class ApiSurfaceTest {
         assertThat(LockCapabilities.class).isNotNull();
         assertThat(LeasePolicy.class).isNotNull();
         assertThat(SessionPolicy.class).isNotNull();
+    }
+
+    @Test
+    void lockClientShouldExposeOnlyTheApprovedOperations() {
+        assertThat(Arrays.stream(LockClient.class.getDeclaredMethods())
+                .map(method -> method.getName() + ":" + method.getReturnType().getSimpleName())
+                .sorted()
+                .collect(Collectors.toList()))
+                .containsExactly(
+                        "close:void",
+                        "openSession:LockSession");
     }
 
     @Test
@@ -50,8 +61,19 @@ class ApiSurfaceTest {
     }
 
     @Test
+    void waitPolicyShouldRejectContradictoryPublicRecordStates() {
+        assertThatThrownBy(() -> new WaitPolicy(Duration.ofSeconds(5), true))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WaitPolicy(null, false))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new WaitPolicy(Duration.ofSeconds(-1), false))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void requestAndValueTypesShouldMatchTheApprovedShape() {
         RecordComponent[] sessionRequestComponents = SessionRequest.class.getRecordComponents();
+        RecordComponent[] lockRequestComponents = LockRequest.class.getRecordComponents();
         RecordComponent[] lockCapabilitiesComponents = LockCapabilities.class.getRecordComponents();
 
         assertThat(Arrays.stream(sessionRequestComponents)
@@ -60,6 +82,13 @@ class ApiSurfaceTest {
         assertThat(Arrays.stream(sessionRequestComponents)
                 .map(RecordComponent::getType))
                 .containsExactly(SessionPolicy.class);
+
+        assertThat(Arrays.stream(lockRequestComponents)
+                .map(RecordComponent::getName))
+                .containsExactly("key", "mode", "waitPolicy", "leasePolicy");
+        assertThat(Arrays.stream(lockRequestComponents)
+                .map(RecordComponent::getType))
+                .containsExactly(LockKey.class, LockMode.class, WaitPolicy.class, LeasePolicy.class);
 
         assertThat(Arrays.stream(lockCapabilitiesComponents)
                 .map(RecordComponent::getName))
@@ -77,6 +106,22 @@ class ApiSurfaceTest {
         assertThatThrownBy(() -> new FencingToken(0))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(new FencingToken(1).value()).isEqualTo(1L);
+    }
+
+    @Test
+    void lockLeaseShouldExposeTheApprovedOperations() {
+        assertThat(Arrays.stream(LockLease.class.getDeclaredMethods())
+                .map(method -> method.getName() + ":" + method.getReturnType().getSimpleName())
+                .sorted()
+                .collect(Collectors.toList()))
+                .containsExactly(
+                        "close:void",
+                        "fencingToken:FencingToken",
+                        "isValid:boolean",
+                        "key:LockKey",
+                        "mode:LockMode",
+                        "release:void",
+                        "state:LeaseState");
     }
 
     @Test

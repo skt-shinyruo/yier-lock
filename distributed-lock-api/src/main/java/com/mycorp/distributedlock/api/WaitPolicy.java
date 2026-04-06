@@ -11,6 +11,9 @@ public record WaitPolicy(Duration waitTime, boolean unbounded) {
         if (waitTime.isNegative()) {
             throw new IllegalArgumentException("Wait duration must not be negative");
         }
+        if (unbounded && !waitTime.isZero()) {
+            throw new IllegalArgumentException("Unbounded wait policy must use Duration.ZERO");
+        }
     }
 
     public static WaitPolicy timed(Duration waitTime) {
