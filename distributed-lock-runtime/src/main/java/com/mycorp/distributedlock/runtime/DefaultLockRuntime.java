@@ -1,28 +1,32 @@
 package com.mycorp.distributedlock.runtime;
 
-import com.mycorp.distributedlock.api.LockManager;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockExecutor;
 
 import java.util.Objects;
 
 public final class DefaultLockRuntime implements LockRuntime {
 
-    private final LockManager lockManager;
-    private final AutoCloseable backendResource;
+    private final LockClient lockClient;
+    private final LockExecutor lockExecutor;
 
-    public DefaultLockRuntime(LockManager lockManager, AutoCloseable backendResource) {
-        this.lockManager = Objects.requireNonNull(lockManager, "lockManager");
-        this.backendResource = backendResource;
+    public DefaultLockRuntime(LockClient lockClient, LockExecutor lockExecutor) {
+        this.lockClient = Objects.requireNonNull(lockClient, "lockClient");
+        this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
     }
 
     @Override
-    public LockManager lockManager() {
-        return lockManager;
+    public LockClient lockClient() {
+        return lockClient;
     }
 
     @Override
-    public void close() throws Exception {
-        if (backendResource != null) {
-            backendResource.close();
-        }
+    public LockExecutor lockExecutor() {
+        return lockExecutor;
+    }
+
+    @Override
+    public void close() {
+        lockClient.close();
     }
 }

@@ -1,6 +1,11 @@
 package com.mycorp.distributedlock.core.backend;
 
-public interface LockBackend {
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.SessionRequest;
 
-    BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException;
+public interface LockBackend extends AutoCloseable {
+
+    LockCapabilities capabilities();
+
+    BackendSession openSession(SessionRequest request);
 }

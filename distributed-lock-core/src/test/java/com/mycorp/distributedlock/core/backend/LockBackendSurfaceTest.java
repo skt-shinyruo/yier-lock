@@ -1,5 +1,7 @@
 package com.mycorp.distributedlock.core.backend;
 
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.SessionRequest;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -7,10 +9,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class LockBackendSurfaceTest {
 
     @Test
-    void backendAcquireShouldReturnBackendLockLease() throws Exception {
+    void backendShouldExposeCapabilitiesAndOpenSessions() throws Exception {
+        assertThat(LockBackend.class.getMethod("capabilities").getReturnType())
+            .isEqualTo(LockCapabilities.class);
         assertThat(LockBackend.class
-            .getMethod("acquire", LockResource.class, LockMode.class, WaitPolicy.class)
+            .getMethod("openSession", SessionRequest.class)
             .getReturnType())
-            .isEqualTo(BackendLockLease.class);
+            .isEqualTo(BackendSession.class);
     }
 }

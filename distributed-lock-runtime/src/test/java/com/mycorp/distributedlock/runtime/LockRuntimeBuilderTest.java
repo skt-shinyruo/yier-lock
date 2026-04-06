@@ -1,18 +1,31 @@
 package com.mycorp.distributedlock.runtime;
 
+import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeasePolicy;
+import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockLease;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.SessionPolicy;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
+import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class LockRuntimeBuilderTest {
@@ -28,16 +41,22 @@ class LockRuntimeBuilderTest {
     }
 
     @Test
-    void builderShouldConfigureLockManagerWithSelectedBackendCapabilities() throws Exception {
+    void builderShouldExposeLockClientAndExecutorWithSelectedBackendCapabilities() throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
-            .backendModules(List.of(new StubBackendModule("read-write-only", new BackendCapabilities(false, true))))
+            .backendModules(List.of(new StubBackendModule("read-write-only", new BackendCapabilities(false, true, true, true))))
             .build()) {
-            assertThatThrownBy(() -> runtime.lockManager().mutex("orders"))
-                .isInstanceOf(LockConfigurationException.class)
-                .hasMessageContaining("does not support mutex");
+            try (LockSession session = runtime.lockClient().openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE))) {
+                assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))
+                    .isInstanceOf(UnsupportedLockCapabilityException.class)
+                    .hasMessageContaining("MUTEX");
 
-            assertThatCode(() -> runtime.lockManager().readWrite("orders").readLock())
-                .doesNotThrowAnyException();
+                try (LockLease lease = session.acquire(sampleRequest(LockMode.READ))) {
+                    assertThat(lease.mode()).isEqualTo(LockMode.READ);
+                }
+            }
+
+            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.READ), () -> "ok");
+            assertThat(result).isEqualTo("ok");
         }
     }
 
@@ -51,6 +70,15 @@ class LockRuntimeBuilderTest {
             .isInstanceOf(LockConfigurationException.class)
             .hasMessageContaining("Duplicate backend modules")
             .hasMessageContaining("redis");
+    }
+
+    private static LockRequest sampleRequest(LockMode mode) {
+        return new LockRequest(
+            new LockKey("orders"),
+            mode,
+            WaitPolicy.timed(Duration.ofSeconds(1)),
+            LeasePolicy.RELEASE_ON_CLOSE
+        );
     }
 
     private static final class StubBackendModule implements BackendModule {
@@ -80,29 +108,50 @@ class LockRuntimeBuilderTest {
         public LockBackend createBackend() {
             return new LockBackend() {
                 @Override
-                public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-                    return new BackendLockLease() {
+                public LockCapabilities capabilities() {
+                    return capabilities.asApiCapabilities();
+                }
+
+                @Override
+                public BackendSession openSession(SessionRequest request) {
+                    return new BackendSession() {
                         @Override
-                        public String key() {
-                            return resource.key();
+                        public BackendLockLease acquire(LockRequest lockRequest) {
+                            return new StubLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L));
                         }
 
                         @Override
-                        public LockMode mode() {
-                            return mode;
+                        public SessionState state() {
+                            return SessionState.ACTIVE;
                         }
 
                         @Override
-                        public boolean isValidForCurrentExecution() {
-                            return true;
-                        }
-
-                        @Override
-                        public void release() {
+                        public void close() {
                         }
                     };
                 }
+
+                @Override
+                public void close() {
+                }
             };
+        }
+    }
+
+    private record StubLease(LockKey key, LockMode mode, FencingToken fencingToken) implements BackendLockLease {
+
+        @Override
+        public LeaseState state() {
+            return LeaseState.ACTIVE;
+        }
+
+        @Override
+        public boolean isValid() {
+            return true;
+        }
+
+        @Override
+        public void release() {
         }
     }
 }
