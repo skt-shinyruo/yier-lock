@@ -1,30 +1,64 @@
 package com.mycorp.distributedlock.testkit.support;
 
+import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 public final class BlockingLeaseBackend implements LockBackend {
+
+    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
 
     private final CountDownLatch acquireAttempted = new CountDownLatch(1);
     private final CountDownLatch releaseObserved = new CountDownLatch(1);
     private final AtomicBoolean firstLeaseHeld = new AtomicBoolean();
+    private final AtomicLong fencingCounter = new AtomicLong();
 
     @Override
-    public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
-        if (firstLeaseHeld.compareAndSet(false, true)) {
-            return new TestLease(resource.key(), mode, true);
-        }
-        acquireAttempted.countDown();
-        Thread.sleep(waitPolicy.unbounded() ? 5_000L : waitPolicy.waitTime().toMillis());
-        return null;
+    public LockCapabilities capabilities() {
+        return CAPABILITIES;
+    }
+
+    @Override
+    public BackendSession openSession(SessionRequest request) {
+        return new BackendSession() {
+            @Override
+            public BackendLockLease acquire(LockRequest lockRequest) throws InterruptedException {
+                if (firstLeaseHeld.compareAndSet(false, true)) {
+                    return new TestLease(
+                        lockRequest.key(),
+                        lockRequest.mode(),
+                        new FencingToken(fencingCounter.incrementAndGet())
+                    );
+                }
+                acquireAttempted.countDown();
+                Thread.sleep(lockRequest.waitPolicy().unbounded() ? 5_000L : lockRequest.waitPolicy().waitTime().toMillis());
+                throw new LockAcquisitionTimeoutException("Timed out acquiring test lease for " + lockRequest.key().value());
+            }
+
+            @Override
+            public SessionState state() {
+                return SessionState.ACTIVE;
+            }
+
+            @Override
+            public void close() {
+            }
+        };
     }
 
     public boolean awaitAcquireAttempt() throws InterruptedException {
@@ -36,18 +70,19 @@ public final class BlockingLeaseBackend implements LockBackend {
     }
 
     private final class TestLease implements BackendLockLease {
-        private final String key;
+        private final LockKey key;
         private final LockMode mode;
-        private final boolean valid;
+        private final FencingToken fencingToken;
+        private final AtomicBoolean released = new AtomicBoolean();
 
-        private TestLease(String key, LockMode mode, boolean valid) {
+        private TestLease(LockKey key, LockMode mode, FencingToken fencingToken) {
             this.key = key;
             this.mode = mode;
-            this.valid = valid;
+            this.fencingToken = fencingToken;
         }
 
         @Override
-        public String key() {
+        public LockKey key() {
             return key;
         }
 
@@ -57,14 +92,26 @@ public final class BlockingLeaseBackend implements LockBackend {
         }
 
         @Override
-        public boolean isValidForCurrentExecution() {
-            return valid;
+        public FencingToken fencingToken() {
+            return fencingToken;
+        }
+
+        @Override
+        public LeaseState state() {
+            return released.get() ? LeaseState.RELEASED : LeaseState.ACTIVE;
+        }
+
+        @Override
+        public boolean isValid() {
+            return !released.get();
         }
 
         @Override
         public void release() {
-            firstLeaseHeld.set(false);
-            releaseObserved.countDown();
+            if (released.compareAndSet(false, true)) {
+                firstLeaseHeld.set(false);
+                releaseObserved.countDown();
+            }
         }
     }
 }

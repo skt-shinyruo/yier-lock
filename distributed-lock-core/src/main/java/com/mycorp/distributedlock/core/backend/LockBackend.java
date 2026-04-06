@@ -8,4 +8,8 @@ public interface LockBackend extends AutoCloseable {
     LockCapabilities capabilities();
 
     BackendSession openSession(SessionRequest request);
+
+    @Override
+    default void close() {
+    }
 }
