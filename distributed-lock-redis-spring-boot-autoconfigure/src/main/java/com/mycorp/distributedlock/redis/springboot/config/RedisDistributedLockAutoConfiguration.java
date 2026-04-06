@@ -9,6 +9,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
+
 @AutoConfiguration
 @EnableConfigurationProperties(RedisDistributedLockProperties.class)
 @ConditionalOnProperty(prefix = "distributed.lock", name = "backend", havingValue = "redis")
@@ -20,8 +23,18 @@ public class RedisDistributedLockAutoConfiguration {
     public BackendModule redisBackendModule(RedisDistributedLockProperties properties) {
         RedisBackendConfiguration configuration = new RedisBackendConfiguration(
             properties.getUri(),
-            properties.getLeaseTime().toSeconds()
+            toLeaseSeconds(properties.getLeaseTime())
         );
         return new RedisBackendModule(configuration);
+    }
+
+    private long toLeaseSeconds(Duration leaseTime) {
+        if (leaseTime == null || leaseTime.isZero() || leaseTime.isNegative()) {
+            throw new IllegalArgumentException("distributed.lock.redis.lease-time must be positive");
+        }
+        if (!leaseTime.truncatedTo(ChronoUnit.SECONDS).equals(leaseTime)) {
+            throw new IllegalArgumentException("distributed.lock.redis.lease-time must use whole seconds");
+        }
+        return leaseTime.toSeconds();
     }
 }

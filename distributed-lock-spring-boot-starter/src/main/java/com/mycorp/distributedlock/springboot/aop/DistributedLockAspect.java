@@ -18,6 +18,7 @@ import java.lang.reflect.Method;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Future;
 
 @Aspect
 public final class DistributedLockAspect {
@@ -75,10 +76,22 @@ public final class DistributedLockAspect {
         }
 
         Method method = methodSignature.getMethod();
-        if (CompletionStage.class.isAssignableFrom(method.getReturnType())) {
+        Class<?> returnType = method.getReturnType();
+        if (CompletionStage.class.isAssignableFrom(returnType)
+            || Future.class.isAssignableFrom(returnType)
+            || isReactivePublisherType(returnType)) {
             throw new LockConfigurationException(
-                "@DistributedLock does not support async return types such as CompletionStage: " + method
+                "@DistributedLock does not support async return types such as " + returnType.getSimpleName() + ": " + method
             );
+        }
+    }
+
+    private boolean isReactivePublisherType(Class<?> returnType) {
+        try {
+            Class<?> publisherType = Class.forName("org.reactivestreams.Publisher", false, returnType.getClassLoader());
+            return publisherType.isAssignableFrom(returnType);
+        } catch (ClassNotFoundException exception) {
+            return false;
         }
     }
 }

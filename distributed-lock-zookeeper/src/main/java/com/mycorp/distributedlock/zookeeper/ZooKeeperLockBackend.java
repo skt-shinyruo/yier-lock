@@ -13,6 +13,8 @@ import org.apache.curator.framework.recipes.locks.InterProcessMutex;
 import org.apache.curator.framework.recipes.locks.InterProcessReadWriteLock;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -41,7 +43,13 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
             ? sessionValidSupplier
             : () -> curatorFramework.getZookeeperClient().isConnected();
         try {
-            this.curatorFramework.blockUntilConnected(10, TimeUnit.SECONDS);
+            boolean connected = this.curatorFramework.blockUntilConnected(10, TimeUnit.SECONDS);
+            if (!connected) {
+                this.curatorFramework.close();
+                throw new LockBackendException(
+                    "Failed to connect to ZooKeeper within 10 seconds: " + configuration.connectString()
+                );
+            }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new LockBackendException("Interrupted while connecting to ZooKeeper", exception);
@@ -148,8 +156,11 @@ public final class ZooKeeperLockBackend implements LockBackend, AutoCloseable {
     }
 
     private String resourcePath(String kind, String key) {
-        String normalizedKey = key.replace(':', '_').replace('/', '_');
-        return configuration.basePath() + "/" + kind + "/" + normalizedKey;
+        return configuration.basePath() + "/" + kind + "/" + encodeKeySegment(key);
+    }
+
+    private String encodeKeySegment(String key) {
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(key.getBytes(StandardCharsets.UTF_8));
     }
 
     private final class ZooKeeperLease implements BackendLockLease {

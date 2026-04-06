@@ -47,6 +47,21 @@ class RedisBackendModuleAutoConfigurationTest {
     }
 
     @Test
+    void shouldRejectLeaseTimesThatAreNotWholeSeconds() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.lease-time=1500ms"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("whole seconds");
+            });
+    }
+
+    @Test
     void shouldBackOffWhenBackendSelectionDoesNotMatch() {
         contextRunner
             .withPropertyValues(

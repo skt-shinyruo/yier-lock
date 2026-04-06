@@ -14,6 +14,7 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,6 +43,19 @@ class DistributedLockAsyncGuardTest {
         });
     }
 
+    @Test
+    void shouldRejectFutureReturnTypes() {
+        contextRunner.run(context -> {
+            AsyncService service = context.getBean(AsyncService.class);
+
+            assertThatThrownBy(() -> service.processFuture("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("Future");
+
+            assertThat(service.wasInvoked()).isFalse();
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
 
@@ -62,6 +76,12 @@ class DistributedLockAsyncGuardTest {
 
         @DistributedLock(key = "job:#{#p0}")
         public CompletionStage<String> processAsync(String jobId) {
+            invoked.set(true);
+            return CompletableFuture.completedFuture("processed-" + jobId);
+        }
+
+        @DistributedLock(key = "job:#{#p0}")
+        public Future<String> processFuture(String jobId) {
             invoked.set(true);
             return CompletableFuture.completedFuture("processed-" + jobId);
         }
