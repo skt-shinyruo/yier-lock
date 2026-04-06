@@ -1,10 +1,9 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.api.LockCapabilities;
+import com.mycorp.distributedlock.api.SessionRequest;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.core.backend.LockMode;
-import com.mycorp.distributedlock.core.backend.LockResource;
-import com.mycorp.distributedlock.core.backend.WaitPolicy;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
@@ -102,8 +101,13 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
         public LockBackend createBackend() {
             return new LockBackend() {
                 @Override
-                public BackendLockLease acquire(LockResource resource, LockMode mode, WaitPolicy waitPolicy) {
-                    return null;
+                public LockCapabilities capabilities() {
+                    return new LockCapabilities(true, true, true, true);
+                }
+
+                @Override
+                public BackendSession openSession(SessionRequest request) {
+                    throw new UnsupportedOperationException("not used in test");
                 }
             };
         }
