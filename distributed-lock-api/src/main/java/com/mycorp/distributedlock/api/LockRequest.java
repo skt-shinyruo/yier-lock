@@ -3,8 +3,7 @@ package com.mycorp.distributedlock.api;
 public record LockRequest(
         LockKey key,
         LockMode mode,
-        WaitPolicy waitPolicy,
-        LeasePolicy leasePolicy
+        WaitPolicy waitPolicy
 ) {
 
     public LockRequest {
@@ -16,9 +15,6 @@ public record LockRequest(
         }
         if (waitPolicy == null) {
             throw new IllegalArgumentException("Wait policy is required");
-        }
-        if (leasePolicy == null) {
-            throw new IllegalArgumentException("Lease policy is required");
         }
     }
 }

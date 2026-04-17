@@ -24,7 +24,7 @@ class ApiSurfaceTest {
         assertThat(LockSession.class.getMethod("acquire", LockRequest.class).getExceptionTypes())
                 .containsExactly(InterruptedException.class);
         assertThat(LockSession.class.getMethod("state").getReturnType()).isEqualTo(SessionState.class);
-        assertThat(LockClient.class.getMethod("openSession", SessionRequest.class).getReturnType()).isEqualTo(LockSession.class);
+        assertThat(LockClient.class.getMethod("openSession").getReturnType()).isEqualTo(LockSession.class);
         assertThat(LockLease.class.getInterfaces()).containsExactly(AutoCloseable.class);
         assertThat(LockLease.class.getMethod("close").getReturnType()).isEqualTo(void.class);
         assertThat(LockExecutor.class.getMethod("withLock", LockRequest.class, LockedSupplier.class).getReturnType())
@@ -33,9 +33,6 @@ class ApiSurfaceTest {
         assertThat(LockMode.values()).containsExactly(LockMode.MUTEX, LockMode.READ, LockMode.WRITE);
         assertThat(LeaseState.values()).containsExactly(LeaseState.ACTIVE, LeaseState.RELEASED, LeaseState.LOST);
         assertThat(SessionState.values()).containsExactly(SessionState.ACTIVE, SessionState.CLOSED, SessionState.LOST);
-        assertThat(LockCapabilities.class).isNotNull();
-        assertThat(LeasePolicy.class).isNotNull();
-        assertThat(SessionPolicy.class).isNotNull();
     }
 
     @Test
@@ -72,40 +69,32 @@ class ApiSurfaceTest {
 
     @Test
     void requestAndValueTypesShouldMatchTheApprovedShape() {
-        RecordComponent[] sessionRequestComponents = SessionRequest.class.getRecordComponents();
         RecordComponent[] lockRequestComponents = LockRequest.class.getRecordComponents();
-        RecordComponent[] lockCapabilitiesComponents = LockCapabilities.class.getRecordComponents();
-
-        assertThat(Arrays.stream(sessionRequestComponents)
-                .map(RecordComponent::getName))
-                .containsExactly("sessionPolicy");
-        assertThat(Arrays.stream(sessionRequestComponents)
-                .map(RecordComponent::getType))
-                .containsExactly(SessionPolicy.class);
 
         assertThat(Arrays.stream(lockRequestComponents)
                 .map(RecordComponent::getName))
-                .containsExactly("key", "mode", "waitPolicy", "leasePolicy");
+                .containsExactly("key", "mode", "waitPolicy");
         assertThat(Arrays.stream(lockRequestComponents)
                 .map(RecordComponent::getType))
-                .containsExactly(LockKey.class, LockMode.class, WaitPolicy.class, LeasePolicy.class);
-
-        assertThat(Arrays.stream(lockCapabilitiesComponents)
-                .map(RecordComponent::getName))
-                .containsExactly(
-                        "mutexSupported",
-                        "readWriteSupported",
-                        "fencingSupported",
-                        "renewableSessionsSupported");
-        assertThat(Arrays.stream(lockCapabilitiesComponents)
-                .map(RecordComponent::getType))
-                .containsExactly(boolean.class, boolean.class, boolean.class, boolean.class);
+                .containsExactly(LockKey.class, LockMode.class, WaitPolicy.class);
 
         assertThatThrownBy(() -> new LockKey(" "))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new FencingToken(0))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThat(new FencingToken(1).value()).isEqualTo(1L);
+    }
+
+    @Test
+    void removedPolicyAndCapabilityTypesShouldStayGone() {
+        assertThatThrownBy(() -> Class.forName("com.mycorp.distributedlock.api.LeasePolicy"))
+            .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("com.mycorp.distributedlock.api.SessionPolicy"))
+            .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("com.mycorp.distributedlock.api.SessionRequest"))
+            .isInstanceOf(ClassNotFoundException.class);
+        assertThatThrownBy(() -> Class.forName("com.mycorp.distributedlock.api.LockCapabilities"))
+            .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test
