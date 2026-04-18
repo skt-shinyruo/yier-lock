@@ -1,14 +1,11 @@
 package com.mycorp.distributedlock.testkit;
 
 import com.mycorp.distributedlock.api.FencingToken;
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -41,21 +38,65 @@ public abstract class LockClientContract {
     @Test
     void mutexShouldExcludeConcurrentSessions() throws Exception {
         runtime = createRuntime();
-        try (LockSession holder = runtime.lockClient().openSession(defaultSession());
-             LockLease ignored = holder.acquire(sampleRequest("inventory:mutex"))) {
-            assertThat(executor.submit(() -> tryAcquire("inventory:mutex")).get()).isFalse();
+        try (LockSession holder = runtime.lockClient().openSession();
+             LockLease ignored = holder.acquire(request("inventory:mutex", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:mutex", LockMode.MUTEX, Duration.ofMillis(100))).get()).isFalse();
         }
     }
 
     @Test
     void fencingTokenShouldIncreaseAcrossSequentialLeases() throws Exception {
         runtime = createRuntime();
-        try (LockSession session = runtime.lockClient().openSession(defaultSession())) {
+        try (LockSession session = runtime.lockClient().openSession()) {
             long first;
-            try (LockLease lease = session.acquire(sampleRequest("inventory:1"))) {
+            try (LockLease lease = session.acquire(request("inventory:1", LockMode.MUTEX, Duration.ofSeconds(1)))) {
                 first = lease.fencingToken().value();
             }
-            try (LockLease lease = session.acquire(sampleRequest("inventory:1"))) {
+            try (LockLease lease = session.acquire(request("inventory:1", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+                assertThat(lease.fencingToken().value()).isGreaterThan(first);
+            }
+        }
+    }
+
+    @Test
+    void readersShouldShareTheSameKeyAcrossSessions() throws Exception {
+        runtime = createRuntime();
+        try (LockSession first = runtime.lockClient().openSession();
+             LockLease ignored = first.acquire(request("inventory:rw", LockMode.READ, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:rw", LockMode.READ, Duration.ofMillis(200))).get())
+                .isTrue();
+        }
+    }
+
+    @Test
+    void writerShouldTimeOutWhileReaderIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession reader = runtime.lockClient().openSession();
+             LockLease ignored = reader.acquire(request("inventory:rw", LockMode.READ, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:rw", LockMode.WRITE, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
+    void readerShouldTimeOutWhileWriterIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession writer = runtime.lockClient().openSession();
+             LockLease ignored = writer.acquire(request("inventory:rw", LockMode.WRITE, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:rw", LockMode.READ, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
+    void fencingTokenShouldIncreaseAcrossModesForTheSameKey() throws Exception {
+        runtime = createRuntime();
+        try (LockSession session = runtime.lockClient().openSession()) {
+            long first;
+            try (LockLease lease = session.acquire(request("inventory:fence", LockMode.READ, Duration.ofSeconds(1)))) {
+                first = lease.fencingToken().value();
+            }
+            try (LockLease lease = session.acquire(request("inventory:fence", LockMode.WRITE, Duration.ofSeconds(1)))) {
                 assertThat(lease.fencingToken().value()).isGreaterThan(first);
             }
         }
@@ -72,27 +113,17 @@ public abstract class LockClientContract {
             .hasMessageContaining("stale fencing token");
     }
 
-    protected SessionRequest defaultSession() {
-        return new SessionRequest(SessionPolicy.MANUAL_CLOSE);
-    }
-
-    protected LockRequest sampleRequest(String key) {
+    protected LockRequest request(String key, LockMode mode, Duration waitTime) {
         return new LockRequest(
             new LockKey(key),
-            LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(1)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            mode,
+            WaitPolicy.timed(waitTime)
         );
     }
 
-    private boolean tryAcquire(String key) throws Exception {
-        try (LockSession contender = runtime.lockClient().openSession(defaultSession());
-             LockLease ignored = contender.acquire(new LockRequest(
-                 new LockKey(key),
-                 LockMode.MUTEX,
-                 WaitPolicy.timed(Duration.ofMillis(100)),
-                 LeasePolicy.RELEASE_ON_CLOSE
-             ))) {
+    private boolean tryAcquire(String key, LockMode mode, Duration waitTime) throws Exception {
+        try (LockSession contender = runtime.lockClient().openSession();
+             LockLease ignored = contender.acquire(request(key, mode, waitTime))) {
             return true;
         } catch (LockAcquisitionTimeoutException exception) {
             return false;

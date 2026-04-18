@@ -2,11 +2,9 @@ package com.mycorp.distributedlock.testkit.support;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
@@ -21,20 +19,13 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class BlockingLeaseBackend implements LockBackend {
 
-    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
-
     private final CountDownLatch acquireAttempted = new CountDownLatch(1);
     private final CountDownLatch releaseObserved = new CountDownLatch(1);
     private final AtomicBoolean firstLeaseHeld = new AtomicBoolean();
     private final AtomicLong fencingCounter = new AtomicLong();
 
     @Override
-    public LockCapabilities capabilities() {
-        return CAPABILITIES;
-    }
-
-    @Override
-    public BackendSession openSession(SessionRequest request) {
+    public BackendSession openSession() {
         return new BackendSession() {
             @Override
             public BackendLockLease acquire(LockRequest lockRequest) throws InterruptedException {

@@ -2,11 +2,9 @@ package com.mycorp.distributedlock.testkit.support;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
@@ -22,17 +20,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class InMemoryLockBackend implements LockBackend {
 
-    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
-
     private final Map<String, InMemoryLockState> lockStates = new ConcurrentHashMap<>();
 
     @Override
-    public LockCapabilities capabilities() {
-        return CAPABILITIES;
-    }
-
-    @Override
-    public InMemoryBackendSession openSession(SessionRequest request) {
+    public InMemoryBackendSession openSession() {
         return new InMemoryBackendSession(lockStates);
     }
 
