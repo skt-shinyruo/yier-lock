@@ -1,16 +1,12 @@
 package com.mycorp.distributedlock.runtime;
 
 import com.mycorp.distributedlock.api.FencingToken;
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
@@ -43,9 +39,9 @@ class LockRuntimeBuilderTest {
     @Test
     void builderShouldExposeLockClientAndExecutorWithSelectedBackendCapabilities() throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
-            .backendModules(List.of(new StubBackendModule("read-write-only", new BackendCapabilities(false, true, true, true))))
+            .backendModules(List.of(new StubBackendModule("read-write-only", new BackendCapabilities(false, true))))
             .build()) {
-            try (LockSession session = runtime.lockClient().openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE))) {
+            try (LockSession session = runtime.lockClient().openSession()) {
                 assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))
                     .isInstanceOf(UnsupportedLockCapabilityException.class)
                     .hasMessageContaining("MUTEX");
@@ -76,8 +72,7 @@ class LockRuntimeBuilderTest {
         return new LockRequest(
             new LockKey("orders"),
             mode,
-            WaitPolicy.timed(Duration.ofSeconds(1)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(1))
         );
     }
 
@@ -108,12 +103,7 @@ class LockRuntimeBuilderTest {
         public LockBackend createBackend() {
             return new LockBackend() {
                 @Override
-                public LockCapabilities capabilities() {
-                    return capabilities.asApiCapabilities();
-                }
-
-                @Override
-                public BackendSession openSession(SessionRequest request) {
+                public BackendSession openSession() {
                     return new BackendSession() {
                         @Override
                         public BackendLockLease acquire(LockRequest lockRequest) {

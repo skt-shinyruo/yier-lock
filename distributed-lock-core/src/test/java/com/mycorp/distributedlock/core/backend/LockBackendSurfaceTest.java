@@ -1,20 +1,20 @@
 package com.mycorp.distributedlock.core.backend;
 
-import com.mycorp.distributedlock.api.LockCapabilities;
-import com.mycorp.distributedlock.api.SessionRequest;
 import org.junit.jupiter.api.Test;
+
+import java.lang.reflect.Method;
+import java.util.Arrays;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 class LockBackendSurfaceTest {
 
     @Test
-    void backendShouldExposeCapabilitiesAndOpenSessions() throws Exception {
-        assertThat(LockBackend.class.getMethod("capabilities").getReturnType())
-            .isEqualTo(LockCapabilities.class);
-        assertThat(LockBackend.class
-            .getMethod("openSession", SessionRequest.class)
-            .getReturnType())
+    void backendShouldOpenSessionsWithoutPublicRequestTypes() throws Exception {
+        assertThat(Arrays.stream(LockBackend.class.getDeclaredMethods())
+            .map(Method::getName))
+            .containsExactly("close", "openSession");
+        assertThat(LockBackend.class.getMethod("openSession").getReturnType())
             .isEqualTo(BackendSession.class);
     }
 }

@@ -1,15 +1,11 @@
 package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.FencingToken;
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
@@ -29,10 +25,10 @@ class DefaultLockExecutorTest {
     @Test
     void withLockShouldReleaseLeaseAfterAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(
-            new DefaultLockClient(backend),
-            new SessionRequest(SessionPolicy.MANUAL_CLOSE)
-        );
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
 
         String result = executor.withLock(sampleRequest(), () -> "ok");
 
@@ -44,10 +40,10 @@ class DefaultLockExecutorTest {
     @Test
     void withLockShouldReleaseLeaseWhenActionFails() {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(
-            new DefaultLockClient(backend),
-            new SessionRequest(SessionPolicy.MANUAL_CLOSE)
-        );
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
 
         assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> {
             throw new IllegalStateException("boom");
@@ -62,10 +58,10 @@ class DefaultLockExecutorTest {
     @Test
     void withLockShouldExposeCurrentFencingTokenDuringAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(
-            new DefaultLockClient(backend),
-            new SessionRequest(SessionPolicy.MANUAL_CLOSE)
-        );
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
         AtomicLong observedToken = new AtomicLong();
 
         String result = executor.withLock(sampleRequest(), () -> {
@@ -81,8 +77,7 @@ class DefaultLockExecutorTest {
         return new LockRequest(
             new LockKey("inventory"),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(1)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(1))
         );
     }
 
@@ -91,12 +86,7 @@ class DefaultLockExecutorTest {
         private final AtomicInteger sessionCloseCount = new AtomicInteger();
 
         @Override
-        public LockCapabilities capabilities() {
-            return new LockCapabilities(true, true, true, true);
-        }
-
-        @Override
-        public BackendSession openSession(SessionRequest request) {
+        public BackendSession openSession() {
             return new BackendSession() {
                 @Override
                 public BackendLockLease acquire(LockRequest lockRequest) {

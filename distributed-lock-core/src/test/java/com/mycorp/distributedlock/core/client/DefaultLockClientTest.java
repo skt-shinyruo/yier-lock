@@ -1,16 +1,12 @@
 package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.FencingToken;
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
@@ -29,10 +25,10 @@ class DefaultLockClientTest {
 
     @Test
     void sessionShouldAcquireLeaseWithoutUsingThreadOwnership() throws Exception {
-        StubBackend backend = new StubBackend(standardCapabilities());
-        DefaultLockClient client = new DefaultLockClient(backend);
+        StubBackend backend = new StubBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
 
-        try (LockSession session = client.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+        try (LockSession session = client.openSession();
              LockLease lease = session.acquire(sampleRequest(LockMode.MUTEX))) {
             assertThat(session.state()).isEqualTo(SessionState.ACTIVE);
             assertThat(lease.key()).isEqualTo(new LockKey("orders"));
@@ -46,10 +42,10 @@ class DefaultLockClientTest {
 
     @Test
     void sessionShouldRejectUnsupportedModesBeforeBackendAcquire() {
-        StubBackend backend = new StubBackend(new LockCapabilities(false, true, true, true));
-        DefaultLockClient client = new DefaultLockClient(backend);
+        StubBackend backend = new StubBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(false, true));
 
-        try (LockSession session = client.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE))) {
+        try (LockSession session = client.openSession()) {
             assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))
                 .isInstanceOf(UnsupportedLockCapabilityException.class)
                 .hasMessageContaining("MUTEX");
@@ -62,30 +58,15 @@ class DefaultLockClientTest {
         return new LockRequest(
             new LockKey("orders"),
             mode,
-            WaitPolicy.timed(Duration.ofSeconds(1)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(1))
         );
     }
 
-    private static LockCapabilities standardCapabilities() {
-        return new LockCapabilities(true, true, true, true);
-    }
-
     private static final class StubBackend implements LockBackend {
-        private final LockCapabilities capabilities;
         private final AtomicInteger acquireCount = new AtomicInteger();
 
-        private StubBackend(LockCapabilities capabilities) {
-            this.capabilities = capabilities;
-        }
-
         @Override
-        public LockCapabilities capabilities() {
-            return capabilities;
-        }
-
-        @Override
-        public BackendSession openSession(SessionRequest request) {
+        public BackendSession openSession() {
             return new BackendSession() {
                 @Override
                 public BackendLockLease acquire(LockRequest lockRequest) {

@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.core.client;
 
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
@@ -13,17 +12,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class DefaultLockSession implements LockSession {
 
-    private final LockCapabilities capabilities;
+    private final SupportedLockModes supportedLockModes;
     private final BackendSession backendSession;
     private final LockRequestValidator validator;
     private final AtomicBoolean closed = new AtomicBoolean();
 
     public DefaultLockSession(
-        LockCapabilities capabilities,
+        SupportedLockModes supportedLockModes,
         BackendSession backendSession,
         LockRequestValidator validator
     ) {
-        this.capabilities = Objects.requireNonNull(capabilities, "capabilities");
+        this.supportedLockModes = Objects.requireNonNull(supportedLockModes, "supportedLockModes");
         this.backendSession = Objects.requireNonNull(backendSession, "backendSession");
         this.validator = Objects.requireNonNull(validator, "validator");
     }
@@ -33,7 +32,7 @@ public final class DefaultLockSession implements LockSession {
         if (closed.get()) {
             throw new IllegalStateException("Lock session is already closed");
         }
-        validator.validate(capabilities, request);
+        validator.validate(supportedLockModes, request);
         return backendSession.acquire(request);
     }
 

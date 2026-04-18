@@ -2,12 +2,11 @@ package com.mycorp.distributedlock.runtime;
 
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockExecutor;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.client.DefaultLockClient;
 import com.mycorp.distributedlock.core.client.DefaultLockExecutor;
+import com.mycorp.distributedlock.core.client.SupportedLockModes;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.runtime.spi.ServiceLoaderBackendRegistry;
@@ -50,8 +49,12 @@ public final class LockRuntimeBuilder {
         BackendModule selectedModule = selectBackendModule(availableModules);
         validateCapabilities(selectedModule);
         LockBackend backend = selectedModule.createBackend();
-        LockClient lockClient = new DefaultLockClient(backend);
-        LockExecutor lockExecutor = new DefaultLockExecutor(lockClient, new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+        SupportedLockModes supportedLockModes = new SupportedLockModes(
+            selectedModule.capabilities().mutexSupported(),
+            selectedModule.capabilities().readWriteSupported()
+        );
+        LockClient lockClient = new DefaultLockClient(backend, supportedLockModes);
+        LockExecutor lockExecutor = new DefaultLockExecutor(lockClient);
         return new DefaultLockRuntime(lockClient, lockExecutor);
     }
 
