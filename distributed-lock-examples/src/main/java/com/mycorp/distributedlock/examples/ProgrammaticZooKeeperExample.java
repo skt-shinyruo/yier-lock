@@ -1,13 +1,10 @@
 package com.mycorp.distributedlock.examples;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
@@ -30,7 +27,7 @@ public final class ProgrammaticZooKeeperExample {
                 "/distributed-locks"
             ))))
             .build();
-             LockSession session = runtime.lockClient().openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             LockSession session = runtime.lockClient().openSession();
              LockLease lease = session.acquire(sampleRequest("example:zk:inventory-7"))) {
             System.out.println(
                 "ZooKeeper lease acquired for " + lease.key().value()
@@ -43,8 +40,7 @@ public final class ProgrammaticZooKeeperExample {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(2)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(2))
         );
     }
 }

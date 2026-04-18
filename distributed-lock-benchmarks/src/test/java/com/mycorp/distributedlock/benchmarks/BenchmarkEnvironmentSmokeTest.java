@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.benchmarks;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
@@ -46,8 +45,7 @@ class BenchmarkEnvironmentSmokeTest {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofMillis(100)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofMillis(100))
         );
     }
 }

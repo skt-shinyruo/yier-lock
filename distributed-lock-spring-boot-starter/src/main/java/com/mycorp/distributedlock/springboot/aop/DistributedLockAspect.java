@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.springboot.aop;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
@@ -52,8 +51,7 @@ public final class DistributedLockAspect {
         return new LockRequest(
             new LockKey(key),
             resolveMode(distributedLock.mode()),
-            resolveWaitPolicy(distributedLock),
-            LeasePolicy.RELEASE_ON_CLOSE
+            resolveWaitPolicy(distributedLock)
         );
     }
 

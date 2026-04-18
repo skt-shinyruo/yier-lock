@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.examples.spring;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
@@ -49,8 +48,7 @@ public class SpringBootRedisExampleApplication {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(2)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(2))
         );
     }
 }

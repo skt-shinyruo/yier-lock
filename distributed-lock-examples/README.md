@@ -32,8 +32,7 @@ String result = runtime.lockExecutor().withLock(
     new LockRequest(
         new LockKey("example:redis:order-42"),
         LockMode.MUTEX,
-        WaitPolicy.timed(Duration.ofSeconds(2)),
-        LeasePolicy.RELEASE_ON_CLOSE
+        WaitPolicy.timed(Duration.ofSeconds(2))
     ),
     () -> "Redis lease acquired"
 );

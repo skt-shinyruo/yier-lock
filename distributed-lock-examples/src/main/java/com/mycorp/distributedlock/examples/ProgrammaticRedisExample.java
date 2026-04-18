@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.examples;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
@@ -38,8 +37,7 @@ public final class ProgrammaticRedisExample {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(2)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(2))
         );
     }
 }

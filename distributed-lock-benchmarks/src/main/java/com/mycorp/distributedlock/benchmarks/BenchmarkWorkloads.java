@@ -1,14 +1,11 @@
 package com.mycorp.distributedlock.benchmarks;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -19,8 +16,6 @@ import java.util.Objects;
 import java.util.function.Supplier;
 
 public final class BenchmarkWorkloads {
-
-    private static final SessionRequest DEFAULT_SESSION_REQUEST = new SessionRequest(SessionPolicy.MANUAL_CLOSE);
 
     private BenchmarkWorkloads() {
     }
@@ -39,7 +34,7 @@ public final class BenchmarkWorkloads {
         Duration wait,
         Blackhole blackhole
     ) throws Exception {
-        try (LockSession session = client.openSession(DEFAULT_SESSION_REQUEST);
+        try (LockSession session = client.openSession();
              LockLease lease = session.acquire(mutexRequest(key, WaitPolicy.timed(wait)))) {
             blackhole.consume(lease.key().value());
             blackhole.consume(lease.fencingToken().value());
@@ -55,7 +50,7 @@ public final class BenchmarkWorkloads {
         Duration wait,
         Blackhole blackhole
     ) throws Exception {
-        try (LockSession session = client.openSession(DEFAULT_SESSION_REQUEST);
+        try (LockSession session = client.openSession();
              LockLease lease = session.acquire(mutexRequest(key, WaitPolicy.timed(wait)))) {
             blackhole.consume(true);
             blackhole.consume(lease.key().value());
@@ -91,7 +86,7 @@ public final class BenchmarkWorkloads {
         Objects.requireNonNull(backend, "backend");
 
         try (LockRuntime runtime = runtimeFactory.get();
-             LockSession session = runtime.lockClient().openSession(DEFAULT_SESSION_REQUEST)) {
+             LockSession session = runtime.lockClient().openSession()) {
             blackhole.consume(runtime.lockClient());
             blackhole.consume(runtime.lockExecutor());
             blackhole.consume(session.state());
@@ -102,14 +97,14 @@ public final class BenchmarkWorkloads {
     }
 
     private static LockRequest mutexRequest(String key, WaitPolicy waitPolicy) {
-        return new LockRequest(new LockKey(key), LockMode.MUTEX, waitPolicy, LeasePolicy.RELEASE_ON_CLOSE);
+        return new LockRequest(new LockKey(key), LockMode.MUTEX, waitPolicy);
     }
 
     private static LockRequest readRequest(String key, WaitPolicy waitPolicy) {
-        return new LockRequest(new LockKey(key), LockMode.READ, waitPolicy, LeasePolicy.RELEASE_ON_CLOSE);
+        return new LockRequest(new LockKey(key), LockMode.READ, waitPolicy);
     }
 
     private static LockRequest writeRequest(String key, WaitPolicy waitPolicy) {
-        return new LockRequest(new LockKey(key), LockMode.WRITE, waitPolicy, LeasePolicy.RELEASE_ON_CLOSE);
+        return new LockRequest(new LockKey(key), LockMode.WRITE, waitPolicy);
     }
 }

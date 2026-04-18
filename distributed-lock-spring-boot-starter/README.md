@@ -116,8 +116,7 @@ class UserService {
             new LockRequest(
                 new LockKey("user:" + userId),
                 LockMode.MUTEX,
-                WaitPolicy.timed(Duration.ofSeconds(2)),
-                LeasePolicy.RELEASE_ON_CLOSE
+                WaitPolicy.timed(Duration.ofSeconds(2))
             ),
             userId::hashCode
         );
@@ -128,12 +127,11 @@ class UserService {
 If you need manual lease control or fencing tokens, inject `LockClient` instead:
 
 ```java
-try (LockSession session = lockClient.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+try (LockSession session = lockClient.openSession();
      LockLease lease = session.acquire(new LockRequest(
          new LockKey("user:" + userId),
          LockMode.MUTEX,
-         WaitPolicy.timed(Duration.ofSeconds(2)),
-         LeasePolicy.RELEASE_ON_CLOSE
+         WaitPolicy.timed(Duration.ofSeconds(2))
      ))) {
     System.out.println(lease.fencingToken().value());
 }

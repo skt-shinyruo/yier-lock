@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
@@ -29,8 +28,7 @@ public class SpringBenchmarkApplication {
                 new LockRequest(
                     new LockKey("bench:spring:programmatic:" + id),
                     LockMode.MUTEX,
-                    WaitPolicy.timed(Duration.ofMillis(250)),
-                    LeasePolicy.RELEASE_ON_CLOSE
+                    WaitPolicy.timed(Duration.ofMillis(250))
                 ),
                 id::hashCode
             );

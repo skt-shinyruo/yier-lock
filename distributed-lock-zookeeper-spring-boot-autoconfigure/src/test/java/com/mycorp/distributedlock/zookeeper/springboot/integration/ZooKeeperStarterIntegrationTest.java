@@ -1,6 +1,5 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
@@ -53,8 +52,7 @@ class ZooKeeperStarterIntegrationTest {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(1)),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(Duration.ofSeconds(1))
         );
     }
 }
