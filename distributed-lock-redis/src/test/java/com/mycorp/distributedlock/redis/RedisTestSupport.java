@@ -15,8 +15,8 @@ final class RedisTestSupport {
         String containerId = run("docker", "run", "-d", "-P", "redis:7-alpine").trim();
         String portOutput = run("docker", "port", containerId, "6379/tcp").trim();
         int redisPort = Integer.parseInt(portOutput.substring(portOutput.lastIndexOf(':') + 1));
+        awaitReady("redis://127.0.0.1:%d".formatted(redisPort));
         RunningRedis redis = new RunningRedis(containerId, redisPort);
-        redis.awaitReady();
         redis.flushAll();
         return redis;
     }
@@ -52,24 +52,17 @@ final class RedisTestSupport {
             commands.flushall();
         }
 
-        String redisUri() {
-            return "redis://127.0.0.1:%d".formatted(redisPort);
+        void stopContainer() throws Exception {
+            run("docker", "stop", containerId);
         }
 
-        private void awaitReady() throws InterruptedException {
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
-            RuntimeException lastFailure = null;
-            while (System.nanoTime() < deadline) {
-                try {
-                    if ("PONG".equals(commands.ping())) {
-                        return;
-                    }
-                } catch (RuntimeException exception) {
-                    lastFailure = exception;
-                }
-                Thread.sleep(100L);
-            }
-            throw new IllegalStateException("Redis container did not become ready", lastFailure);
+        void startContainer() throws Exception {
+            run("docker", "start", containerId);
+            awaitReady(redisUri());
+        }
+
+        String redisUri() {
+            return "redis://127.0.0.1:%d".formatted(redisPort);
         }
 
         @Override
@@ -101,6 +94,33 @@ final class RedisTestSupport {
                 throw closeFailure;
             }
         }
+    }
+
+    private static void awaitReady(String redisUri) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        RuntimeException lastFailure = null;
+        while (System.nanoTime() < deadline) {
+            RedisClient client = null;
+            StatefulRedisConnection<String, String> testConnection = null;
+            try {
+                client = RedisClient.create(redisUri);
+                testConnection = client.connect();
+                if ("PONG".equals(testConnection.sync().ping())) {
+                    return;
+                }
+            } catch (RuntimeException exception) {
+                lastFailure = exception;
+            } finally {
+                if (testConnection != null) {
+                    testConnection.close();
+                }
+                if (client != null) {
+                    client.shutdown();
+                }
+            }
+            Thread.sleep(100L);
+        }
+        throw new IllegalStateException("Redis container did not become ready", lastFailure);
     }
 
     private static String run(String... command) throws Exception {

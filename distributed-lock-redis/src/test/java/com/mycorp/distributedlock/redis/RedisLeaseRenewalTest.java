@@ -1,11 +1,8 @@
 package com.mycorp.distributedlock.redis;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
@@ -42,12 +39,11 @@ class RedisLeaseRenewalTest {
     @Test
     void leaseShouldRemainValidPastBaseTtlWhenHeld() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(1L);
-             BackendSession session = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             BackendSession session = backend.openSession();
              BackendLockLease lease = session.acquire(new LockRequest(
                  new LockKey("renew:1"),
                  LockMode.MUTEX,
-                 WaitPolicy.indefinite(),
-                 LeasePolicy.RELEASE_ON_CLOSE
+                 WaitPolicy.indefinite()
              ))) {
 
             Thread.sleep(Duration.ofSeconds(3).toMillis());

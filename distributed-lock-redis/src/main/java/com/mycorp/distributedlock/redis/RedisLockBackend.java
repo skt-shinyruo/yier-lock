@@ -2,11 +2,9 @@ package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
@@ -15,6 +13,7 @@ import com.mycorp.distributedlock.api.exception.LockSessionLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
+import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.ScriptOutputType;
 import io.lettuce.core.api.StatefulRedisConnection;
@@ -34,8 +33,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class RedisLockBackend implements LockBackend {
-
-    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
 
     private static final String MUTEX_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
@@ -88,18 +85,16 @@ public final class RedisLockBackend implements LockBackend {
     public RedisLockBackend(RedisBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
         this.redisClient = RedisClient.create(configuration.redisUri());
+        this.redisClient.setOptions(ClientOptions.builder()
+            .autoReconnect(false)
+            .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+            .build());
         this.connection = redisClient.connect();
         this.commands = connection.sync();
     }
 
     @Override
-    public LockCapabilities capabilities() {
-        return CAPABILITIES;
-    }
-
-    @Override
-    public BackendSession openSession(SessionRequest request) {
-        Objects.requireNonNull(request, "request");
+    public BackendSession openSession() {
         return new RedisBackendSession(nextSessionId());
     }
 
@@ -118,8 +113,8 @@ public final class RedisLockBackend implements LockBackend {
         return "lock:%s:read:owners".formatted(key);
     }
 
-    private static String fenceKey(String key, LockMode mode) {
-        return "lock:%s:%s:fence".formatted(key, normalizeMode(mode));
+    private static String fenceKey(String key) {
+        return "lock:%s:fence".formatted(key);
     }
 
     private static String sessionKey(String sessionId) {
@@ -186,6 +181,9 @@ public final class RedisLockBackend implements LockBackend {
             }
 
             renewalTask.cancel(false);
+            if (!valid.get()) {
+                return;
+            }
             RuntimeException failure = null;
             for (RedisLease lease : new ArrayList<>(activeLeases.values())) {
                 try {
@@ -238,7 +236,7 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     MUTEX_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.MUTEX), fenceKey(key, LockMode.MUTEX)},
+                    new String[]{ownerKey(key, LockMode.MUTEX), fenceKey(key)},
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );
@@ -253,7 +251,7 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     READ_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key, LockMode.READ)},
+                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key)},
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );
@@ -268,7 +266,7 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     WRITE_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key, LockMode.WRITE)},
+                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key)},
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );
@@ -287,16 +285,16 @@ public final class RedisLockBackend implements LockBackend {
             if (closed.get()) {
                 return;
             }
-            if (!renewSessionKey()) {
-                valid.set(false);
-                for (RedisLease lease : activeLeases.values()) {
-                    lease.markLost();
+            try {
+                if (!renewSessionKey()) {
+                    markSessionLost(new LockSessionLostException("Redis session lost: " + sessionId));
+                    return;
                 }
-                renewalTask.cancel(false);
-                return;
-            }
-            for (RedisLease lease : activeLeases.values()) {
-                lease.refresh();
+                for (RedisLease lease : activeLeases.values()) {
+                    lease.refresh();
+                }
+            } catch (RuntimeException exception) {
+                markSessionLost(new LockBackendException("Failed to renew Redis session " + sessionId, exception));
             }
         }
 
@@ -318,6 +316,16 @@ public final class RedisLockBackend implements LockBackend {
 
         private void forgetLease(RedisLease lease) {
             activeLeases.remove(lease.ownerValue());
+        }
+
+        private void markSessionLost(RuntimeException cause) {
+            if (!valid.compareAndSet(true, false)) {
+                return;
+            }
+            for (RedisLease lease : new ArrayList<>(activeLeases.values())) {
+                lease.markLost();
+            }
+            renewalTask.cancel(false);
         }
 
         private void ensureActive() {
@@ -484,6 +492,7 @@ public final class RedisLockBackend implements LockBackend {
 
         private void markLost() {
             state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
+            lostReleaseReported.set(true);
             session.forgetLease(this);
         }
 

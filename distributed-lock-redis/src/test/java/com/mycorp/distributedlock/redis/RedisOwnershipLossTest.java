@@ -1,11 +1,8 @@
 package com.mycorp.distributedlock.redis;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
@@ -42,12 +39,11 @@ class RedisOwnershipLossTest {
     @Test
     void redisShouldInvalidateLeaseAfterTokenDeletion() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
-             BackendSession session = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+             BackendSession session = backend.openSession();
              BackendLockLease lease = session.acquire(new LockRequest(
                  new LockKey("lost:1"),
                  LockMode.MUTEX,
-                 WaitPolicy.indefinite(),
-                 LeasePolicy.RELEASE_ON_CLOSE
+                 WaitPolicy.indefinite()
              ))) {
             redis.commands().del(RedisLockBackend.ownerKey("lost:1", LockMode.MUTEX));
 
