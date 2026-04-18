@@ -2,11 +2,9 @@ package com.mycorp.distributedlock.zookeeper;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockCapabilities;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
@@ -17,6 +15,7 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
+import org.apache.curator.framework.api.CuratorWatcher;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -27,19 +26,19 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
-import java.util.Locale;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
 public final class ZooKeeperLockBackend implements LockBackend {
-
-    private static final LockCapabilities CAPABILITIES = new LockCapabilities(true, true, true, true);
 
     private final ZooKeeperBackendConfiguration configuration;
     private final CuratorFramework curatorFramework;
@@ -74,13 +73,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
     }
 
     @Override
-    public LockCapabilities capabilities() {
-        return CAPABILITIES;
-    }
-
-    @Override
-    public BackendSession openSession(SessionRequest request) {
-        Objects.requireNonNull(request, "request");
+    public BackendSession openSession() {
         return new ZooKeeperBackendSession(UUID.randomUUID().toString());
     }
 
@@ -102,26 +95,10 @@ public final class ZooKeeperLockBackend implements LockBackend {
         @Override
         public BackendLockLease acquire(LockRequest request) throws InterruptedException {
             ensureActive();
-
-            long deadlineNanos = request.waitPolicy().unbounded()
-                ? Long.MAX_VALUE
-                : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
-
-            do {
-                ZooKeeperLease lease = tryAcquire(request);
-                if (lease != null) {
-                    activeLeases.put(lease.ownerPath(), lease);
-                    return lease;
-                }
-                if (!request.waitPolicy().unbounded() && System.nanoTime() >= deadlineNanos) {
-                    throw new LockAcquisitionTimeoutException(
-                        "Timed out acquiring ZooKeeper lock for key " + request.key().value()
-                    );
-                }
-                Thread.sleep(request.waitPolicy().unbounded()
-                    ? 25L
-                    : Math.min(25L, Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()))));
-            } while (true);
+            return switch (request.mode()) {
+                case MUTEX -> acquireMutex(request);
+                case READ, WRITE -> acquireReadWrite(request);
+            };
         }
 
         @Override
@@ -137,10 +114,15 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (!closed.compareAndSet(false, true)) {
                 return;
             }
+            if (!sessionValidSupplier.getAsBoolean()) {
+                return;
+            }
             RuntimeException failure = null;
             for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
                 try {
                     lease.release();
+                } catch (LockOwnershipLostException ignored) {
+                    // Lost ownership is an expected terminal state during cleanup.
                 } catch (RuntimeException exception) {
                     if (failure == null) {
                         failure = exception;
@@ -154,18 +136,113 @@ public final class ZooKeeperLockBackend implements LockBackend {
             }
         }
 
-        private ZooKeeperLease tryAcquire(LockRequest request) {
+        private ZooKeeperLease acquireMutex(LockRequest request) throws InterruptedException {
+            long deadlineNanos = request.waitPolicy().unbounded()
+                ? Long.MAX_VALUE
+                : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+            String ownerPath = mutexOwnerPath(request.key().value());
+            while (true) {
+                ensureActive();
+                ZooKeeperLease lease;
+                try {
+                    lease = tryAcquireMutex(request.key());
+                } catch (RuntimeException exception) {
+                    throw exception;
+                } catch (Exception exception) {
+                    throw new LockBackendException(
+                        "Failed to acquire ZooKeeper mutex for key " + request.key().value(),
+                        exception
+                    );
+                }
+                if (lease != null) {
+                    activeLeases.put(lease.ownerPath(), lease);
+                    return lease;
+                }
+                long remainingNanos = remainingNanos(deadlineNanos);
+                if (!request.waitPolicy().unbounded() && remainingNanos <= 0L) {
+                    throw timeout(request.key());
+                }
+                try {
+                    boolean deleted = awaitNodeDeletion(ownerPath, remainingNanos);
+                    if (!request.waitPolicy().unbounded() && !deleted) {
+                        throw timeout(request.key());
+                    }
+                } catch (RuntimeException exception) {
+                    throw exception;
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw exception;
+                } catch (Exception exception) {
+                    throw new LockBackendException(
+                        "Failed while waiting for ZooKeeper mutex on key " + request.key().value(),
+                        exception
+                    );
+                }
+            }
+        }
+
+        private ZooKeeperLease acquireReadWrite(LockRequest request) throws InterruptedException {
+            String contenderPath = null;
             try {
-                return switch (request.mode()) {
-                    case MUTEX -> tryAcquireMutex(request.key());
-                    case READ -> tryAcquireRead(request.key());
-                    case WRITE -> tryAcquireWrite(request.key());
-                };
-            } catch (KeeperException.NodeExistsException exception) {
-                return null;
-            } catch (KeeperException.NoNodeException exception) {
-                return null;
+                ensureActive();
+                contenderPath = createContenderNode(request);
+                byte[] nodeOwnerData = ownerData(sessionId);
+                String nodeName = nodeName(contenderPath);
+                long deadlineNanos = request.waitPolicy().unbounded()
+                    ? Long.MAX_VALUE
+                    : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+                while (true) {
+                    ensureActive();
+                    List<QueueNode> nodes = queueNodes(request.key().value());
+                    QueueNode current = currentNode(nodes, nodeName);
+                    if (current == null) {
+                        throw new LockSessionLostException(
+                            "ZooKeeper contender node disappeared for key " + request.key().value()
+                        );
+                    }
+                    if (canAcquire(nodes, current)) {
+                        long fence = nextFence(request.key().value());
+                        ZooKeeperLease lease = new ZooKeeperLease(
+                            request.key(),
+                            request.mode(),
+                            new FencingToken(fence),
+                            contenderPath,
+                            nodeOwnerData,
+                            this
+                        );
+                        activeLeases.put(lease.ownerPath(), lease);
+                        return lease;
+                    }
+                    long remainingNanos = remainingNanos(deadlineNanos);
+                    if (!request.waitPolicy().unbounded() && remainingNanos <= 0L) {
+                        deleteIfExists(contenderPath);
+                        throw timeout(request.key());
+                    }
+                    String predecessorPath = watchedPredecessor(request.key().value(), nodes, current);
+                    if (predecessorPath == null) {
+                        continue;
+                    }
+                    boolean deleted = awaitNodeDeletion(predecessorPath, remainingNanos);
+                    if (!request.waitPolicy().unbounded() && !deleted) {
+                        deleteIfExists(contenderPath);
+                        throw timeout(request.key());
+                    }
+                }
+            } catch (InterruptedException exception) {
+                if (contenderPath != null) {
+                    deleteIfExists(contenderPath);
+                }
+                Thread.currentThread().interrupt();
+                throw exception;
+            } catch (RuntimeException exception) {
+                if (contenderPath != null) {
+                    deleteIfExists(contenderPath);
+                }
+                throw exception;
             } catch (Exception exception) {
+                if (contenderPath != null) {
+                    deleteIfExists(contenderPath);
+                }
                 throw new LockBackendException(
                     "Failed to acquire ZooKeeper lock for key " + request.key().value(),
                     exception
@@ -178,58 +255,102 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (curatorFramework.checkExists().forPath(ownerPath) != null) {
                 return null;
             }
-            long fence = nextFence(key.value(), LockMode.MUTEX);
-            byte[] ownerData = ownerData(sessionId, fence);
+            long fence = nextFence(key.value());
+            byte[] nodeOwnerData = ownerData(sessionId);
             try {
                 curatorFramework.create()
                     .creatingParentsIfNeeded()
                     .withMode(CreateMode.EPHEMERAL)
-                    .forPath(ownerPath, ownerData);
+                    .forPath(ownerPath, nodeOwnerData);
             } catch (KeeperException.NodeExistsException exception) {
                 return null;
             }
-            return new ZooKeeperLease(key, LockMode.MUTEX, new FencingToken(fence), ownerPath, ownerData, this);
+            return new ZooKeeperLease(key, LockMode.MUTEX, new FencingToken(fence), ownerPath, nodeOwnerData, this);
         }
 
-        private ZooKeeperLease tryAcquireRead(LockKey key) throws Exception {
-            String writePath = writeOwnerPath(key.value());
-            if (curatorFramework.checkExists().forPath(writePath) != null) {
-                return null;
-            }
-            long fence = nextFence(key.value(), LockMode.READ);
-            String ownerPath = readOwnersRootPath(key.value()) + "/" + sessionId + "-" + UUID.randomUUID();
-            byte[] ownerData = ownerData(sessionId, fence);
-            curatorFramework.create()
+        private String createContenderNode(LockRequest request) throws Exception {
+            String prefix = switch (request.mode()) {
+                case READ -> "read-";
+                case WRITE -> "write-";
+                case MUTEX -> throw new IllegalArgumentException("Mutex mode does not use queue nodes");
+            };
+            return curatorFramework.create()
                 .creatingParentsIfNeeded()
-                .withMode(CreateMode.EPHEMERAL)
-                .forPath(ownerPath, ownerData);
-            return new ZooKeeperLease(key, LockMode.READ, new FencingToken(fence), ownerPath, ownerData, this);
+                .withMode(CreateMode.EPHEMERAL_SEQUENTIAL)
+                .forPath(queueRootPath(request.key().value()) + "/" + prefix, ownerData(sessionId));
         }
 
-        private ZooKeeperLease tryAcquireWrite(LockKey key) throws Exception {
-            String ownerPath = writeOwnerPath(key.value());
-            if (curatorFramework.checkExists().forPath(ownerPath) != null) {
-                return null;
-            }
-            Stat readRoot = curatorFramework.checkExists().forPath(readOwnersRootPath(key.value()));
-            if (readRoot != null && !curatorFramework.getChildren().forPath(readOwnersRootPath(key.value())).isEmpty()) {
-                return null;
-            }
-            long fence = nextFence(key.value(), LockMode.WRITE);
-            byte[] ownerData = ownerData(sessionId, fence);
+        private List<QueueNode> queueNodes(String key) throws Exception {
             try {
-                curatorFramework.create()
-                    .creatingParentsIfNeeded()
-                    .withMode(CreateMode.EPHEMERAL)
-                    .forPath(ownerPath, ownerData);
-            } catch (KeeperException.NodeExistsException exception) {
-                return null;
+                return curatorFramework.getChildren().forPath(queueRootPath(key)).stream()
+                    .map(ZooKeeperLockBackend.this::queueNode)
+                    .filter(Objects::nonNull)
+                    .sorted(Comparator.comparingLong(QueueNode::sequence))
+                    .toList();
+            } catch (KeeperException.NoNodeException exception) {
+                return List.of();
             }
-            return new ZooKeeperLease(key, LockMode.WRITE, new FencingToken(fence), ownerPath, ownerData, this);
+        }
+
+        private QueueNode currentNode(List<QueueNode> nodes, String nodeName) {
+            return nodes.stream()
+                .filter(node -> node.name().equals(nodeName))
+                .findFirst()
+                .orElse(null);
+        }
+
+        private boolean canAcquire(List<QueueNode> nodes, QueueNode current) {
+            if (current.mode() == LockMode.WRITE) {
+                return nodes.stream()
+                    .takeWhile(node -> node.sequence() < current.sequence())
+                    .findAny()
+                    .isEmpty();
+            }
+            return nodes.stream()
+                .takeWhile(node -> node.sequence() < current.sequence())
+                .noneMatch(node -> node.mode() == LockMode.WRITE);
+        }
+
+        private String watchedPredecessor(String key, List<QueueNode> nodes, QueueNode current) {
+            if (current.mode() == LockMode.WRITE) {
+                return nodes.stream()
+                    .filter(node -> node.sequence() < current.sequence())
+                    .max(Comparator.comparingLong(QueueNode::sequence))
+                    .map(node -> queueRootPath(key) + "/" + node.name())
+                    .orElse(null);
+            }
+            return nodes.stream()
+                .filter(node -> node.sequence() < current.sequence() && node.mode() == LockMode.WRITE)
+                .max(Comparator.comparingLong(QueueNode::sequence))
+                .map(node -> queueRootPath(key) + "/" + node.name())
+                .orElse(null);
+        }
+
+        private boolean awaitNodeDeletion(String path, long remainingNanos) throws Exception {
+            CountDownLatch latch = new CountDownLatch(1);
+            CuratorWatcher watcher = event -> latch.countDown();
+            Stat stat = curatorFramework.checkExists().usingWatcher(watcher).forPath(path);
+            if (stat == null) {
+                return true;
+            }
+            if (remainingNanos == Long.MAX_VALUE) {
+                latch.await();
+                return true;
+            }
+            return latch.await(Math.max(1L, remainingNanos), TimeUnit.NANOSECONDS);
         }
 
         private void forgetLease(ZooKeeperLease lease) {
             activeLeases.remove(lease.ownerPath());
+        }
+
+        private void deleteIfExists(String path) {
+            try {
+                curatorFramework.delete().forPath(path);
+            } catch (KeeperException.NoNodeException ignored) {
+            } catch (Exception exception) {
+                throw new LockBackendException("Failed to delete ZooKeeper node " + path, exception);
+            }
         }
 
         private void ensureActive() {
@@ -239,6 +360,10 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (!sessionValidSupplier.getAsBoolean()) {
                 throw new LockSessionLostException("ZooKeeper session lost: " + sessionId);
             }
+        }
+
+        private long remainingNanos(long deadlineNanos) {
+            return deadlineNanos == Long.MAX_VALUE ? Long.MAX_VALUE : deadlineNanos - System.nanoTime();
         }
     }
 
@@ -311,7 +436,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
             }
             if (!sessionValidSupplier.getAsBoolean()) {
                 markLost();
-                lostReleaseReported.set(true);
                 throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             }
 
@@ -319,35 +443,18 @@ public final class ZooKeeperLockBackend implements LockBackend {
                 Stat stat = curatorFramework.checkExists().forPath(ownerPath);
                 if (stat == null || !ownerNodeStillBelongsToSession()) {
                     markLost();
-                    lostReleaseReported.set(true);
                     throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
                 }
                 curatorFramework.delete().forPath(ownerPath);
                 state.set(LeaseState.RELEASED);
                 session.forgetLease(this);
-                cleanupEmptyReadRoot();
             } catch (LockOwnershipLostException exception) {
                 throw exception;
             } catch (KeeperException.NoNodeException exception) {
                 markLost();
-                lostReleaseReported.set(true);
                 throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             } catch (Exception exception) {
                 throw new LockBackendException("Failed to release ZooKeeper lock for key " + key.value(), exception);
-            }
-        }
-
-        private void cleanupEmptyReadRoot() throws Exception {
-            if (mode != LockMode.READ) {
-                return;
-            }
-            String rootPath = readOwnersRootPath(key.value());
-            Stat stat = curatorFramework.checkExists().forPath(rootPath);
-            if (stat != null && curatorFramework.getChildren().forPath(rootPath).isEmpty()) {
-                try {
-                    curatorFramework.delete().forPath(rootPath);
-                } catch (KeeperException.NotEmptyException | KeeperException.NoNodeException ignored) {
-                }
             }
         }
 
@@ -364,6 +471,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
         private void markLost() {
             state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
+            lostReleaseReported.set(true);
             session.forgetLease(this);
         }
 
@@ -372,8 +480,22 @@ public final class ZooKeeperLockBackend implements LockBackend {
         }
     }
 
-    private long nextFence(String key, LockMode mode) throws Exception {
-        String counterPath = fenceCounterPath(key, mode);
+    private QueueNode queueNode(String name) {
+        if (name.startsWith("read-")) {
+            return new QueueNode(name, LockMode.READ, sequence(name));
+        }
+        if (name.startsWith("write-")) {
+            return new QueueNode(name, LockMode.WRITE, sequence(name));
+        }
+        return null;
+    }
+
+    private long sequence(String nodeName) {
+        return Long.parseLong(nodeName.substring(nodeName.lastIndexOf('-') + 1));
+    }
+
+    private long nextFence(String key) throws Exception {
+        String counterPath = fenceCounterPath(key);
         ensurePersistentCounter(counterPath);
         while (true) {
             Stat stat = new Stat();
@@ -407,28 +529,20 @@ public final class ZooKeeperLockBackend implements LockBackend {
         return configuration.basePath() + "/mutex/" + encodeKeySegment(key) + "/owner";
     }
 
-    private String readOwnersRootPath(String key) {
-        return configuration.basePath() + "/rw/" + encodeKeySegment(key) + "/readers";
+    private String queueRootPath(String key) {
+        return configuration.basePath() + "/rw/" + encodeKeySegment(key) + "/locks";
     }
 
-    private String writeOwnerPath(String key) {
-        return configuration.basePath() + "/rw/" + encodeKeySegment(key) + "/write-owner";
-    }
-
-    private String fenceCounterPath(String key, LockMode mode) {
-        return configuration.basePath() + "/fence/" + normalizeMode(mode) + "/" + encodeKeySegment(key);
+    private String fenceCounterPath(String key) {
+        return configuration.basePath() + "/fence/" + encodeKeySegment(key);
     }
 
     private String encodeKeySegment(String key) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(key.getBytes(StandardCharsets.UTF_8));
     }
 
-    private static String normalizeMode(LockMode mode) {
-        return mode.name().toLowerCase(Locale.ROOT);
-    }
-
-    private static byte[] ownerData(String sessionId, long fence) {
-        return (sessionId + ":" + fence).getBytes(StandardCharsets.UTF_8);
+    private static byte[] ownerData(String sessionId) {
+        return sessionId.getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] longToBytes(long value) {
@@ -440,5 +554,16 @@ public final class ZooKeeperLockBackend implements LockBackend {
             return 0L;
         }
         return ByteBuffer.wrap(bytes).getLong();
+    }
+
+    private static String nodeName(String path) {
+        return path.substring(path.lastIndexOf('/') + 1);
+    }
+
+    private static LockAcquisitionTimeoutException timeout(LockKey key) {
+        return new LockAcquisitionTimeoutException("Timed out acquiring ZooKeeper lock for key " + key.value());
+    }
+
+    private record QueueNode(String name, LockMode mode, long sequence) {
     }
 }

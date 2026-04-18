@@ -1,11 +1,8 @@
 package com.mycorp.distributedlock.zookeeper;
 
-import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.SessionPolicy;
-import com.mycorp.distributedlock.api.SessionRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
@@ -31,10 +28,10 @@ class ZooKeeperLockBackendBehaviorTest {
              )) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
-                try (BackendSession firstSession = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+                try (BackendSession firstSession = backend.openSession();
                      BackendLockLease ignored = firstSession.acquire(request("orders:1", Duration.ofSeconds(1)))) {
                     assertThat(executor.submit(() -> {
-                        try (BackendSession secondSession = backend.openSession(new SessionRequest(SessionPolicy.MANUAL_CLOSE));
+                        try (BackendSession secondSession = backend.openSession();
                              BackendLockLease lease = secondSession.acquire(request("orders_1", Duration.ofMillis(100)))) {
                             return lease != null;
                         }
@@ -64,8 +61,7 @@ class ZooKeeperLockBackendBehaviorTest {
         return new LockRequest(
             new LockKey(key),
             LockMode.MUTEX,
-            WaitPolicy.timed(waitTime),
-            LeasePolicy.RELEASE_ON_CLOSE
+            WaitPolicy.timed(waitTime)
         );
     }
 }
