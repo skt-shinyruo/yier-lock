@@ -16,6 +16,7 @@ import com.mycorp.distributedlock.core.backend.LockBackend;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.api.CuratorWatcher;
+import org.apache.curator.framework.state.ConnectionState;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -34,62 +35,80 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.BooleanSupplier;
 
 public final class ZooKeeperLockBackend implements LockBackend {
 
     private final ZooKeeperBackendConfiguration configuration;
-    private final CuratorFramework curatorFramework;
-    private final BooleanSupplier sessionValidSupplier;
 
     public ZooKeeperLockBackend(ZooKeeperBackendConfiguration configuration) {
-        this(configuration, null);
+        this.configuration = Objects.requireNonNull(configuration, "configuration");
+        CuratorFramework curatorFramework = newClient();
+        curatorFramework.start();
+        try {
+            awaitConnected(curatorFramework);
+        } finally {
+            curatorFramework.close();
+        }
     }
 
-    ZooKeeperLockBackend(ZooKeeperBackendConfiguration configuration, BooleanSupplier sessionValidSupplier) {
-        this.configuration = Objects.requireNonNull(configuration, "configuration");
-        this.curatorFramework = CuratorFrameworkFactory.newClient(
+    @Override
+    public BackendSession openSession() {
+        CuratorFramework curatorFramework = newClient();
+        curatorFramework.start();
+        awaitConnected(curatorFramework);
+        return new ZooKeeperBackendSession(UUID.randomUUID().toString(), curatorFramework);
+    }
+
+    @Override
+    public void close() {
+        // No shared backend resources remain once each session owns its own client.
+    }
+
+    private CuratorFramework newClient() {
+        return CuratorFrameworkFactory.newClient(
             configuration.connectString(),
             new ExponentialBackoffRetry(1_000, 3)
         );
-        this.curatorFramework.start();
-        this.sessionValidSupplier = sessionValidSupplier != null
-            ? sessionValidSupplier
-            : () -> curatorFramework.getZookeeperClient().isConnected();
+    }
+
+    private void awaitConnected(CuratorFramework curatorFramework) {
         try {
-            boolean connected = this.curatorFramework.blockUntilConnected(10, TimeUnit.SECONDS);
+            boolean connected = curatorFramework.blockUntilConnected(10, TimeUnit.SECONDS);
             if (!connected) {
-                this.curatorFramework.close();
+                curatorFramework.close();
                 throw new LockBackendException(
                     "Failed to connect to ZooKeeper within 10 seconds: " + configuration.connectString()
                 );
             }
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
+            curatorFramework.close();
             throw new LockBackendException("Interrupted while connecting to ZooKeeper", exception);
         }
     }
 
-    @Override
-    public BackendSession openSession() {
-        return new ZooKeeperBackendSession(UUID.randomUUID().toString());
-    }
-
-    @Override
-    public void close() {
-        curatorFramework.close();
-    }
-
-    private final class ZooKeeperBackendSession implements BackendSession {
+    private final class ZooKeeperBackendSession implements BackendSession, CuratorBackedSession {
 
         private final String sessionId;
+        private final CuratorFramework curatorFramework;
         private final ConcurrentMap<String, ZooKeeperLease> activeLeases = new ConcurrentHashMap<>();
-        private final AtomicBoolean closed = new AtomicBoolean();
+        private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.ACTIVE);
+        private final AtomicReference<RuntimeException> lossCause = new AtomicReference<>();
 
-        private ZooKeeperBackendSession(String sessionId) {
+        private ZooKeeperBackendSession(String sessionId, CuratorFramework curatorFramework) {
             this.sessionId = sessionId;
+            this.curatorFramework = curatorFramework;
+            this.curatorFramework.getConnectionStateListenable().addListener((client, newState) -> {
+                if (newState == ConnectionState.LOST || newState == ConnectionState.SUSPENDED) {
+                    markSessionLost(new LockSessionLostException("ZooKeeper session lost: " + sessionId));
+                }
+            });
+        }
+
+        @Override
+        public CuratorFramework curatorFramework() {
+            return curatorFramework;
         }
 
         @Override
@@ -103,26 +122,29 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
         @Override
         public SessionState state() {
-            if (closed.get()) {
-                return SessionState.CLOSED;
-            }
-            return sessionValidSupplier.getAsBoolean() ? SessionState.ACTIVE : SessionState.LOST;
+            return state.get();
         }
 
         @Override
         public void close() {
-            if (!closed.compareAndSet(false, true)) {
+            SessionState current = state.get();
+            if (current == SessionState.CLOSED) {
                 return;
             }
-            if (!sessionValidSupplier.getAsBoolean()) {
-                return;
+            if (current == SessionState.ACTIVE) {
+                state.compareAndSet(SessionState.ACTIVE, SessionState.CLOSED);
+                current = state.get();
             }
             RuntimeException failure = null;
             for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
                 try {
                     lease.release();
-                } catch (LockOwnershipLostException ignored) {
-                    // Lost ownership is an expected terminal state during cleanup.
+                } catch (LockOwnershipLostException exception) {
+                    if (failure == null) {
+                        failure = exception;
+                    } else {
+                        failure.addSuppressed(exception);
+                    }
                 } catch (RuntimeException exception) {
                     if (failure == null) {
                         failure = exception;
@@ -131,8 +153,12 @@ public final class ZooKeeperLockBackend implements LockBackend {
                     }
                 }
             }
+            curatorFramework.close();
             if (failure != null) {
                 throw failure;
+            }
+            if (current == SessionState.LOST) {
+                throw lossCause();
             }
         }
 
@@ -354,16 +380,63 @@ public final class ZooKeeperLockBackend implements LockBackend {
         }
 
         private void ensureActive() {
-            if (closed.get()) {
+            SessionState current = state.get();
+            if (current == SessionState.CLOSED) {
                 throw new IllegalStateException("ZooKeeper session is already closed");
             }
-            if (!sessionValidSupplier.getAsBoolean()) {
+            if (current == SessionState.LOST) {
                 throw new LockSessionLostException("ZooKeeper session lost: " + sessionId);
             }
         }
 
         private long remainingNanos(long deadlineNanos) {
             return deadlineNanos == Long.MAX_VALUE ? Long.MAX_VALUE : deadlineNanos - System.nanoTime();
+        }
+
+        private long nextFence(String key) throws Exception {
+            String counterPath = fenceCounterPath(key);
+            ensurePersistentCounter(counterPath);
+            while (true) {
+                Stat stat = new Stat();
+                byte[] current = curatorFramework.getData().storingStatIn(stat).forPath(counterPath);
+                long next = bytesToLong(current) + 1L;
+                try {
+                    curatorFramework.setData()
+                        .withVersion(stat.getVersion())
+                        .forPath(counterPath, longToBytes(next));
+                    return next;
+                } catch (KeeperException.BadVersionException ignored) {
+                    // Retry optimistic update until the counter is advanced successfully.
+                }
+            }
+        }
+
+        private void ensurePersistentCounter(String counterPath) throws Exception {
+            if (curatorFramework.checkExists().forPath(counterPath) != null) {
+                return;
+            }
+            try {
+                curatorFramework.create()
+                    .creatingParentsIfNeeded()
+                    .withMode(CreateMode.PERSISTENT)
+                    .forPath(counterPath, longToBytes(0L));
+            } catch (KeeperException.NodeExistsException ignored) {
+            }
+        }
+
+        private RuntimeException lossCause() {
+            RuntimeException cause = lossCause.get();
+            return cause != null ? cause : new LockSessionLostException("ZooKeeper session lost: " + sessionId);
+        }
+
+        private void markSessionLost(RuntimeException cause) {
+            lossCause.compareAndSet(null, cause);
+            if (!state.compareAndSet(SessionState.ACTIVE, SessionState.LOST)) {
+                return;
+            }
+            for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
+                lease.markLost();
+            }
         }
     }
 
@@ -376,7 +449,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
         private final byte[] ownerData;
         private final ZooKeeperBackendSession session;
         private final AtomicReference<LeaseState> state = new AtomicReference<>(LeaseState.ACTIVE);
-        private final AtomicBoolean lostReleaseReported = new AtomicBoolean();
 
         private ZooKeeperLease(
             LockKey key,
@@ -419,10 +491,15 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (state.get() != LeaseState.ACTIVE) {
                 return false;
             }
-            if (!sessionValidSupplier.getAsBoolean()) {
+            if (session.state() != SessionState.ACTIVE) {
+                markLost();
                 return false;
             }
-            return ownerNodeStillBelongsToSession();
+            if (!ownerNodeStillBelongsToSession()) {
+                markLost();
+                return false;
+            }
+            return true;
         }
 
         @Override
@@ -431,21 +508,22 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (current == LeaseState.RELEASED) {
                 return;
             }
-            if (current == LeaseState.LOST && lostReleaseReported.get()) {
-                return;
+            if (current == LeaseState.LOST) {
+                session.forgetLease(this);
+                throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             }
-            if (!sessionValidSupplier.getAsBoolean()) {
+            if (session.state() != SessionState.ACTIVE) {
                 markLost();
                 throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             }
 
             try {
-                Stat stat = curatorFramework.checkExists().forPath(ownerPath);
+                Stat stat = session.curatorFramework.checkExists().forPath(ownerPath);
                 if (stat == null || !ownerNodeStillBelongsToSession()) {
                     markLost();
                     throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
                 }
-                curatorFramework.delete().forPath(ownerPath);
+                session.curatorFramework.delete().forPath(ownerPath);
                 state.set(LeaseState.RELEASED);
                 session.forgetLease(this);
             } catch (LockOwnershipLostException exception) {
@@ -460,7 +538,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
         private boolean ownerNodeStillBelongsToSession() {
             try {
-                byte[] currentData = curatorFramework.getData().forPath(ownerPath);
+                byte[] currentData = session.curatorFramework.getData().forPath(ownerPath);
                 return Arrays.equals(currentData, ownerData);
             } catch (KeeperException.NoNodeException exception) {
                 return false;
@@ -471,7 +549,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
         private void markLost() {
             state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
-            lostReleaseReported.set(true);
             session.forgetLease(this);
         }
 
@@ -492,37 +569,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
     private long sequence(String nodeName) {
         return Long.parseLong(nodeName.substring(nodeName.lastIndexOf('-') + 1));
-    }
-
-    private long nextFence(String key) throws Exception {
-        String counterPath = fenceCounterPath(key);
-        ensurePersistentCounter(counterPath);
-        while (true) {
-            Stat stat = new Stat();
-            byte[] current = curatorFramework.getData().storingStatIn(stat).forPath(counterPath);
-            long next = bytesToLong(current) + 1L;
-            try {
-                curatorFramework.setData()
-                    .withVersion(stat.getVersion())
-                    .forPath(counterPath, longToBytes(next));
-                return next;
-            } catch (KeeperException.BadVersionException ignored) {
-                // Retry optimistic update until the counter is advanced successfully.
-            }
-        }
-    }
-
-    private void ensurePersistentCounter(String counterPath) throws Exception {
-        if (curatorFramework.checkExists().forPath(counterPath) != null) {
-            return;
-        }
-        try {
-            curatorFramework.create()
-                .creatingParentsIfNeeded()
-                .withMode(CreateMode.PERSISTENT)
-                .forPath(counterPath, longToBytes(0L));
-        } catch (KeeperException.NodeExistsException ignored) {
-        }
     }
 
     private String mutexOwnerPath(String key) {
