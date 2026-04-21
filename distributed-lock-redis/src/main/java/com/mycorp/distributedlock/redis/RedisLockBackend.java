@@ -135,6 +135,7 @@ public final class RedisLockBackend implements LockBackend {
         private final ConcurrentMap<String, RedisLease> activeLeases = new ConcurrentHashMap<>();
         private final AtomicBoolean closed = new AtomicBoolean();
         private final AtomicBoolean valid = new AtomicBoolean(true);
+        private final AtomicReference<RuntimeException> lossCause = new AtomicReference<>();
         private final ScheduledFuture<?> renewalTask;
 
         private RedisBackendSession(String sessionId) {
@@ -181,9 +182,7 @@ public final class RedisLockBackend implements LockBackend {
             }
 
             renewalTask.cancel(false);
-            if (!valid.get()) {
-                return;
-            }
+            RuntimeException terminalLoss = !valid.get() ? lossCause() : null;
             RuntimeException failure = null;
             for (RedisLease lease : new ArrayList<>(activeLeases.values())) {
                 try {
@@ -200,7 +199,9 @@ public final class RedisLockBackend implements LockBackend {
             try {
                 commands.del(sessionKey(sessionId));
             } catch (RuntimeException exception) {
-                if (failure == null) {
+                if (terminalLoss != null) {
+                    terminalLoss.addSuppressed(exception);
+                } else if (failure == null) {
                     failure = new LockBackendException("Failed to close Redis session " + sessionId, exception);
                 } else {
                     failure.addSuppressed(exception);
@@ -209,6 +210,9 @@ public final class RedisLockBackend implements LockBackend {
 
             if (failure != null) {
                 throw failure;
+            }
+            if (terminalLoss != null) {
+                throw terminalLoss;
             }
         }
 
@@ -294,7 +298,7 @@ public final class RedisLockBackend implements LockBackend {
                     lease.refresh();
                 }
             } catch (RuntimeException exception) {
-                markSessionLost(new LockBackendException("Failed to renew Redis session " + sessionId, exception));
+                markSessionLost(new LockSessionLostException("Redis session lost: " + sessionId, exception));
             }
         }
 
@@ -319,6 +323,7 @@ public final class RedisLockBackend implements LockBackend {
         }
 
         private void markSessionLost(RuntimeException cause) {
+            lossCause.compareAndSet(null, cause);
             if (!valid.compareAndSet(true, false)) {
                 return;
             }
@@ -326,6 +331,11 @@ public final class RedisLockBackend implements LockBackend {
                 lease.markLost();
             }
             renewalTask.cancel(false);
+        }
+
+        private RuntimeException lossCause() {
+            RuntimeException cause = lossCause.get();
+            return cause != null ? cause : new LockSessionLostException("Redis session lost: " + sessionId);
         }
 
         private void ensureActive() {
@@ -346,7 +356,6 @@ public final class RedisLockBackend implements LockBackend {
         private final String ownerValue;
         private final RedisBackendSession session;
         private final AtomicReference<LeaseState> state = new AtomicReference<>(LeaseState.ACTIVE);
-        private final AtomicBoolean lostReleaseReported = new AtomicBoolean();
 
         private RedisLease(
             LockKey key,
@@ -399,8 +408,9 @@ public final class RedisLockBackend implements LockBackend {
             if (current == LeaseState.RELEASED) {
                 return;
             }
-            if (current == LeaseState.LOST && lostReleaseReported.get()) {
-                return;
+            if (current == LeaseState.LOST) {
+                session.forgetLease(this);
+                throw new LockOwnershipLostException("Redis lock ownership lost for key " + key.value());
             }
 
             try {
@@ -425,9 +435,7 @@ public final class RedisLockBackend implements LockBackend {
                     );
                 };
                 if (result == null || result == 0L) {
-                    state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
-                    session.forgetLease(this);
-                    lostReleaseReported.set(true);
+                    markLost();
                     throw new LockOwnershipLostException("Redis lock ownership lost for key " + key.value());
                 }
                 state.set(LeaseState.RELEASED);
@@ -492,7 +500,6 @@ public final class RedisLockBackend implements LockBackend {
 
         private void markLost() {
             state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
-            lostReleaseReported.set(true);
             session.forgetLease(this);
         }
 
