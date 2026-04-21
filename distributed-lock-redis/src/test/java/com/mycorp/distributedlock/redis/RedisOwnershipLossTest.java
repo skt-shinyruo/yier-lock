@@ -38,18 +38,29 @@ class RedisOwnershipLossTest {
 
     @Test
     void redisShouldInvalidateLeaseAfterTokenDeletion() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(30L);
-             BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(new LockRequest(
-                 new LockKey("lost:1"),
-                 LockMode.MUTEX,
-                 WaitPolicy.indefinite()
-             ))) {
-            redis.commands().del(RedisLockBackend.ownerKey("lost:1", LockMode.MUTEX));
+        try (RedisLockBackend backend = redis.newBackend(30L)) {
+            BackendSession session = backend.openSession();
+            BackendLockLease lease = session.acquire(new LockRequest(
+                new LockKey("lost:1"),
+                LockMode.MUTEX,
+                WaitPolicy.indefinite()
+            ));
+            try {
+                redis.commands().del(RedisLockBackend.ownerKey("lost:1", LockMode.MUTEX));
 
-            assertThat(lease.isValid()).isFalse();
-            assertThatThrownBy(lease::release)
-                .isInstanceOf(LockOwnershipLostException.class);
+                assertThat(lease.isValid()).isFalse();
+                assertThatThrownBy(lease::release)
+                    .isInstanceOf(LockOwnershipLostException.class);
+            } finally {
+                try {
+                    lease.close();
+                } catch (RuntimeException ignored) {
+                }
+                try {
+                    session.close();
+                } catch (RuntimeException ignored) {
+                }
+            }
         }
     }
 }
