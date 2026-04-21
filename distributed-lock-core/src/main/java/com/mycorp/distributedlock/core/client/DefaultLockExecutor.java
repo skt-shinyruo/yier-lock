@@ -6,7 +6,10 @@ import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.LockedSupplier;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Future;
 import java.util.Objects;
 
 public final class DefaultLockExecutor implements LockExecutor {
@@ -24,7 +27,43 @@ public final class DefaultLockExecutor implements LockExecutor {
         try (LockSession session = client.openSession();
              LockLease lease = session.acquire(request);
              CurrentLockContext.Binding ignored = CurrentLockContext.bind(lease)) {
-            return action.get();
+            T result = action.get();
+            rejectAsyncResult(result);
+            return result;
+        }
+    }
+
+    private static void rejectAsyncResult(Object result) {
+        if (result == null) {
+            return;
+        }
+        if (result instanceof CompletionStage<?>) {
+            throw new LockConfigurationException(
+                "LockExecutor only supports synchronous actions, but the action returned CompletionStage"
+            );
+        }
+        if (result instanceof Future<?>) {
+            throw new LockConfigurationException(
+                "LockExecutor only supports synchronous actions, but the action returned Future"
+            );
+        }
+        if (isReactivePublisher(result)) {
+            throw new LockConfigurationException(
+                "LockExecutor only supports synchronous actions, but the action returned Publisher"
+            );
+        }
+    }
+
+    private static boolean isReactivePublisher(Object result) {
+        try {
+            Class<?> publisherType = Class.forName(
+                "org.reactivestreams.Publisher",
+                false,
+                result.getClass().getClassLoader()
+            );
+            return publisherType.isInstance(result);
+        } catch (ClassNotFoundException exception) {
+            return false;
         }
     }
 }

@@ -8,12 +8,17 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -73,12 +78,80 @@ class DefaultLockExecutorTest {
         assertThat(observedToken).hasValue(1L);
     }
 
+    @Test
+    void withLockShouldRejectCompletionStageResults() {
+        TrackingBackend backend = new TrackingBackend();
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> CompletableFuture.completedFuture("ok")))
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("CompletionStage");
+
+        assertThat(backend.releaseCount()).hasValue(1);
+        assertThat(backend.sessionCloseCount()).hasValue(1);
+    }
+
+    @Test
+    void withLockShouldRejectFutureResults() {
+        TrackingBackend backend = new TrackingBackend();
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
+        FutureTask<String> futureTask = new FutureTask<>(() -> "ok");
+        futureTask.run();
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> futureTask))
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Future");
+
+        assertThat(backend.releaseCount()).hasValue(1);
+        assertThat(backend.sessionCloseCount()).hasValue(1);
+    }
+
+    @Test
+    void withLockShouldRejectReactivePublisherResultsWhenReactiveStreamsIsPresent() throws Exception {
+        Assumptions.assumeTrue(isReactiveStreamsPresent());
+        TrackingBackend backend = new TrackingBackend();
+        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true)
+        ));
+
+        ClassLoader classLoader = DefaultLockExecutorTest.class.getClassLoader();
+        Class<?> publisherType = Class.forName("org.reactivestreams.Publisher", false, classLoader);
+        Object publisher = Proxy.newProxyInstance(
+            classLoader,
+            new Class<?>[]{publisherType},
+            (proxy, method, args) -> null
+        );
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> publisher))
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Publisher");
+
+        assertThat(backend.releaseCount()).hasValue(1);
+        assertThat(backend.sessionCloseCount()).hasValue(1);
+    }
+
     private static LockRequest sampleRequest() {
         return new LockRequest(
             new LockKey("inventory"),
             LockMode.MUTEX,
             WaitPolicy.timed(Duration.ofSeconds(1))
         );
+    }
+
+    private static boolean isReactiveStreamsPresent() {
+        try {
+            Class.forName("org.reactivestreams.Publisher", false, DefaultLockExecutorTest.class.getClassLoader());
+            return true;
+        } catch (ClassNotFoundException exception) {
+            return false;
+        }
     }
 
     private static final class TrackingBackend implements LockBackend {
