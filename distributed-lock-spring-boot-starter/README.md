@@ -97,6 +97,8 @@ Supported annotation fields:
 - `mode`
 - `waitFor`
 
+Lock keys follow Spring template-expression semantics. Literal keys such as `order:42` pass through unchanged, while templates such as `order:#{#p0}` are evaluated against the intercepted method arguments.
+
 `@DistributedLock` is intentionally synchronous-only. Methods returning `CompletionStage`, reactive publishers, or other async boundaries fail fast with `LockConfigurationException`.
 
 ## Programmatic usage

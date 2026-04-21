@@ -5,12 +5,15 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.core.DefaultParameterNameDiscoverer;
 import org.springframework.core.ParameterNameDiscoverer;
 import org.springframework.expression.ExpressionParser;
+import org.springframework.expression.ParserContext;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 
 import java.lang.reflect.Method;
 
 public final class SpelLockKeyResolver implements LockKeyResolver {
+
+    private static final ParserContext TEMPLATE_CONTEXT = ParserContext.TEMPLATE_EXPRESSION;
 
     private final ExpressionParser parser = new SpelExpressionParser();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
@@ -39,17 +42,7 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
             }
         }
 
-        String evaluated = expression;
-        while (evaluated.contains("#{")) {
-            int start = evaluated.indexOf("#{");
-            int end = evaluated.indexOf('}', start);
-            if (end < 0) {
-                throw new IllegalArgumentException("Invalid lock key expression: " + expression);
-            }
-            String spel = evaluated.substring(start + 2, end);
-            Object value = parser.parseExpression(spel).getValue(context);
-            evaluated = evaluated.substring(0, start) + value + evaluated.substring(end + 1);
-        }
-        return evaluated;
+        Object value = parser.parseExpression(expression, TEMPLATE_CONTEXT).getValue(context);
+        return value == null ? "null" : value.toString();
     }
 }
