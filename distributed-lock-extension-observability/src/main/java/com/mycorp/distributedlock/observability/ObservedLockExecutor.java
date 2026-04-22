@@ -24,7 +24,7 @@ public final class ObservedLockExecutor implements LockExecutor {
         long startedNanos = System.nanoTime();
         try {
             T result = delegate.withLock(request, action);
-            sink.record(new LockObservationEvent(
+            LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "executor",
                 "scope",
@@ -36,7 +36,7 @@ public final class ObservedLockExecutor implements LockExecutor {
             ));
             return result;
         } catch (Exception exception) {
-            sink.record(new LockObservationEvent(
+            LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "executor",
                 "scope",

@@ -7,6 +7,14 @@ import com.mycorp.distributedlock.runtime.LockRuntime;
 
 import java.util.Objects;
 
+/**
+ * Observability decorator for the standard runtime composition produced by {@code LockRuntimeBuilder}.
+ *
+ * <p>This decorator intentionally rebuilds the executor around the observed client so that
+ * executor-scoped calls emit both acquire and scope observations. It is not a transparent
+ * wrapper for arbitrary custom {@link LockRuntime} implementations with bespoke executor
+ * semantics.</p>
+ */
 public final class ObservedLockRuntime implements LockRuntime {
     private final LockRuntime delegate;
     private final LockClient lockClient;
