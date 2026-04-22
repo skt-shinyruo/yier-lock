@@ -79,6 +79,73 @@ class ObservedLockSessionTest {
         });
     }
 
+    @Test
+    void acquireShouldRecordGenericFailureOutcome() throws Exception {
+        LockRequest request = request("inventory:10", LockMode.WRITE);
+        com.mycorp.distributedlock.api.LockSession delegate = mock(com.mycorp.distributedlock.api.LockSession.class);
+        when(delegate.acquire(request)).thenThrow(new IllegalStateException("session closed"));
+
+        List<LockObservationEvent> events = new ArrayList<>();
+        ObservedLockSession session = new ObservedLockSession(delegate, events::add, "redis", true);
+
+        assertThatThrownBy(() -> session.acquire(request))
+            .isInstanceOf(IllegalStateException.class);
+
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.outcome()).isEqualTo("failure");
+            assertThat(event.key()).isEqualTo("inventory:10");
+            assertThat(event.mode()).isEqualTo(LockMode.WRITE);
+        });
+    }
+
+    @Test
+    void acquireShouldRecordInterruptionOutcome() throws Exception {
+        LockRequest request = request("inventory:11", LockMode.READ);
+        com.mycorp.distributedlock.api.LockSession delegate = mock(com.mycorp.distributedlock.api.LockSession.class);
+        when(delegate.acquire(request)).thenThrow(new InterruptedException("interrupted"));
+
+        List<LockObservationEvent> events = new ArrayList<>();
+        ObservedLockSession session = new ObservedLockSession(delegate, events::add, "redis", true);
+
+        assertThatThrownBy(() -> session.acquire(request))
+            .isInstanceOf(InterruptedException.class);
+
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.outcome()).isEqualTo("interrupted");
+            assertThat(event.key()).isEqualTo("inventory:11");
+            assertThat(event.mode()).isEqualTo(LockMode.READ);
+        });
+    }
+
+    @Test
+    void acquireShouldNotLetSinkFailureMaskLeaseGrant() throws Exception {
+        LockRequest request = request("orders:101", LockMode.MUTEX);
+        LockLease lease = mock(LockLease.class);
+        com.mycorp.distributedlock.api.LockSession delegate = mock(com.mycorp.distributedlock.api.LockSession.class);
+        when(delegate.acquire(request)).thenReturn(lease);
+
+        ObservedLockSession session = new ObservedLockSession(delegate, event -> {
+            throw new IllegalStateException("sink failed");
+        }, "redis", false);
+
+        assertThat(session.acquire(request)).isSameAs(lease);
+    }
+
+    @Test
+    void acquireShouldNotLetSinkFailureMaskBackendFailure() throws Exception {
+        LockRequest request = request("orders:202", LockMode.WRITE);
+        LockBackendException backendException = new LockBackendException("backend failed");
+        com.mycorp.distributedlock.api.LockSession delegate = mock(com.mycorp.distributedlock.api.LockSession.class);
+        when(delegate.acquire(request)).thenThrow(backendException);
+
+        ObservedLockSession session = new ObservedLockSession(delegate, event -> {
+            throw new IllegalStateException("sink failed");
+        }, "redis", false);
+
+        assertThatThrownBy(() -> session.acquire(request))
+            .isSameAs(backendException);
+    }
+
     private static LockRequest request(String key, LockMode mode) {
         return new LockRequest(new LockKey(key), mode, WaitPolicy.timed(Duration.ofSeconds(1)));
     }

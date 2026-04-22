@@ -25,7 +25,7 @@ public final class ObservedLockSession implements LockSession {
         long startedNanos = System.nanoTime();
         try {
             LockLease lease = delegate.acquire(request);
-            sink.record(new LockObservationEvent(
+            LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "client",
                 "acquire",
@@ -37,7 +37,7 @@ public final class ObservedLockSession implements LockSession {
             ));
             return lease;
         } catch (InterruptedException exception) {
-            sink.record(new LockObservationEvent(
+            LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "client",
                 "acquire",
@@ -49,7 +49,7 @@ public final class ObservedLockSession implements LockSession {
             ));
             throw exception;
         } catch (RuntimeException exception) {
-            sink.record(new LockObservationEvent(
+            LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "client",
                 "acquire",
