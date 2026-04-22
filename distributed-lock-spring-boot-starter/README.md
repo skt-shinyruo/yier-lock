@@ -37,6 +37,22 @@ Swap the backend module when using ZooKeeper:
 </dependency>
 ```
 
+## Observability extension
+
+The generic starter intentionally does not define metrics, tracing, or actuator contracts.
+If you want lock metrics and diagnostic logs, add the optional Spring observability extension:
+
+~~~xml
+<dependency>
+  <groupId>com.mycorp</groupId>
+  <artifactId>distributed-lock-extension-observability-spring</artifactId>
+</dependency>
+~~~
+
+This extension decorates the standard `LockRuntimeBuilder` runtime composition without changing the kernel API.
+It records low-cardinality timers such as `distributed.lock.acquire` and `distributed.lock.scope`.
+Raw lock keys stay out of metrics by default; `distributed.lock.observability.include-lock-key-in-logs=true` only affects diagnostic logs.
+
 ## Requirements
 
 - Java 17+

@@ -48,6 +48,15 @@ mvn -pl distributed-lock-zookeeper -am test \
   -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
+# observability extension 验证
+mvn -pl distributed-lock-extension-observability -am test \
+  -Dtest=ObservedLockSessionTest,ObservedLockExecutorTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
+mvn -pl distributed-lock-extension-observability-spring -am test \
+  -Dtest=DistributedLockObservabilityAutoConfigurationTest \
+  -Dsurefire.failIfNoSpecifiedTests=false
+
 # 全仓回归
 mvn test
 ```
