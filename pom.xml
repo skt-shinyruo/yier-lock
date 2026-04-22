@@ -38,6 +38,8 @@
         <module>distributed-lock-spring-boot-starter</module>
         <module>distributed-lock-redis-spring-boot-autoconfigure</module>
         <module>distributed-lock-zookeeper-spring-boot-autoconfigure</module>
+        <module>distributed-lock-extension-observability</module>
+        <module>distributed-lock-extension-observability-spring</module>
         <module>distributed-lock-examples</module>
     </modules>
 
@@ -86,6 +88,16 @@
             <dependency>
                 <groupId>com.mycorp</groupId>
                 <artifactId>distributed-lock-zookeeper-spring-boot-autoconfigure</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycorp</groupId>
+                <artifactId>distributed-lock-extension-observability</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mycorp</groupId>
+                <artifactId>distributed-lock-extension-observability-spring</artifactId>
                 <version>${project.version}</version>
             </dependency>
 
