@@ -53,7 +53,7 @@ public final class ObservedLockSession implements LockSession {
                 backendId,
                 "client",
                 "acquire",
-                LockObservationSupport.outcomeFor(exception),
+                LockObservationSupport.acquireOutcomeFor(exception),
                 request.mode(),
                 LockObservationSupport.keyFor(request, includeKey),
                 LockObservationSupport.durationSince(startedNanos),
