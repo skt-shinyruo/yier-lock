@@ -40,7 +40,7 @@ public final class ObservedLockExecutor implements LockExecutor {
                 backendId,
                 "executor",
                 "scope",
-                LockObservationSupport.outcomeFor(exception),
+                LockObservationSupport.scopeOutcomeFor(exception),
                 request.mode(),
                 LockObservationSupport.keyFor(request, includeKey),
                 LockObservationSupport.durationSince(startedNanos),

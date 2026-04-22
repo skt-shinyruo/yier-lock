@@ -5,6 +5,7 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -54,6 +55,26 @@ class ObservedLockExecutorTest {
             assertThat(event.outcome()).isEqualTo("failure");
             assertThat(event.key()).isEqualTo("orders:42");
             assertThat(event.error()).isInstanceOf(IllegalStateException.class);
+        });
+    }
+
+    @Test
+    void withLockShouldCollapseTimeoutIntoFailureScopeOutcome() {
+        List<LockObservationEvent> events = new ArrayList<>();
+        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+            @Override
+            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) {
+                throw new LockAcquisitionTimeoutException("timed out");
+            }
+        }, events::add, "redis", true);
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> "ignored"))
+            .isInstanceOf(LockAcquisitionTimeoutException.class);
+
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.outcome()).isEqualTo("failure");
+            assertThat(event.key()).isEqualTo("orders:42");
+            assertThat(event.error()).isInstanceOf(LockAcquisitionTimeoutException.class);
         });
     }
 

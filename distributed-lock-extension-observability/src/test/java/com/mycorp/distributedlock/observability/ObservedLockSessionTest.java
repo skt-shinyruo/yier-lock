@@ -6,6 +6,7 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.api.exception.LockBackendException;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -56,6 +57,25 @@ class ObservedLockSessionTest {
             assertThat(event.outcome()).isEqualTo("timeout");
             assertThat(event.key()).isEqualTo("inventory:7");
             assertThat(event.mode()).isEqualTo(LockMode.WRITE);
+        });
+    }
+
+    @Test
+    void acquireShouldRecordBackendFailureOutcome() throws Exception {
+        LockRequest request = request("inventory:9", LockMode.MUTEX);
+        com.mycorp.distributedlock.api.LockSession delegate = mock(com.mycorp.distributedlock.api.LockSession.class);
+        when(delegate.acquire(request)).thenThrow(new LockBackendException("backend broke"));
+
+        List<LockObservationEvent> events = new ArrayList<>();
+        ObservedLockSession session = new ObservedLockSession(delegate, events::add, "redis", true);
+
+        assertThatThrownBy(() -> session.acquire(request))
+            .isInstanceOf(LockBackendException.class);
+
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.outcome()).isEqualTo("backend-failure");
+            assertThat(event.key()).isEqualTo("inventory:9");
+            assertThat(event.mode()).isEqualTo(LockMode.MUTEX);
         });
     }
 
