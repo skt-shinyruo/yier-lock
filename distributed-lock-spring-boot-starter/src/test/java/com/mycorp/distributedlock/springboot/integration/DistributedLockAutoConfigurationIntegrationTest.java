@@ -69,6 +69,21 @@ class DistributedLockAutoConfigurationIntegrationTest {
     }
 
     @Test
+    void shouldIgnoreServiceLoaderBackendsWhenSpringHasNoBackendBeans() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class))
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=service-loader-only"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("Requested backend not found: service-loader-only");
+            });
+    }
+
+    @Test
     void shouldFailWhenResolvedBackendLacksRequiredCapabilities() {
         new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class))

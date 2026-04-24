@@ -2,6 +2,7 @@ package com.mycorp.distributedlock.springboot.config;
 
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
@@ -31,9 +32,10 @@ public class DistributedLockAutoConfiguration {
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
             .backend(properties.getBackend());
         List<BackendModule> modules = backendModules.orderedStream().toList();
-        if (!modules.isEmpty()) {
-            builder.backendModules(modules);
+        if (modules.isEmpty()) {
+            throw new LockConfigurationException("Requested backend not found: " + properties.getBackend());
         }
+        builder.backendModules(modules);
         return builder.build();
     }
 
