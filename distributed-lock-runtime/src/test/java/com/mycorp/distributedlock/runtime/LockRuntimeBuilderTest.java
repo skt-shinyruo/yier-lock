@@ -48,6 +48,21 @@ class LockRuntimeBuilderTest {
     }
 
     @Test
+    void builderShouldRejectBackendWithoutMutexSupport() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule(
+                "redis",
+                new BackendCapabilities(false, true, true, true)
+            )));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("redis")
+            .hasMessageContaining("mutexSupported");
+    }
+
+    @Test
     void builderShouldRejectBackendWithoutFencingSupport() {
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
             .backend("redis")
