@@ -29,11 +29,15 @@ public class DistributedLockAutoConfiguration {
         DistributedLockProperties properties,
         ObjectProvider<BackendModule> backendModules
     ) {
+        String backendId = properties.getBackend();
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
-            .backend(properties.getBackend());
+            .backend(backendId);
         List<BackendModule> modules = backendModules.orderedStream().toList();
         if (modules.isEmpty()) {
-            throw new LockConfigurationException("Requested backend not found: " + properties.getBackend());
+            if (backendId == null || backendId.isBlank()) {
+                throw new LockConfigurationException("A backend id must be configured before building the lock runtime");
+            }
+            throw new LockConfigurationException("Requested backend not found: " + backendId);
         }
         builder.backendModules(modules);
         return builder.build();

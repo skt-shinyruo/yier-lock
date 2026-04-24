@@ -22,8 +22,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class DistributedLockAutoConfigurationIntegrationTest {
 
-    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
-        .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class))
+    private final ApplicationContextRunner emptyContextRunner = new ApplicationContextRunner()
+        .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class));
+
+    private final ApplicationContextRunner contextRunner = emptyContextRunner
         .withUserConfiguration(TestBackendConfiguration.class);
 
     @Test
@@ -45,8 +47,22 @@ class DistributedLockAutoConfigurationIntegrationTest {
 
     @Test
     void shouldFailWhenEnabledWithoutBackendProperty() {
-        contextRunner
+        emptyContextRunner
             .withPropertyValues("distributed.lock.enabled=true")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("backend id must be configured");
+            });
+    }
+
+    @Test
+    void shouldFailWhenEnabledWithBlankBackendPropertyAndNoSpringBackendBeans() {
+        emptyContextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=   "
+            )
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
