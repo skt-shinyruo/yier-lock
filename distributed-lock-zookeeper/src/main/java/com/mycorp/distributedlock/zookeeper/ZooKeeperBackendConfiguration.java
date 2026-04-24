@@ -14,8 +14,4 @@ public record ZooKeeperBackendConfiguration(String connectString, String basePat
             throw new IllegalArgumentException("basePath must start with '/'");
         }
     }
-
-    public static ZooKeeperBackendConfiguration defaultLocal() {
-        return new ZooKeeperBackendConfiguration("127.0.0.1:2181", "/distributed-locks");
-    }
 }

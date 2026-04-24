@@ -1,1 +1,1 @@
-com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule
+com.mycorp.distributedlock.zookeeper.ZooKeeperServiceLoaderBackendModule
