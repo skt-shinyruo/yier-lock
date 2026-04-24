@@ -2,6 +2,7 @@ package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
@@ -98,12 +99,36 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             });
     }
 
+    @Test
+    void shouldBackOffWhenLockRuntimeIsUserSupplied() {
+        contextRunner
+            .withUserConfiguration(UserLockRuntimeOverrideConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=zookeeper"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(LockRuntime.class);
+                assertThat(context).doesNotHaveBean("zooKeeperBackendModule");
+                assertThat(context).doesNotHaveBean(BackendModule.class);
+            });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class UserZooKeeperBackendOverrideConfiguration {
 
         @Bean
         BackendModule customZooKeeperBackendModule() {
             return new NamedBackendModule("zookeeper");
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class UserLockRuntimeOverrideConfiguration {
+
+        @Bean
+        LockRuntime userLockRuntime() {
+            return new StubLockRuntime();
         }
     }
 
@@ -133,6 +158,23 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
                     throw new UnsupportedOperationException("not used in test");
                 }
             };
+        }
+    }
+
+    private static final class StubLockRuntime implements LockRuntime {
+
+        @Override
+        public com.mycorp.distributedlock.api.LockClient lockClient() {
+            return null;
+        }
+
+        @Override
+        public com.mycorp.distributedlock.api.LockExecutor lockExecutor() {
+            return null;
+        }
+
+        @Override
+        public void close() {
         }
     }
 }
