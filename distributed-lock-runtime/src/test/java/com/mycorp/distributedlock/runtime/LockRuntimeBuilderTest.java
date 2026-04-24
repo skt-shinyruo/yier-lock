@@ -93,6 +93,23 @@ class LockRuntimeBuilderTest {
     }
 
     @Test
+    void builderShouldRejectInvalidCapabilitiesBeforeCreatingBackend() {
+        TrackingBackendModule module = new TrackingBackendModule(
+            "redis",
+            new BackendCapabilities(false, true, true, true)
+        );
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(module));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("redis")
+            .hasMessageContaining("mutexSupported");
+        assertThat(module.createBackendAttempted()).isFalse();
+    }
+
+    @Test
     void builderShouldExposeLockClientAndExecutorWithExplicitMutexOnlyBackend() throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("mutex-only")
@@ -112,6 +129,26 @@ class LockRuntimeBuilderTest {
             }
 
             String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.MUTEX), () -> "ok");
+            assertThat(result).isEqualTo("ok");
+        }
+    }
+
+    @Test
+    void builderShouldUseExplicitlySelectedBackendWhenMultipleUniqueModulesExist() throws Exception {
+        try (LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("zookeeper")
+            .backendModules(List.of(
+                new StubBackendModule("redis", new BackendCapabilities(true, false, true, true)),
+                new StubBackendModule("zookeeper", BackendCapabilities.standard())
+            ))
+            .build()) {
+            try (LockSession session = runtime.lockClient().openSession()) {
+                try (LockLease lease = session.acquire(sampleRequest(LockMode.READ))) {
+                    assertThat(lease.mode()).isEqualTo(LockMode.READ);
+                }
+            }
+
+            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.WRITE), () -> "ok");
             assertThat(result).isEqualTo("ok");
         }
     }
@@ -161,30 +198,38 @@ class LockRuntimeBuilderTest {
 
         @Override
         public LockBackend createBackend() {
-            return new LockBackend() {
-                @Override
-                public BackendSession openSession() {
-                    return new BackendSession() {
-                        @Override
-                        public BackendLockLease acquire(LockRequest lockRequest) {
-                            return new StubLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L));
-                        }
+            return stubBackend();
+        }
+    }
 
-                        @Override
-                        public SessionState state() {
-                            return SessionState.ACTIVE;
-                        }
+    private static final class TrackingBackendModule implements BackendModule {
+        private final String id;
+        private final BackendCapabilities capabilities;
+        private boolean createBackendAttempted;
 
-                        @Override
-                        public void close() {
-                        }
-                    };
-                }
+        private TrackingBackendModule(String id, BackendCapabilities capabilities) {
+            this.id = id;
+            this.capabilities = capabilities;
+        }
 
-                @Override
-                public void close() {
-                }
-            };
+        @Override
+        public String id() {
+            return id;
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return capabilities;
+        }
+
+        @Override
+        public LockBackend createBackend() {
+            createBackendAttempted = true;
+            return stubBackend();
+        }
+
+        private boolean createBackendAttempted() {
+            return createBackendAttempted;
         }
     }
 
@@ -203,5 +248,32 @@ class LockRuntimeBuilderTest {
         @Override
         public void release() {
         }
+    }
+
+    private static LockBackend stubBackend() {
+        return new LockBackend() {
+            @Override
+            public BackendSession openSession() {
+                return new BackendSession() {
+                    @Override
+                    public BackendLockLease acquire(LockRequest lockRequest) {
+                        return new StubLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L));
+                    }
+
+                    @Override
+                    public SessionState state() {
+                        return SessionState.ACTIVE;
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+
+            @Override
+            public void close() {
+            }
+        };
     }
 }
