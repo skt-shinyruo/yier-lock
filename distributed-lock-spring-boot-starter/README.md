@@ -65,7 +65,7 @@ Raw lock keys stay out of metrics by default; `distributed.lock.observability.in
 The generic starter owns only generic runtime and annotation settings:
 
 The `backend` property is required. The generic starter will not auto-select a backend from discovered modules.
-If the application defines any `BackendModule` bean itself, backend-specific Spring auto-configuration backs off completely.
+If the application defines any explicit `BackendModule` bean, backend-specific backend-module registration backs off.
 At that point the application owns the full backend module registry and must supply a module whose `id()` matches `distributed.lock.backend`.
 
 ```yaml
