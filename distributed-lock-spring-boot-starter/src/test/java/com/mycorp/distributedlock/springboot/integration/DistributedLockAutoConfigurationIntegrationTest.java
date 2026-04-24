@@ -2,7 +2,10 @@ package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
@@ -26,7 +29,10 @@ class DistributedLockAutoConfigurationIntegrationTest {
     @Test
     void shouldRegisterLockRuntimeCoreBeansAndAspect() {
         contextRunner
-            .withPropertyValues("distributed.lock.enabled=true")
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=in-memory"
+            )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
                 assertThat(context).hasSingleBean(LockClient.class);
@@ -34,6 +40,49 @@ class DistributedLockAutoConfigurationIntegrationTest {
                 assertThat(context).hasSingleBean(LockKeyResolver.class);
                 assertThat(context).hasSingleBean(DistributedLockAspect.class);
                 assertThat(context).doesNotHaveBean("lockManager");
+            });
+    }
+
+    @Test
+    void shouldFailWhenEnabledWithoutBackendProperty() {
+        contextRunner
+            .withPropertyValues("distributed.lock.enabled=true")
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("backend id must be configured");
+            });
+    }
+
+    @Test
+    void shouldFailWhenConfiguredBackendModuleIsMissing() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("Requested backend not found: redis");
+            });
+    }
+
+    @Test
+    void shouldFailWhenResolvedBackendLacksRequiredCapabilities() {
+        new ApplicationContextRunner()
+            .withConfiguration(AutoConfigurations.of(AopAutoConfiguration.class, DistributedLockAutoConfiguration.class))
+            .withUserConfiguration(UnsafeBackendConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=unsafe"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("unsafe")
+                    .hasMessageContaining("fencingSupported")
+                    .hasMessageContaining("renewableSessionsSupported");
             });
     }
 
@@ -56,6 +105,35 @@ class DistributedLockAutoConfigurationIntegrationTest {
         @Bean
         BackendModule inMemoryBackendModule() {
             return new InMemoryBackendModule("in-memory");
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class UnsafeBackendConfiguration {
+
+        @Bean
+        BackendModule unsafeBackendModule() {
+            return new BackendModule() {
+                @Override
+                public String id() {
+                    return "unsafe";
+                }
+
+                @Override
+                public BackendCapabilities capabilities() {
+                    return new BackendCapabilities(true, true, false, false);
+                }
+
+                @Override
+                public LockBackend createBackend() {
+                    return new LockBackend() {
+                        @Override
+                        public BackendSession openSession() {
+                            throw new UnsupportedOperationException("not used in test");
+                        }
+                    };
+                }
+            };
         }
     }
 }

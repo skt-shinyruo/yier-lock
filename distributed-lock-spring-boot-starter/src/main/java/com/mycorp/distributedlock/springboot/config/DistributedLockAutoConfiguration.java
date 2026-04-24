@@ -28,11 +28,8 @@ public class DistributedLockAutoConfiguration {
         DistributedLockProperties properties,
         ObjectProvider<BackendModule> backendModules
     ) {
-        LockRuntimeBuilder builder = LockRuntimeBuilder.create();
-        if (properties.getBackend() != null && !properties.getBackend().isBlank()) {
-            builder.backend(properties.getBackend());
-        }
-
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend(properties.getBackend());
         List<BackendModule> modules = backendModules.orderedStream().toList();
         if (!modules.isEmpty()) {
             builder.backendModules(modules);
