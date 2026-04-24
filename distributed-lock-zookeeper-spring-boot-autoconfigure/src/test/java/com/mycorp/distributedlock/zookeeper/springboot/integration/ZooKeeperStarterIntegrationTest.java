@@ -34,7 +34,8 @@ class ZooKeeperStarterIntegrationTest {
                 .withPropertyValues(
                     "distributed.lock.enabled=true",
                     "distributed.lock.backend=zookeeper",
-                    "distributed.lock.zookeeper.connect-string=" + server.getConnectString()
+                    "distributed.lock.zookeeper.connect-string=" + server.getConnectString(),
+                    "distributed.lock.zookeeper.base-path=/distributed-locks"
                 )
                 .run(context -> {
                     assertThat(context).hasSingleBean(LockClient.class);

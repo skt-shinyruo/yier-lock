@@ -41,6 +41,36 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
     }
 
     @Test
+    void shouldFailWhenZooKeeperConnectStringIsMissing() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=zookeeper",
+                "distributed.lock.zookeeper.base-path=/test-locks"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("distributed.lock.zookeeper.connect-string must be configured");
+            });
+    }
+
+    @Test
+    void shouldFailWhenZooKeeperBasePathIsMissing() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=zookeeper",
+                "distributed.lock.zookeeper.connect-string=127.0.0.1:2281"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("distributed.lock.zookeeper.base-path must be configured");
+            });
+    }
+
+    @Test
     void shouldBackOffWhenBackendSelectionDoesNotMatch() {
         contextRunner
             .withPropertyValues(

@@ -43,11 +43,42 @@ class RedisBackendModuleAutoConfigurationTest {
     }
 
     @Test
+    void shouldFailWhenRedisUriIsMissing() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.lease-time=45s"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("distributed.lock.redis.uri must be configured");
+            });
+    }
+
+    @Test
+    void shouldFailWhenRedisLeaseTimeIsMissing() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("distributed.lock.redis.lease-time must be configured");
+            });
+    }
+
+    @Test
     void shouldRejectLeaseTimesThatAreNotWholeSeconds() {
         contextRunner
             .withPropertyValues(
                 "distributed.lock.enabled=true",
                 "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
                 "distributed.lock.redis.lease-time=1500ms"
             )
             .run(context -> {

@@ -51,7 +51,8 @@ class RedisStarterIntegrationTest {
             .withPropertyValues(
                 "distributed.lock.enabled=true",
                 "distributed.lock.backend=redis",
-                "distributed.lock.redis.uri=redis://127.0.0.1:" + redisPort
+                "distributed.lock.redis.uri=redis://127.0.0.1:" + redisPort,
+                "distributed.lock.redis.lease-time=30s"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockClient.class);

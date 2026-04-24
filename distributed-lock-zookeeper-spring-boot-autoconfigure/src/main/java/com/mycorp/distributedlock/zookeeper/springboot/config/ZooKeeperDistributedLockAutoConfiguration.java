@@ -19,9 +19,23 @@ public class ZooKeeperDistributedLockAutoConfiguration {
     @ConditionalOnMissingBean(name = "zooKeeperBackendModule")
     public BackendModule zooKeeperBackendModule(ZooKeeperDistributedLockProperties properties) {
         ZooKeeperBackendConfiguration configuration = new ZooKeeperBackendConfiguration(
-            properties.getConnectString(),
-            properties.getBasePath()
+            requireConnectString(properties.getConnectString()),
+            requireBasePath(properties.getBasePath())
         );
         return new ZooKeeperBackendModule(configuration);
+    }
+
+    private String requireConnectString(String connectString) {
+        if (connectString == null || connectString.isBlank()) {
+            throw new IllegalArgumentException("distributed.lock.zookeeper.connect-string must be configured");
+        }
+        return connectString;
+    }
+
+    private String requireBasePath(String basePath) {
+        if (basePath == null || basePath.isBlank()) {
+            throw new IllegalArgumentException("distributed.lock.zookeeper.base-path must be configured");
+        }
+        return basePath;
     }
 }

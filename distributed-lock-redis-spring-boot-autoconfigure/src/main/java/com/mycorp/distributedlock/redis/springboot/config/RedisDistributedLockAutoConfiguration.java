@@ -22,14 +22,24 @@ public class RedisDistributedLockAutoConfiguration {
     @ConditionalOnMissingBean(name = "redisBackendModule")
     public BackendModule redisBackendModule(RedisDistributedLockProperties properties) {
         RedisBackendConfiguration configuration = new RedisBackendConfiguration(
-            properties.getUri(),
+            requireUri(properties.getUri()),
             toLeaseSeconds(properties.getLeaseTime())
         );
         return new RedisBackendModule(configuration);
     }
 
+    private String requireUri(String uri) {
+        if (uri == null || uri.isBlank()) {
+            throw new IllegalArgumentException("distributed.lock.redis.uri must be configured");
+        }
+        return uri;
+    }
+
     private long toLeaseSeconds(Duration leaseTime) {
-        if (leaseTime == null || leaseTime.isZero() || leaseTime.isNegative()) {
+        if (leaseTime == null) {
+            throw new IllegalArgumentException("distributed.lock.redis.lease-time must be configured");
+        }
+        if (leaseTime.isZero() || leaseTime.isNegative()) {
             throw new IllegalArgumentException("distributed.lock.redis.lease-time must be positive");
         }
         if (!leaseTime.truncatedTo(ChronoUnit.SECONDS).equals(leaseTime)) {

@@ -9,8 +9,8 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "distributed.lock.redis")
 public class RedisDistributedLockProperties {
 
-    private String uri = "redis://localhost:6379";
-    private Duration leaseTime = Duration.ofSeconds(30);
+    private String uri;
+    private Duration leaseTime;
 
     public String getUri() {
         return uri;

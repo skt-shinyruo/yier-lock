@@ -7,8 +7,8 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "distributed.lock.zookeeper")
 public class ZooKeeperDistributedLockProperties {
 
-    private String connectString = "127.0.0.1:2181";
-    private String basePath = "/distributed-locks";
+    private String connectString;
+    private String basePath;
 
     public String getConnectString() {
         return connectString;
