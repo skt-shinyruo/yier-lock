@@ -16,7 +16,7 @@ public class ZooKeeperDistributedLockAutoConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean(name = "zooKeeperBackendModule")
+    @ConditionalOnMissingBean(BackendModule.class)
     public BackendModule zooKeeperBackendModule(ZooKeeperDistributedLockProperties properties) {
         ZooKeeperBackendConfiguration configuration = new ZooKeeperBackendConfiguration(
             requireConnectString(properties.getConnectString()),

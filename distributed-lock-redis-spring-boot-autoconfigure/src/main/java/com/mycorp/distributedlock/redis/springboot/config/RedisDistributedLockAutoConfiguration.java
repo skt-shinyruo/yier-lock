@@ -19,7 +19,7 @@ public class RedisDistributedLockAutoConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean(name = "redisBackendModule")
+    @ConditionalOnMissingBean(BackendModule.class)
     public BackendModule redisBackendModule(RedisDistributedLockProperties properties) {
         RedisBackendConfiguration configuration = new RedisBackendConfiguration(
             requireUri(properties.getUri()),

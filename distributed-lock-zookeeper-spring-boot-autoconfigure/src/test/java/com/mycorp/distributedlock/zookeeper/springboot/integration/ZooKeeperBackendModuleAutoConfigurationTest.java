@@ -84,7 +84,7 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
     }
 
     @Test
-    void shouldBackOffForUserSuppliedBackendModuleOverrideByBeanName() {
+    void shouldBackOffForUserSuppliedBackendModuleRegardlessOfBeanName() {
         contextRunner
             .withUserConfiguration(UserZooKeeperBackendOverrideConfiguration.class)
             .withPropertyValues(
@@ -93,8 +93,8 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(BackendModule.class);
-                assertThat(context.getBean("zooKeeperBackendModule")).isInstanceOf(NamedBackendModule.class);
-                assertThat(context.getBeansOfType(BackendModule.class)).hasSize(1);
+                assertThat(context.getBean("customZooKeeperBackendModule")).isInstanceOf(NamedBackendModule.class);
+                assertThat(context).doesNotHaveBean("zooKeeperBackendModule");
             });
     }
 
@@ -102,7 +102,7 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
     static class UserZooKeeperBackendOverrideConfiguration {
 
         @Bean
-        BackendModule zooKeeperBackendModule() {
+        BackendModule customZooKeeperBackendModule() {
             return new NamedBackendModule("zookeeper");
         }
     }

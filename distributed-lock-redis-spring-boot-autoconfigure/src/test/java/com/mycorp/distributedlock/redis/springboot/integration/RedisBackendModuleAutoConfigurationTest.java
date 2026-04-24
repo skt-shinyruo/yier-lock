@@ -102,7 +102,7 @@ class RedisBackendModuleAutoConfigurationTest {
     }
 
     @Test
-    void shouldBackOffForUserSuppliedBackendModuleOverrideByBeanName() {
+    void shouldBackOffForUserSuppliedBackendModuleRegardlessOfBeanName() {
         contextRunner
             .withUserConfiguration(UserRedisBackendOverrideConfiguration.class)
             .withPropertyValues(
@@ -111,8 +111,8 @@ class RedisBackendModuleAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(BackendModule.class);
-                assertThat(context.getBean("redisBackendModule")).isInstanceOf(NamedBackendModule.class);
-                assertThat(context.getBeansOfType(BackendModule.class)).hasSize(1);
+                assertThat(context.getBean("customRedisBackendModule")).isInstanceOf(NamedBackendModule.class);
+                assertThat(context).doesNotHaveBean("redisBackendModule");
             });
     }
 
@@ -120,7 +120,7 @@ class RedisBackendModuleAutoConfigurationTest {
     static class UserRedisBackendOverrideConfiguration {
 
         @Bean
-        BackendModule redisBackendModule() {
+        BackendModule customRedisBackendModule() {
             return new NamedBackendModule("redis");
         }
     }
