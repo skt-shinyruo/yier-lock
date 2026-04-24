@@ -13,8 +13,4 @@ public record RedisBackendConfiguration(String redisUri, long leaseSeconds) {
             throw new IllegalArgumentException("leaseSeconds must be positive");
         }
     }
-
-    public static RedisBackendConfiguration defaultLocal() {
-        return new RedisBackendConfiguration("redis://localhost:6379", 30L);
-    }
 }

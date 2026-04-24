@@ -10,10 +10,6 @@ public final class RedisBackendModule implements BackendModule {
 
     private final RedisBackendConfiguration configuration;
 
-    public RedisBackendModule() {
-        this(RedisBackendConfiguration.defaultLocal());
-    }
-
     public RedisBackendModule(RedisBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
     }

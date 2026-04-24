@@ -15,16 +15,13 @@ class RedisBackendModuleTest {
         RedisBackendModule module = new RedisBackendModule(new RedisBackendConfiguration("redis://localhost:6379", 30L));
 
         assertThat(module.id()).isEqualTo("redis");
-        assertThat(module.capabilities()).isEqualTo(BackendCapabilities.standard());
+        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true));
     }
 
     @Test
-    void shouldExposeOnlyDefaultAndTypedConfigurationConstructors() {
+    void shouldExposeOnlyTypedConfigurationConstructor() {
         assertThat(Arrays.stream(RedisBackendModule.class.getConstructors())
             .map(constructor -> List.of(constructor.getParameterTypes())))
-            .containsExactlyInAnyOrder(
-                List.of(),
-                List.of(RedisBackendConfiguration.class)
-            );
+            .containsExactly(List.of(RedisBackendConfiguration.class));
     }
 }
