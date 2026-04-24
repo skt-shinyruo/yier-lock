@@ -61,26 +61,37 @@ public final class LockRuntimeBuilder {
     private BackendModule selectBackendModule(List<BackendModule> availableModules) {
         validateUniqueBackendIds(availableModules);
 
-        if (backendId != null && !backendId.isBlank()) {
-            return availableModules.stream()
-                .filter(module -> backendId.equals(module.id()))
-                .findFirst()
-                .orElseThrow(() -> new LockConfigurationException("Requested backend not found: " + backendId));
+        if (backendId == null || backendId.isBlank()) {
+            throw new LockConfigurationException("A backend id must be configured before building the lock runtime");
         }
 
-        if (availableModules.isEmpty()) {
-            throw new LockConfigurationException("No backend modules available");
-        }
-        if (availableModules.size() > 1) {
-            throw new LockConfigurationException("Cannot select backend automatically: multiple backends available");
-        }
-        return availableModules.get(0);
+        return availableModules.stream()
+            .filter(module -> backendId.equals(module.id()))
+            .findFirst()
+            .orElseThrow(() -> new LockConfigurationException("Requested backend not found: " + backendId));
     }
 
     private void validateCapabilities(BackendModule module) {
         BackendCapabilities capabilities = module.capabilities();
         if (capabilities == null) {
             throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
+        }
+
+        List<String> missingRequirements = new ArrayList<>();
+        if (!capabilities.mutexSupported()) {
+            missingRequirements.add("mutexSupported");
+        }
+        if (!capabilities.fencingSupported()) {
+            missingRequirements.add("fencingSupported");
+        }
+        if (!capabilities.renewableSessionsSupported()) {
+            missingRequirements.add("renewableSessionsSupported");
+        }
+
+        if (!missingRequirements.isEmpty()) {
+            throw new LockConfigurationException(
+                "Backend module does not satisfy runtime requirements: " + module.id() + " missing " + missingRequirements
+            );
         }
     }
 

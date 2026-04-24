@@ -27,31 +27,76 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class LockRuntimeBuilderTest {
 
     @Test
-    void builderShouldFailWhenMultipleBackendsExistAndNoBackendIsConfigured() {
+    void builderShouldFailWhenNoBackendIsConfiguredEvenIfOneModuleExists() {
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
-            .backendModules(List.of(new StubBackendModule("redis"), new StubBackendModule("zookeeper")));
+            .backendModules(List.of(new StubBackendModule("redis")));
 
         assertThatThrownBy(builder::build)
             .isInstanceOf(LockConfigurationException.class)
-            .hasMessageContaining("multiple backends");
+            .hasMessageContaining("backend id must be configured");
     }
 
     @Test
-    void builderShouldExposeLockClientAndExecutorWithSelectedBackendCapabilities() throws Exception {
+    void builderShouldFailWhenBackendIsBlank() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("   ")
+            .backendModules(List.of(new StubBackendModule("redis")));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("backend id must be configured");
+    }
+
+    @Test
+    void builderShouldRejectBackendWithoutFencingSupport() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule(
+                "redis",
+                new BackendCapabilities(true, true, false, true)
+            )));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("redis")
+            .hasMessageContaining("fencingSupported");
+    }
+
+    @Test
+    void builderShouldRejectBackendWithoutRenewableSessionsSupport() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule(
+                "redis",
+                new BackendCapabilities(true, true, true, false)
+            )));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("redis")
+            .hasMessageContaining("renewableSessionsSupported");
+    }
+
+    @Test
+    void builderShouldExposeLockClientAndExecutorWithExplicitMutexOnlyBackend() throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
-            .backendModules(List.of(new StubBackendModule("read-write-only", new BackendCapabilities(false, true))))
+            .backend("mutex-only")
+            .backendModules(List.of(new StubBackendModule(
+                "mutex-only",
+                new BackendCapabilities(true, false, true, true)
+            )))
             .build()) {
             try (LockSession session = runtime.lockClient().openSession()) {
-                assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))
-                    .isInstanceOf(UnsupportedLockCapabilityException.class)
-                    .hasMessageContaining("MUTEX");
-
-                try (LockLease lease = session.acquire(sampleRequest(LockMode.READ))) {
-                    assertThat(lease.mode()).isEqualTo(LockMode.READ);
+                try (LockLease lease = session.acquire(sampleRequest(LockMode.MUTEX))) {
+                    assertThat(lease.mode()).isEqualTo(LockMode.MUTEX);
                 }
+
+                assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.READ)))
+                    .isInstanceOf(UnsupportedLockCapabilityException.class)
+                    .hasMessageContaining("READ");
             }
 
-            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.READ), () -> "ok");
+            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.MUTEX), () -> "ok");
             assertThat(result).isEqualTo("ok");
         }
     }
