@@ -20,6 +20,8 @@
 
 Programmatic examples instantiate typed backend modules directly:
 
+Programmatic runtime construction must always declare `.backend("...")`; backend discovery can supply candidate modules, but it is not allowed to auto-select one.
+
 ```java
 LockRuntime runtime = LockRuntimeBuilder.create()
     .backend("redis")
