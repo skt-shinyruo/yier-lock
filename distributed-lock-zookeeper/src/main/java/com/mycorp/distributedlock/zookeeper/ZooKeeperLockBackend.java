@@ -115,8 +115,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
         public BackendLockLease acquire(LockRequest request) throws InterruptedException {
             ensureActive();
             return switch (request.mode()) {
-                case MUTEX -> acquireMutex(request);
-                case READ, WRITE -> acquireReadWrite(request);
+                case MUTEX, READ, WRITE -> acquireQueued(request);
             };
         }
 
@@ -170,52 +169,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
             }
         }
 
-        private ZooKeeperLease acquireMutex(LockRequest request) throws InterruptedException {
-            long deadlineNanos = request.waitPolicy().unbounded()
-                ? Long.MAX_VALUE
-                : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
-            String ownerPath = mutexOwnerPath(request.key().value());
-            while (true) {
-                ensureActive();
-                ZooKeeperLease lease;
-                try {
-                    lease = tryAcquireMutex(request.key());
-                } catch (RuntimeException exception) {
-                    throw exception;
-                } catch (Exception exception) {
-                    throw new LockBackendException(
-                        "Failed to acquire ZooKeeper mutex for key " + request.key().value(),
-                        exception
-                    );
-                }
-                if (lease != null) {
-                    activeLeases.put(lease.ownerPath(), lease);
-                    return lease;
-                }
-                long remainingNanos = remainingNanos(deadlineNanos);
-                if (!request.waitPolicy().unbounded() && remainingNanos <= 0L) {
-                    throw timeout(request.key());
-                }
-                try {
-                    boolean deleted = awaitNodeDeletion(ownerPath, remainingNanos);
-                    if (!request.waitPolicy().unbounded() && !deleted) {
-                        throw timeout(request.key());
-                    }
-                } catch (RuntimeException exception) {
-                    throw exception;
-                } catch (InterruptedException exception) {
-                    Thread.currentThread().interrupt();
-                    throw exception;
-                } catch (Exception exception) {
-                    throw new LockBackendException(
-                        "Failed while waiting for ZooKeeper mutex on key " + request.key().value(),
-                        exception
-                    );
-                }
-            }
-        }
-
-        private ZooKeeperLease acquireReadWrite(LockRequest request) throws InterruptedException {
+        private ZooKeeperLease acquireQueued(LockRequest request) throws InterruptedException {
             String contenderPath = null;
             try {
                 ensureActive();
@@ -284,29 +238,11 @@ public final class ZooKeeperLockBackend implements LockBackend {
             }
         }
 
-        private ZooKeeperLease tryAcquireMutex(LockKey key) throws Exception {
-            String ownerPath = mutexOwnerPath(key.value());
-            if (curatorFramework.checkExists().forPath(ownerPath) != null) {
-                return null;
-            }
-            long fence = nextFence(key.value());
-            byte[] nodeOwnerData = ownerData(sessionId);
-            try {
-                curatorFramework.create()
-                    .creatingParentsIfNeeded()
-                    .withMode(CreateMode.EPHEMERAL)
-                    .forPath(ownerPath, nodeOwnerData);
-            } catch (KeeperException.NodeExistsException exception) {
-                return null;
-            }
-            return new ZooKeeperLease(key, LockMode.MUTEX, new FencingToken(fence), ownerPath, nodeOwnerData, this);
-        }
-
         private String createContenderNode(LockRequest request) throws Exception {
             String prefix = switch (request.mode()) {
+                case MUTEX -> "mutex-";
                 case READ -> "read-";
                 case WRITE -> "write-";
-                case MUTEX -> throw new IllegalArgumentException("Mutex mode does not use queue nodes");
             };
             return curatorFramework.create()
                 .creatingParentsIfNeeded()
@@ -334,7 +270,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
         }
 
         private boolean canAcquire(List<QueueNode> nodes, QueueNode current) {
-            if (current.mode() == LockMode.WRITE) {
+            if (isExclusive(current.mode())) {
                 return nodes.stream()
                     .takeWhile(node -> node.sequence() < current.sequence())
                     .findAny()
@@ -342,11 +278,11 @@ public final class ZooKeeperLockBackend implements LockBackend {
             }
             return nodes.stream()
                 .takeWhile(node -> node.sequence() < current.sequence())
-                .noneMatch(node -> node.mode() == LockMode.WRITE);
+                .noneMatch(node -> isExclusive(node.mode()));
         }
 
         private String watchedPredecessor(String key, List<QueueNode> nodes, QueueNode current) {
-            if (current.mode() == LockMode.WRITE) {
+            if (isExclusive(current.mode())) {
                 return nodes.stream()
                     .filter(node -> node.sequence() < current.sequence())
                     .max(Comparator.comparingLong(QueueNode::sequence))
@@ -354,10 +290,14 @@ public final class ZooKeeperLockBackend implements LockBackend {
                     .orElse(null);
             }
             return nodes.stream()
-                .filter(node -> node.sequence() < current.sequence() && node.mode() == LockMode.WRITE)
+                .filter(node -> node.sequence() < current.sequence() && isExclusive(node.mode()))
                 .max(Comparator.comparingLong(QueueNode::sequence))
                 .map(node -> queueRootPath(key) + "/" + node.name())
                 .orElse(null);
+        }
+
+        private boolean isExclusive(LockMode mode) {
+            return mode == LockMode.MUTEX || mode == LockMode.WRITE;
         }
 
         private boolean awaitNodeDeletion(String path, long remainingNanos) throws Exception {
@@ -574,6 +514,9 @@ public final class ZooKeeperLockBackend implements LockBackend {
     }
 
     private QueueNode queueNode(String name) {
+        if (name.startsWith("mutex-")) {
+            return new QueueNode(name, LockMode.MUTEX, sequence(name));
+        }
         if (name.startsWith("read-")) {
             return new QueueNode(name, LockMode.READ, sequence(name));
         }
@@ -585,10 +528,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
     private long sequence(String nodeName) {
         return Long.parseLong(nodeName.substring(nodeName.lastIndexOf('-') + 1));
-    }
-
-    private String mutexOwnerPath(String key) {
-        return configuration.basePath() + "/mutex/" + encodeKeySegment(key) + "/owner";
     }
 
     private String queueRootPath(String key) {
