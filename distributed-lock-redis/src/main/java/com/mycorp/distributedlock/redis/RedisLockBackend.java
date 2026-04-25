@@ -36,7 +36,15 @@ public final class RedisLockBackend implements LockBackend {
 
     private static final String MUTEX_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
-            + "local fence = redis.call('incr', KEYS[2]) "
+            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
+            + "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "local readerType = redis.call('type', KEYS[3]).ok "
+            + "if readerType == 'hash' then return 0 end "
+            + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
+            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
+            + "if redis.call('zcard', KEYS[3]) > 0 then return 0 end "
+            + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
             + "redis.call('set', KEYS[1], owner, 'EX', tonumber(ARGV[2])) "
             + "return fence";
@@ -44,30 +52,32 @@ public final class RedisLockBackend implements LockBackend {
     private static final String READ_ACQUIRE_SCRIPT =
         "local now = redis.call('time') "
             + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
-            + "local readerType = redis.call('type', KEYS[2]).ok "
+            + "local readerType = redis.call('type', KEYS[3]).ok "
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
-            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[2], '-inf', nowMs) end "
+            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
             + "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
-            + "local fence = redis.call('incr', KEYS[3]) "
+            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
+            + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
             + "local ttlMs = tonumber(ARGV[2]) * 1000 "
-            + "redis.call('zadd', KEYS[2], nowMs + ttlMs, owner) "
-            + "redis.call('pexpire', KEYS[2], ttlMs) "
+            + "redis.call('zadd', KEYS[3], nowMs + ttlMs, owner) "
+            + "redis.call('pexpire', KEYS[3], ttlMs) "
             + "return fence";
 
     private static final String WRITE_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
+            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
             + "local now = redis.call('time') "
             + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
-            + "local readerType = redis.call('type', KEYS[2]).ok "
+            + "local readerType = redis.call('type', KEYS[3]).ok "
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
-            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[2], '-inf', nowMs) end "
-            + "if redis.call('zcard', KEYS[2]) > 0 then return 0 end "
-            + "local fence = redis.call('incr', KEYS[3]) "
+            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
+            + "if redis.call('zcard', KEYS[3]) > 0 then return 0 end "
+            + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "redis.call('set', KEYS[1], owner, 'EX', tonumber(ARGV[2])) "
+            + "redis.call('set', KEYS[2], owner, 'EX', tonumber(ARGV[2])) "
             + "return fence";
 
     private static final String VALUE_RELEASE_SCRIPT =
@@ -272,7 +282,12 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     MUTEX_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.MUTEX), fenceKey(key)},
+                    new String[]{
+                        ownerKey(key, LockMode.MUTEX),
+                        ownerKey(key, LockMode.WRITE),
+                        readersKey(key),
+                        fenceKey(key)
+                    },
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );
@@ -287,7 +302,12 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     READ_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key)},
+                    new String[]{
+                        ownerKey(key, LockMode.MUTEX),
+                        ownerKey(key, LockMode.WRITE),
+                        readersKey(key),
+                        fenceKey(key)
+                    },
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );
@@ -302,7 +322,12 @@ public final class RedisLockBackend implements LockBackend {
                 Long result = commands.eval(
                     WRITE_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{ownerKey(key, LockMode.WRITE), readersKey(key), fenceKey(key)},
+                    new String[]{
+                        ownerKey(key, LockMode.MUTEX),
+                        ownerKey(key, LockMode.WRITE),
+                        readersKey(key),
+                        fenceKey(key)
+                    },
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
                 );

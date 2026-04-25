@@ -120,6 +120,8 @@ Supported annotation fields:
 
 Lock keys follow Spring template-expression semantics. Literal keys such as `order:42` pass through unchanged, while templates such as `order:#{#p0}` are evaluated against the intercepted method arguments.
 
+Lock modes protect the same resource identity for a given key. `MUTEX` and `WRITE` are exclusive and block all `MUTEX`, `READ`, and `WRITE` acquisitions for the same key. `READ` can coexist only with other `READ` leases for the same key. Use distinct lock keys when you intentionally need independent lock families.
+
 `@DistributedLock` is intentionally synchronous-only. Methods returning `CompletionStage`, reactive publishers, or other async boundaries fail fast with `LockConfigurationException`.
 
 ## Programmatic usage

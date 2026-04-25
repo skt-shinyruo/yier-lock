@@ -79,11 +79,51 @@ public abstract class LockClientContract {
     }
 
     @Test
+    void mutexShouldTimeOutWhileReaderIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession reader = runtime.lockClient().openSession();
+             LockLease ignored = reader.acquire(request("inventory:cross-mode", LockMode.READ, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:cross-mode", LockMode.MUTEX, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
     void readerShouldTimeOutWhileWriterIsHeld() throws Exception {
         runtime = createRuntime();
         try (LockSession writer = runtime.lockClient().openSession();
              LockLease ignored = writer.acquire(request("inventory:rw", LockMode.WRITE, Duration.ofSeconds(1)))) {
             assertThat(executor.submit(() -> tryAcquire("inventory:rw", LockMode.READ, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
+    void mutexShouldTimeOutWhileWriterIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession writer = runtime.lockClient().openSession();
+             LockLease ignored = writer.acquire(request("inventory:cross-mode", LockMode.WRITE, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:cross-mode", LockMode.MUTEX, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
+    void readerShouldTimeOutWhileMutexIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession mutex = runtime.lockClient().openSession();
+             LockLease ignored = mutex.acquire(request("inventory:cross-mode", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:cross-mode", LockMode.READ, Duration.ofMillis(100))).get())
+                .isFalse();
+        }
+    }
+
+    @Test
+    void writerShouldTimeOutWhileMutexIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession mutex = runtime.lockClient().openSession();
+             LockLease ignored = mutex.acquire(request("inventory:cross-mode", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+            assertThat(executor.submit(() -> tryAcquire("inventory:cross-mode", LockMode.WRITE, Duration.ofMillis(100))).get())
                 .isFalse();
         }
     }

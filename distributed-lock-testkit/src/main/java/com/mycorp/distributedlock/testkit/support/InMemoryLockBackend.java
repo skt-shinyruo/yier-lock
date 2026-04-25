@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class InMemoryLockBackend implements LockBackend {
@@ -51,7 +50,7 @@ public final class InMemoryLockBackend implements LockBackend {
 
     static void unlockState(InMemoryLockState state, LockMode mode) {
         switch (mode) {
-            case MUTEX -> state.mutex.unlock();
+            case MUTEX -> state.readWrite.writeLock().unlock();
             case READ -> state.readWrite.readLock().unlock();
             case WRITE -> state.readWrite.writeLock().unlock();
         }
@@ -59,10 +58,10 @@ public final class InMemoryLockBackend implements LockBackend {
 
     private static boolean acquireMutex(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
         if (waitPolicy.unbounded()) {
-            state.mutex.lockInterruptibly();
+            state.readWrite.writeLock().lockInterruptibly();
             return true;
         }
-        return state.mutex.tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+        return state.readWrite.writeLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
     }
 
     private static boolean acquireRead(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
@@ -82,7 +81,6 @@ public final class InMemoryLockBackend implements LockBackend {
     }
 
     static final class InMemoryLockState {
-        final ReentrantLock mutex = new ReentrantLock();
         final ReentrantReadWriteLock readWrite = new ReentrantReadWriteLock();
         final AtomicLong fencingCounter = new AtomicLong();
     }
