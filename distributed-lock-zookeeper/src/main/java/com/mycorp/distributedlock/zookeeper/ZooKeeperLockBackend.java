@@ -131,14 +131,22 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (current == SessionState.CLOSED) {
                 return;
             }
+            boolean closingActiveSession = false;
             if (current == SessionState.ACTIVE) {
-                state.compareAndSet(SessionState.ACTIVE, SessionState.CLOSED);
+                closingActiveSession = state.compareAndSet(SessionState.ACTIVE, SessionState.CLOSED);
                 current = state.get();
+                if (!closingActiveSession && current == SessionState.CLOSED) {
+                    return;
+                }
             }
             RuntimeException failure = null;
             for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
                 try {
-                    lease.release();
+                    if (closingActiveSession) {
+                        lease.releaseDuringSessionClose();
+                    } else {
+                        lease.release();
+                    }
                 } catch (LockOwnershipLostException exception) {
                     if (failure == null) {
                         failure = exception;
@@ -504,6 +512,14 @@ public final class ZooKeeperLockBackend implements LockBackend {
 
         @Override
         public void release() {
+            release(true);
+        }
+
+        private void releaseDuringSessionClose() {
+            release(false);
+        }
+
+        private void release(boolean requireActiveSession) {
             LeaseState current = state.get();
             if (current == LeaseState.RELEASED) {
                 return;
@@ -512,7 +528,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
                 session.forgetLease(this);
                 throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             }
-            if (session.state() != SessionState.ACTIVE) {
+            if (requireActiveSession && session.state() != SessionState.ACTIVE) {
                 markLost();
                 throw new LockOwnershipLostException("ZooKeeper lock ownership lost for key " + key.value());
             }
