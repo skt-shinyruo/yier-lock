@@ -15,7 +15,7 @@ This change is an intentional breaking change for SPI consumers and for programm
 
 - Require explicit backend selection in both programmatic and Spring bootstrap paths
 - Preserve `ServiceLoader` discovery only as a backend registry, not as an auto-selection mechanism
-- Remove `defaultLocal()`-driven backend activation from Redis and ZooKeeper modules
+- Remove `defaultLocal()`-driven backend activation from Redis and ZooKeeper modules while preserving discovery through explicit ServiceLoader shims
 - Expand `BackendCapabilities` so runtime can validate fencing and renewable-session guarantees
 - Fail fast at startup when a selected backend does not satisfy kernel safety requirements
 - Update examples, tests, and documentation so the explicit bootstrap model is the only supported path
@@ -40,9 +40,14 @@ Consequences:
 - local development defaults can leak into production bootstrap
 - programmatic and Spring callers do not have one explicit backend-selection contract
 
-### 2. Backend modules still embed local defaults
+### 2. Typed backend activation and discovery are not separated clearly
 
-`RedisBackendModule()` and `ZooKeeperBackendModule()` currently delegate to `defaultLocal()` backend configurations. Combined with `ServiceLoader`, that creates a dangerous path where the runtime can discover a module and connect to localhost infrastructure without the caller having declared a backend or provided backend-specific configuration.
+This stage needs a hard boundary between:
+
+- typed backend modules that own real backend configuration
+- discovery-only providers that exist only so `ServiceLoader` can advertise candidate backend ids
+
+Without that separation, the runtime can still discover a backend on the classpath and attempt to create it without caller-declared typed configuration. In the original bootstrap model, `RedisBackendModule()` and `ZooKeeperBackendModule()` delegated to `defaultLocal()` backend configurations. This stage removes that path and replaces it with discovery-only providers that can identify a backend but cannot materialize one.
 
 ### 3. Capability metadata under-describes backend safety
 
@@ -88,7 +93,7 @@ Consequences:
 - programmatic bootstrap and Spring bootstrap share one model: caller declares backend id, runtime resolves it
 - `ServiceLoader` remains useful for modularity without being allowed to make configuration decisions
 
-### 2. Zero-argument backend modules are removed
+### 2. Typed backend modules require explicit configuration; discovery providers become shims
 
 `RedisBackendModule` and `ZooKeeperBackendModule` will drop their no-argument constructors.
 
@@ -96,6 +101,8 @@ Rules:
 
 - all module instances must be created with explicit typed configuration
 - `RedisBackendConfiguration.defaultLocal()` and `ZooKeeperBackendConfiguration.defaultLocal()` are removed in the same stage
+- `RedisServiceLoaderBackendModule` and `ZooKeeperServiceLoaderBackendModule` remain zero-argument providers only for `ServiceLoader` discovery
+- discovery-only providers must advertise `id()` and `capabilities()` but fail from `createBackend()` with a `LockConfigurationException` that tells the caller to construct the typed backend module explicitly
 - examples, tests, and any helper code that instantiate backend modules must pass explicit configuration
 
 This preserves typed configuration ownership inside each backend module while eliminating the remaining implicit localhost bootstrap path.
@@ -150,6 +157,7 @@ New generic starter rules:
 - if `distributed.lock.enabled=true`, `distributed.lock.backend` must be configured with a non-blank value
 - startup fails if the configured backend id does not resolve to a `BackendModule` bean
 - startup fails if the resolved module lacks required capabilities
+- the generic starter resolves only application-context `BackendModule` beans and never falls back to `ServiceLoader` discovery
 
 Backend-specific auto-configuration modules keep their current role:
 
@@ -166,6 +174,7 @@ This preserves the clean separation between generic and backend-specific Spring 
 Its role is narrowed to:
 
 - discover candidate backend modules
+- discover zero-argument provider shims that advertise backend identity and capabilities
 - return them to runtime unchanged
 
 Its role explicitly does not include:
@@ -173,6 +182,7 @@ Its role explicitly does not include:
 - selecting a backend
 - preferring one backend over another
 - authorizing build success when the caller did not declare a backend id
+- manufacturing a fully configured Redis or ZooKeeper backend without typed caller input
 
 This is the key behavioral distinction of the stage: discovery survives, auto-selection does not.
 
@@ -211,28 +221,32 @@ Responsibilities after change:
 Modify:
 
 - `RedisBackendModule`
+- `RedisServiceLoaderBackendModule`
 - `RedisBackendConfiguration`
-- tests that assume zero-argument module construction
+- tests that assume zero-argument typed module construction or permissive ServiceLoader backend creation
 
 Responsibilities after change:
 
 - own explicit typed Redis configuration
 - advertise complete backend capabilities
 - stop exposing local-default bootstrap helpers
+- keep ServiceLoader discovery available without allowing backend creation from discovery alone
 
 ### `distributed-lock-zookeeper`
 
 Modify:
 
 - `ZooKeeperBackendModule`
+- `ZooKeeperServiceLoaderBackendModule`
 - `ZooKeeperBackendConfiguration`
-- tests that assume zero-argument module construction
+- tests that assume zero-argument typed module construction or permissive ServiceLoader backend creation
 
 Responsibilities after change:
 
 - own explicit typed ZooKeeper configuration
 - advertise complete backend capabilities
 - stop exposing local-default bootstrap helpers
+- keep ServiceLoader discovery available without allowing backend creation from discovery alone
 
 ### `distributed-lock-spring-boot-starter`
 
@@ -245,6 +259,7 @@ Responsibilities after change:
 
 - require explicit backend property when enabled
 - continue consuming only generic properties plus `BackendModule` beans
+- never treat classpath ServiceLoader providers as Spring backend beans
 - delegate backend-specific configuration ownership to backend Spring modules
 
 ### `distributed-lock-redis-spring-boot-autoconfigure`
@@ -280,6 +295,14 @@ Modify:
 
 This keeps test-only modules aligned with runtime SPI without pulling internal SPI redesign into this stage.
 
+### `distributed-lock-benchmarks`
+
+Modify only as needed:
+
+- benchmark helper bootstrap paths that need explicit backend selection to stay aligned with the starter contract
+
+Benchmarks are not part of the runtime API surface, but they must compile and bootstrap against the same explicit configuration model.
+
 ## Startup Validation Rules
 
 ### Programmatic runtime
@@ -304,7 +327,7 @@ For `DistributedLockAutoConfiguration` to succeed when `distributed.lock.enabled
 2. the application context must provide a matching backend module for that backend id
 3. the matching backend module must satisfy the same required capabilities as programmatic runtime
 
-If any condition fails, application startup fails during bean creation.
+`ServiceLoader` discovery does not participate in this Spring path. If no matching `BackendModule` bean exists, application startup fails during bean creation.
 
 ## Testing Strategy
 
@@ -324,11 +347,13 @@ Required backend-module coverage:
 - Redis module requires explicit configuration
 - ZooKeeper module requires explicit configuration
 - Redis and ZooKeeper advertise the expanded capability record correctly
+- ServiceLoader-discovered Redis and ZooKeeper providers are discoverable but fail with explicit typed-configuration guidance when `createBackend()` is called
 
 Required Spring coverage:
 
 - generic starter fails fast when enabled and backend property is missing
 - generic starter fails fast when configured backend module is absent
+- generic starter ignores ServiceLoader-only backends when Spring provides no `BackendModule` beans
 - Redis starter path still succeeds with explicit backend property plus Redis backend module
 - ZooKeeper starter path still succeeds with explicit backend property plus ZooKeeper backend module
 
