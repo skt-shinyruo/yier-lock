@@ -42,16 +42,29 @@ public final class RedisLockBackend implements LockBackend {
             + "return fence";
 
     private static final String READ_ACQUIRE_SCRIPT =
-        "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
+        "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "local readerType = redis.call('type', KEYS[2]).ok "
+            + "if readerType == 'hash' then return 0 end "
+            + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
+            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[2], '-inf', nowMs) end "
+            + "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
             + "local fence = redis.call('incr', KEYS[3]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "redis.call('hset', KEYS[2], owner, '1') "
-            + "redis.call('expire', KEYS[2], tonumber(ARGV[2])) "
+            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
+            + "redis.call('zadd', KEYS[2], nowMs + ttlMs, owner) "
+            + "redis.call('pexpire', KEYS[2], ttlMs) "
             + "return fence";
 
     private static final String WRITE_ACQUIRE_SCRIPT =
         "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
-            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
+            + "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "local readerType = redis.call('type', KEYS[2]).ok "
+            + "if readerType == 'hash' then return 0 end "
+            + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
+            + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[2], '-inf', nowMs) end "
+            + "if redis.call('zcard', KEYS[2]) > 0 then return 0 end "
             + "local fence = redis.call('incr', KEYS[3]) "
             + "local owner = ARGV[1] .. ':' .. fence "
             + "redis.call('set', KEYS[1], owner, 'EX', tonumber(ARGV[2])) "
@@ -63,14 +76,33 @@ public final class RedisLockBackend implements LockBackend {
     private static final String VALUE_REFRESH_SCRIPT =
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
 
-    private static final String HASH_RELEASE_SCRIPT =
-        "if redis.call('hexists', KEYS[1], ARGV[1]) == 0 then return 0 end "
-            + "redis.call('hdel', KEYS[1], ARGV[1]) "
-            + "if redis.call('hlen', KEYS[1]) == 0 then redis.call('del', KEYS[1]) end "
+    private static final String READ_RELEASE_SCRIPT =
+        "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
+            + "redis.call('zremrangebyscore', KEYS[1], '-inf', nowMs) "
+            + "if redis.call('zrem', KEYS[1], ARGV[1]) == 0 then return 0 end "
+            + "if redis.call('zcard', KEYS[1]) == 0 then redis.call('del', KEYS[1]) end "
             + "return 1";
 
-    private static final String HASH_REFRESH_SCRIPT =
-        "if redis.call('hexists', KEYS[1], ARGV[1]) == 1 then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+    private static final String READ_REFRESH_SCRIPT =
+        "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
+            + "redis.call('zremrangebyscore', KEYS[1], '-inf', nowMs) "
+            + "if redis.call('zscore', KEYS[1], ARGV[1]) == false then return 0 end "
+            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
+            + "redis.call('zadd', KEYS[1], nowMs + ttlMs, ARGV[1]) "
+            + "redis.call('pexpire', KEYS[1], ttlMs) "
+            + "return 1";
+
+    private static final String READ_OWNER_MATCH_SCRIPT =
+        "local now = redis.call('time') "
+            + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
+            + "redis.call('zremrangebyscore', KEYS[1], '-inf', nowMs) "
+            + "if redis.call('zscore', KEYS[1], ARGV[1]) == false then return 0 end "
+            + "return 1";
 
     private final RedisBackendConfiguration configuration;
     private final RedisClient redisClient;
@@ -422,7 +454,7 @@ public final class RedisLockBackend implements LockBackend {
                         ownerValue
                     );
                     case READ -> commands.eval(
-                        HASH_RELEASE_SCRIPT,
+                        READ_RELEASE_SCRIPT,
                         ScriptOutputType.INTEGER,
                         new String[]{readersKey(key.value())},
                         ownerValue
@@ -462,7 +494,7 @@ public final class RedisLockBackend implements LockBackend {
                         String.valueOf(configuration.leaseSeconds())
                     );
                     case READ -> commands.eval(
-                        HASH_REFRESH_SCRIPT,
+                        READ_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
                         new String[]{readersKey(key.value())},
                         ownerValue,
@@ -490,7 +522,15 @@ public final class RedisLockBackend implements LockBackend {
             try {
                 return switch (mode) {
                     case MUTEX -> ownerValue.equals(commands.get(ownerKey(key.value(), LockMode.MUTEX)));
-                    case READ -> Boolean.TRUE.equals(commands.hexists(readersKey(key.value()), ownerValue));
+                    case READ -> {
+                        Long result = commands.eval(
+                            READ_OWNER_MATCH_SCRIPT,
+                            ScriptOutputType.INTEGER,
+                            new String[]{readersKey(key.value())},
+                            ownerValue
+                        );
+                        yield result != null && result == 1L;
+                    }
                     case WRITE -> ownerValue.equals(commands.get(ownerKey(key.value(), LockMode.WRITE)));
                 };
             } catch (RuntimeException exception) {
