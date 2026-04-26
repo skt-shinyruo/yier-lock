@@ -45,6 +45,21 @@ public abstract class LockClientContract {
     }
 
     @Test
+    void closingSessionShouldReleaseUnclosedLease() throws Exception {
+        runtime = createRuntime();
+        LockSession holder = runtime.lockClient().openSession();
+
+        try {
+            holder.acquire(request("inventory:session-close", LockMode.MUTEX, Duration.ofSeconds(1)));
+        } finally {
+            holder.close();
+        }
+
+        assertThat(executor.submit(() -> tryAcquire("inventory:session-close", LockMode.MUTEX, Duration.ofMillis(200))).get())
+            .isTrue();
+    }
+
+    @Test
     void fencingTokenShouldIncreaseAcrossSequentialLeases() throws Exception {
         runtime = createRuntime();
         try (LockSession session = runtime.lockClient().openSession()) {
