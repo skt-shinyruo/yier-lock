@@ -56,8 +56,13 @@ public final class RedisLockBackend implements LockBackend {
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
             + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
+            + "local pendingType = redis.call('type', KEYS[5]).ok "
+            + "if pendingType ~= 'none' and pendingType ~= 'zset' then return 0 end "
+            + "if pendingType == 'zset' then redis.call('zremrangebyscore', KEYS[5], '-inf', nowMs) end "
+            + "if pendingType == 'zset' and redis.call('zcard', KEYS[5]) == 0 then redis.call('del', KEYS[5]) end "
             + "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
             + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
+            + "if redis.call('exists', KEYS[5]) == 1 then return 0 end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
             + "local ttlMs = tonumber(ARGV[2]) * 1000 "
@@ -66,15 +71,23 @@ public final class RedisLockBackend implements LockBackend {
             + "return fence";
 
     private static final String WRITE_ACQUIRE_SCRIPT =
-        "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
-            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
-            + "local now = redis.call('time') "
+        "local now = redis.call('time') "
             + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
             + "local readerType = redis.call('type', KEYS[3]).ok "
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
             + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
+            + "local pendingType = redis.call('type', KEYS[5]).ok "
+            + "if pendingType ~= 'none' and pendingType ~= 'zset' then return 0 end "
+            + "if pendingType == 'zset' then redis.call('zremrangebyscore', KEYS[5], '-inf', nowMs) end "
+            + "redis.call('zadd', KEYS[5], nowMs + ttlMs, ARGV[3]) "
+            + "redis.call('pexpire', KEYS[5], ttlMs) "
+            + "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
+            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
             + "if redis.call('zcard', KEYS[3]) > 0 then return 0 end "
+            + "redis.call('zrem', KEYS[5], ARGV[3]) "
+            + "if redis.call('zcard', KEYS[5]) == 0 then redis.call('del', KEYS[5]) end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
             + "redis.call('set', KEYS[2], owner, 'EX', tonumber(ARGV[2])) "
@@ -85,6 +98,12 @@ public final class RedisLockBackend implements LockBackend {
 
     private static final String VALUE_REFRESH_SCRIPT =
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+
+    private static final String PENDING_WRITER_CLEANUP_SCRIPT =
+        "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
+            + "local removed = redis.call('zrem', KEYS[1], ARGV[1]) "
+            + "if redis.call('zcard', KEYS[1]) == 0 then redis.call('del', KEYS[1]) end "
+            + "return removed";
 
     private static final String READ_RELEASE_SCRIPT =
         "local now = redis.call('time') "
@@ -155,6 +174,10 @@ public final class RedisLockBackend implements LockBackend {
         return "lock:%s:read:owners".formatted(key);
     }
 
+    private static String pendingWritersKey(String key) {
+        return "lock:%s:write:pending".formatted(key);
+    }
+
     private static String fenceKey(String key) {
         return "lock:%s:fence".formatted(key);
     }
@@ -190,23 +213,36 @@ public final class RedisLockBackend implements LockBackend {
         public BackendLockLease acquire(LockRequest request) throws InterruptedException {
             ensureActive();
 
-            long deadlineNanos = request.waitPolicy().unbounded()
-                ? Long.MAX_VALUE
-                : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+            String writerIntent = request.mode() == LockMode.WRITE
+                ? writerIntentValue(sessionId, nextSessionId())
+                : null;
+            boolean acquired = false;
 
-            do {
-                RedisLease lease = tryAcquire(request);
-                if (lease != null) {
-                    activeLeases.put(lease.ownerValue(), lease);
-                    return lease;
+            try {
+                long deadlineNanos = request.waitPolicy().unbounded()
+                    ? Long.MAX_VALUE
+                    : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+
+                do {
+                    ensureActive();
+                    RedisLease lease = tryAcquire(request, writerIntent);
+                    if (lease != null) {
+                        acquired = true;
+                        activeLeases.put(lease.ownerValue(), lease);
+                        return lease;
+                    }
+                    if (!request.waitPolicy().unbounded() && System.nanoTime() >= deadlineNanos) {
+                        throw new LockAcquisitionTimeoutException("Timed out acquiring Redis lock for key " + request.key().value());
+                    }
+                    Thread.sleep(request.waitPolicy().unbounded()
+                        ? 25L
+                        : Math.min(25L, Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()))));
+                } while (true);
+            } finally {
+                if (!acquired && writerIntent != null) {
+                    clearPendingWriterIntent(request.key().value(), writerIntent);
                 }
-                if (!request.waitPolicy().unbounded() && System.nanoTime() >= deadlineNanos) {
-                    throw new LockAcquisitionTimeoutException("Timed out acquiring Redis lock for key " + request.key().value());
-                }
-                Thread.sleep(request.waitPolicy().unbounded()
-                    ? 25L
-                    : Math.min(25L, Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()))));
-            } while (true);
+            }
         }
 
         @Override
@@ -258,11 +294,11 @@ public final class RedisLockBackend implements LockBackend {
             }
         }
 
-        private RedisLease tryAcquire(LockRequest request) {
+        private RedisLease tryAcquire(LockRequest request, String writerIntent) {
             long fence = switch (request.mode()) {
                 case MUTEX -> tryAcquireMutex(request.key().value());
                 case READ -> tryAcquireRead(request.key().value());
-                case WRITE -> tryAcquireWrite(request.key().value());
+                case WRITE -> tryAcquireWrite(request.key().value(), Objects.requireNonNull(writerIntent, "writerIntent"));
             };
             if (fence <= 0) {
                 return null;
@@ -286,7 +322,8 @@ public final class RedisLockBackend implements LockBackend {
                         ownerKey(key, LockMode.MUTEX),
                         ownerKey(key, LockMode.WRITE),
                         readersKey(key),
-                        fenceKey(key)
+                        fenceKey(key),
+                        pendingWritersKey(key)
                     },
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
@@ -306,7 +343,8 @@ public final class RedisLockBackend implements LockBackend {
                         ownerKey(key, LockMode.MUTEX),
                         ownerKey(key, LockMode.WRITE),
                         readersKey(key),
-                        fenceKey(key)
+                        fenceKey(key),
+                        pendingWritersKey(key)
                     },
                     sessionId,
                     String.valueOf(configuration.leaseSeconds())
@@ -317,7 +355,7 @@ public final class RedisLockBackend implements LockBackend {
             }
         }
 
-        private long tryAcquireWrite(String key) {
+        private long tryAcquireWrite(String key, String writerIntent) {
             try {
                 Long result = commands.eval(
                     WRITE_ACQUIRE_SCRIPT,
@@ -326,14 +364,28 @@ public final class RedisLockBackend implements LockBackend {
                         ownerKey(key, LockMode.MUTEX),
                         ownerKey(key, LockMode.WRITE),
                         readersKey(key),
-                        fenceKey(key)
+                        fenceKey(key),
+                        pendingWritersKey(key)
                     },
                     sessionId,
-                    String.valueOf(configuration.leaseSeconds())
+                    String.valueOf(configuration.leaseSeconds()),
+                    writerIntent
                 );
                 return result == null ? 0L : result;
             } catch (RuntimeException exception) {
                 throw new LockBackendException("Failed to acquire Redis write lock for key " + key, exception);
+            }
+        }
+
+        private void clearPendingWriterIntent(String key, String writerIntent) {
+            try {
+                commands.eval(
+                    PENDING_WRITER_CLEANUP_SCRIPT,
+                    ScriptOutputType.INTEGER,
+                    new String[]{pendingWritersKey(key)},
+                    writerIntent
+                );
+            } catch (RuntimeException ignored) {
             }
         }
 
@@ -575,5 +627,9 @@ public final class RedisLockBackend implements LockBackend {
 
     private static String ownerValue(String sessionId, long fence) {
         return sessionId + ":" + fence;
+    }
+
+    private static String writerIntentValue(String sessionId, String attemptId) {
+        return sessionId + ":writer:" + attemptId;
     }
 }
