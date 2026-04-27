@@ -1,10 +1,10 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockAutoConfiguration;
@@ -39,10 +39,10 @@ class ZooKeeperStarterIntegrationTest {
                 )
                 .run(context -> {
                     assertThat(context).hasSingleBean(LockClient.class);
-                    assertThat(context).hasSingleBean(LockExecutor.class);
+                    assertThat(context).hasSingleBean(SynchronousLockExecutor.class);
 
-                    LockExecutor executor = context.getBean(LockExecutor.class);
-                    String result = executor.withLock(sampleRequest("zk-starter-test"), () -> "ok");
+                    SynchronousLockExecutor executor = context.getBean(SynchronousLockExecutor.class);
+                    String result = executor.withLock(sampleRequest("zk-starter-test"), lease -> "ok");
 
                     assertThat(result).isEqualTo("ok");
                 });

@@ -169,7 +169,7 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
         }
 
         @Override
-        public com.mycorp.distributedlock.api.LockExecutor lockExecutor() {
+        public com.mycorp.distributedlock.api.SynchronousLockExecutor synchronousLockExecutor() {
             return null;
         }
 
