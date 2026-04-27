@@ -103,6 +103,55 @@ class RedisReadWriteWriterPreferenceTest {
     }
 
     @Test
+    void pendingMutexShouldBlockLaterReadersAndAcquireAfterReadersDrain() throws Exception {
+        String key = "redis:rw:mutex-progress";
+        try (RedisLockBackend backend = redis.newBackend(30L)) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            BackendSession readerSession = backend.openSession();
+            BackendLockLease readerLease = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)));
+            BackendSession mutexSession = backend.openSession();
+            Future<BackendLockLease> mutexAttempt = executor.submit(() ->
+                mutexSession.acquire(mutexRequest(key, Duration.ofSeconds(5)))
+            );
+            BackendLockLease mutexLease = null;
+            try {
+                assertThat(awaitPendingWriterIntent(key)).isTrue();
+                assertThat(tryAcquireRead(backend, key, Duration.ofMillis(150))).isFalse();
+                readerLease.release();
+                mutexLease = mutexAttempt.get(2, TimeUnit.SECONDS);
+                assertThat(mutexLease.isValid()).isTrue();
+                assertThat(pendingWriterCount(key)).isZero();
+            } finally {
+                closeQuietly(mutexLease);
+                mutexAttempt.cancel(true);
+                closeQuietly(mutexSession);
+                closeQuietly(readerLease);
+                closeQuietly(readerSession);
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void mutexTimeoutShouldRemovePendingIntent() throws Exception {
+        String key = "redis:rw:mutex-timeout";
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession readerSession = backend.openSession();
+             BackendLockLease ignored = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)))) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<Boolean> mutexAttempt = executor.submit(() -> tryAcquireMutex(backend, key, Duration.ofMillis(300)));
+            try {
+                assertThat(awaitPendingWriterIntent(key)).isTrue();
+                assertThat(mutexAttempt.get(2, TimeUnit.SECONDS)).isFalse();
+                assertThat(pendingWriterCount(key)).isZero();
+            } finally {
+                mutexAttempt.cancel(true);
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void shortFixedWriteLeaseShouldKeepPendingIntentAliveBetweenRetries() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -185,6 +234,15 @@ class RedisReadWriteWriterPreferenceTest {
         }
     }
 
+    private static boolean tryAcquireMutex(RedisLockBackend backend, String key, Duration waitTime) throws Exception {
+        try (BackendSession session = backend.openSession();
+             BackendLockLease lease = session.acquire(mutexRequest(key, waitTime))) {
+            return lease.isValid();
+        } catch (LockAcquisitionTimeoutException exception) {
+            return false;
+        }
+    }
+
     private static boolean awaitPendingWriterIntent(String key) throws InterruptedException {
         return awaitPendingWriterIntent(key, 25L);
     }
@@ -232,6 +290,10 @@ class RedisReadWriteWriterPreferenceTest {
             WaitPolicy.timed(waitTime),
             leasePolicy
         );
+    }
+
+    private static LockRequest mutexRequest(String key, Duration waitTime) {
+        return new LockRequest(new LockKey(key), LockMode.MUTEX, WaitPolicy.timed(waitTime));
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

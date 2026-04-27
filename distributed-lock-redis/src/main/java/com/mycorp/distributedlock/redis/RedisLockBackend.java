@@ -37,18 +37,32 @@ import java.util.concurrent.atomic.AtomicReference;
 public final class RedisLockBackend implements LockBackend {
 
     private static final String MUTEX_ACQUIRE_SCRIPT =
-        "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
-            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
-            + "local now = redis.call('time') "
+        "local now = redis.call('time') "
             + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
+            + "local ttlMs = tonumber(ARGV[2]) "
+            + "local pendingTtlMs = tonumber(ARGV[4]) "
             + "local readerType = redis.call('type', KEYS[3]).ok "
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
             + "if readerType == 'zset' then redis.call('zremrangebyscore', KEYS[3], '-inf', nowMs) end "
+            + "local pendingType = redis.call('type', KEYS[5]).ok "
+            + "if pendingType ~= 'none' and pendingType ~= 'zset' then return 0 end "
+            + "if pendingType == 'zset' then redis.call('zremrangebyscore', KEYS[5], '-inf', nowMs) end "
+            + "redis.call('zadd', KEYS[5], nowMs + pendingTtlMs, ARGV[3]) "
+            + "local maxWriter = redis.call('zrevrange', KEYS[5], 0, 0, 'WITHSCORES') "
+            + "redis.call('pexpire', KEYS[5], math.max(1, math.ceil(tonumber(maxWriter[2]) - nowMs))) "
+            + "if redis.call('exists', KEYS[1]) == 1 then return 0 end "
+            + "if redis.call('exists', KEYS[2]) == 1 then return 0 end "
             + "if redis.call('zcard', KEYS[3]) > 0 then return 0 end "
+            + "redis.call('zrem', KEYS[5], ARGV[3]) "
+            + "if redis.call('zcard', KEYS[5]) == 0 then redis.call('del', KEYS[5]) end "
+            + "if redis.call('zcard', KEYS[5]) > 0 then "
+            + "local remainingWriter = redis.call('zrevrange', KEYS[5], 0, 0, 'WITHSCORES') "
+            + "redis.call('pexpire', KEYS[5], math.max(1, math.ceil(tonumber(remainingWriter[2]) - nowMs))) "
+            + "end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "redis.call('set', KEYS[1], owner, 'PX', tonumber(ARGV[2])) "
+            + "redis.call('set', KEYS[1], owner, 'PX', ttlMs) "
             + "return fence";
 
     private static final String READ_ACQUIRE_SCRIPT =
@@ -187,19 +201,19 @@ public final class RedisLockBackend implements LockBackend {
     }
 
     static String ownerKey(String key, LockMode mode) {
-        return "lock:%s:%s:owner".formatted(key, normalizeMode(mode));
+        return RedisKeys.forKey(key, RedisKeyStrategy.LEGACY).ownerKey(mode);
     }
 
     private static String readersKey(String key) {
-        return "lock:%s:read:owners".formatted(key);
+        return RedisKeys.forKey(key, RedisKeyStrategy.LEGACY).readersKey();
     }
 
     private static String pendingWritersKey(String key) {
-        return "lock:%s:write:pending".formatted(key);
+        return RedisKeys.forKey(key, RedisKeyStrategy.LEGACY).pendingWritersKey();
     }
 
     private static String fenceKey(String key) {
-        return "lock:%s:fence".formatted(key);
+        return RedisKeys.forKey(key, RedisKeyStrategy.LEGACY).fenceKey();
     }
 
     private static String sessionKey(String sessionId) {
@@ -208,6 +222,46 @@ public final class RedisLockBackend implements LockBackend {
 
     private static String normalizeMode(LockMode mode) {
         return mode.name().toLowerCase(Locale.ROOT);
+    }
+
+    static final class RedisKeys {
+        private final String prefix;
+
+        private RedisKeys(String prefix) {
+            this.prefix = prefix;
+        }
+
+        static RedisKeys forKey(String key, RedisKeyStrategy strategy) {
+            return switch (strategy) {
+                case LEGACY -> new RedisKeys("lock:" + key);
+                case HASH_TAGGED -> new RedisKeys("lock:{" + encodeKey(key) + "}");
+            };
+        }
+
+        String ownerKey(LockMode mode) {
+            return prefix + ":" + normalizeMode(mode) + ":owner";
+        }
+
+        String readersKey() {
+            return prefix + ":read:owners";
+        }
+
+        String pendingWritersKey() {
+            return prefix + ":write:pending";
+        }
+
+        String fenceKey() {
+            return prefix + ":fence";
+        }
+
+        private static String encodeKey(String key) {
+            return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(key.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    private RedisKeys keys(String key) {
+        return RedisKeys.forKey(key, configuration.keyStrategy());
     }
 
     private static String nextSessionId() {
@@ -233,7 +287,7 @@ public final class RedisLockBackend implements LockBackend {
         public BackendLockLease acquire(LockRequest request) throws InterruptedException {
             ensureActive();
 
-            String writerIntent = request.mode() == LockMode.WRITE
+            String exclusiveIntent = request.mode() == LockMode.WRITE || request.mode() == LockMode.MUTEX
                 ? writerIntentValue(sessionId, nextSessionId())
                 : null;
             boolean acquired = false;
@@ -243,7 +297,7 @@ public final class RedisLockBackend implements LockBackend {
 
                 do {
                     ensureActive();
-                    RedisLease lease = tryAcquire(request, writerIntent);
+                    RedisLease lease = tryAcquire(request, exclusiveIntent);
                     if (lease != null) {
                         acquired = true;
                         activeLeases.put(lease.ownerValue(), lease);
@@ -256,8 +310,8 @@ public final class RedisLockBackend implements LockBackend {
                     Thread.sleep(sleepMillis(request, deadlineNanos));
                 } while (true);
             } finally {
-                if (!acquired && writerIntent != null) {
-                    clearPendingWriterIntent(request.key().value(), writerIntent);
+                if (!acquired && exclusiveIntent != null) {
+                    clearPendingWriterIntent(request.key().value(), exclusiveIntent);
                 }
             }
         }
@@ -311,12 +365,12 @@ public final class RedisLockBackend implements LockBackend {
             }
         }
 
-        private RedisLease tryAcquire(LockRequest request, String writerIntent) {
+        private RedisLease tryAcquire(LockRequest request, String exclusiveIntent) {
             long leaseMillis = effectiveLeaseMillis(request);
             long fence = switch (request.mode()) {
-                case MUTEX -> tryAcquireMutex(request.key().value(), leaseMillis);
+                case MUTEX -> tryAcquireMutex(request.key().value(), leaseMillis, Objects.requireNonNull(exclusiveIntent, "exclusiveIntent"));
                 case READ -> tryAcquireRead(request.key().value(), leaseMillis);
-                case WRITE -> tryAcquireWrite(request.key().value(), leaseMillis, Objects.requireNonNull(writerIntent, "writerIntent"));
+                case WRITE -> tryAcquireWrite(request.key().value(), leaseMillis, Objects.requireNonNull(exclusiveIntent, "exclusiveIntent"));
             };
             if (fence <= 0) {
                 return null;
@@ -332,20 +386,23 @@ public final class RedisLockBackend implements LockBackend {
             );
         }
 
-        private long tryAcquireMutex(String key, long leaseMillis) {
+        private long tryAcquireMutex(String key, long leaseMillis, String exclusiveIntent) {
             try {
+                RedisKeys keys = keys(key);
                 Long result = commands.eval(
                     MUTEX_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
                     new String[]{
-                        ownerKey(key, LockMode.MUTEX),
-                        ownerKey(key, LockMode.WRITE),
-                        readersKey(key),
-                        fenceKey(key),
-                        pendingWritersKey(key)
+                        keys.ownerKey(LockMode.MUTEX),
+                        keys.ownerKey(LockMode.WRITE),
+                        keys.readersKey(),
+                        keys.fenceKey(),
+                        keys.pendingWritersKey()
                     },
                     sessionId,
-                    String.valueOf(leaseMillis)
+                    String.valueOf(leaseMillis),
+                    exclusiveIntent,
+                    String.valueOf(pendingWriterIntentMillis())
                 );
                 return result == null ? 0L : result;
             } catch (RuntimeException exception) {
@@ -355,15 +412,16 @@ public final class RedisLockBackend implements LockBackend {
 
         private long tryAcquireRead(String key, long leaseMillis) {
             try {
+                RedisKeys keys = keys(key);
                 Long result = commands.eval(
                     READ_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
                     new String[]{
-                        ownerKey(key, LockMode.MUTEX),
-                        ownerKey(key, LockMode.WRITE),
-                        readersKey(key),
-                        fenceKey(key),
-                        pendingWritersKey(key)
+                        keys.ownerKey(LockMode.MUTEX),
+                        keys.ownerKey(LockMode.WRITE),
+                        keys.readersKey(),
+                        keys.fenceKey(),
+                        keys.pendingWritersKey()
                     },
                     sessionId,
                     String.valueOf(leaseMillis)
@@ -376,15 +434,16 @@ public final class RedisLockBackend implements LockBackend {
 
         private long tryAcquireWrite(String key, long leaseMillis, String writerIntent) {
             try {
+                RedisKeys keys = keys(key);
                 Long result = commands.eval(
                     WRITE_ACQUIRE_SCRIPT,
                     ScriptOutputType.INTEGER,
                     new String[]{
-                        ownerKey(key, LockMode.MUTEX),
-                        ownerKey(key, LockMode.WRITE),
-                        readersKey(key),
-                        fenceKey(key),
-                        pendingWritersKey(key)
+                        keys.ownerKey(LockMode.MUTEX),
+                        keys.ownerKey(LockMode.WRITE),
+                        keys.readersKey(),
+                        keys.fenceKey(),
+                        keys.pendingWritersKey()
                     },
                     sessionId,
                     String.valueOf(leaseMillis),
@@ -399,10 +458,11 @@ public final class RedisLockBackend implements LockBackend {
 
         private void clearPendingWriterIntent(String key, String writerIntent) {
             try {
+                RedisKeys keys = keys(key);
                 commands.eval(
                     PENDING_WRITER_CLEANUP_SCRIPT,
                     ScriptOutputType.INTEGER,
-                    new String[]{pendingWritersKey(key)},
+                    new String[]{keys.pendingWritersKey()},
                     writerIntent
                 );
             } catch (RuntimeException ignored) {
@@ -576,23 +636,24 @@ public final class RedisLockBackend implements LockBackend {
             }
 
             try {
+                RedisKeys keys = keys(key.value());
                 Long result = switch (mode) {
                     case MUTEX -> commands.eval(
                         VALUE_RELEASE_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{ownerKey(key.value(), LockMode.MUTEX)},
+                        new String[]{keys.ownerKey(LockMode.MUTEX)},
                         ownerValue
                     );
                     case READ -> commands.eval(
                         READ_RELEASE_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{readersKey(key.value())},
+                        new String[]{keys.readersKey()},
                         ownerValue
                     );
                     case WRITE -> commands.eval(
                         VALUE_RELEASE_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{ownerKey(key.value(), LockMode.WRITE)},
+                        new String[]{keys.ownerKey(LockMode.WRITE)},
                         ownerValue
                     );
                 };
@@ -643,25 +704,26 @@ public final class RedisLockBackend implements LockBackend {
                 return false;
             }
             try {
+                RedisKeys keys = keys(key.value());
                 Long result = switch (mode) {
                     case MUTEX -> commands.eval(
                         VALUE_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{ownerKey(key.value(), LockMode.MUTEX)},
+                        new String[]{keys.ownerKey(LockMode.MUTEX)},
                         ownerValue,
                         String.valueOf(leaseMillis)
                     );
                     case READ -> commands.eval(
                         READ_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{readersKey(key.value())},
+                        new String[]{keys.readersKey()},
                         ownerValue,
                         String.valueOf(leaseMillis)
                     );
                     case WRITE -> commands.eval(
                         VALUE_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
-                        new String[]{ownerKey(key.value(), LockMode.WRITE)},
+                        new String[]{keys.ownerKey(LockMode.WRITE)},
                         ownerValue,
                         String.valueOf(leaseMillis)
                     );
@@ -678,18 +740,19 @@ public final class RedisLockBackend implements LockBackend {
 
         private boolean ownerValueMatches() {
             try {
+                RedisKeys keys = keys(key.value());
                 return switch (mode) {
-                    case MUTEX -> ownerValue.equals(commands.get(ownerKey(key.value(), LockMode.MUTEX)));
+                    case MUTEX -> ownerValue.equals(commands.get(keys.ownerKey(LockMode.MUTEX)));
                     case READ -> {
                         Long result = commands.eval(
                             READ_OWNER_MATCH_SCRIPT,
                             ScriptOutputType.INTEGER,
-                            new String[]{readersKey(key.value())},
+                            new String[]{keys.readersKey()},
                             ownerValue
                         );
                         yield result != null && result == 1L;
                     }
-                    case WRITE -> ownerValue.equals(commands.get(ownerKey(key.value(), LockMode.WRITE)));
+                    case WRITE -> ownerValue.equals(commands.get(keys.ownerKey(LockMode.WRITE)));
                 };
             } catch (RuntimeException exception) {
                 throw new LockBackendException("Failed to inspect Redis lock for key " + key.value(), exception);
