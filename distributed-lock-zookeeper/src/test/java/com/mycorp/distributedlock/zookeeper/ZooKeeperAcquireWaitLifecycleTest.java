@@ -12,6 +12,7 @@ import org.apache.curator.test.KillSession;
 import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -65,6 +66,28 @@ class ZooKeeperAcquireWaitLifecycleTest {
         }
     }
 
+    @Test
+    void timedAcquireShouldContinueWaitingAcrossBoundedSlices() throws Exception {
+        try (TestingServer server = new TestingServer();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
+             BackendSession holder = backend.openSession();
+             BackendLockLease holderLease = holder.acquire(request("zk:wait:timed"));
+             BackendSession waiter = backend.openSession()) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            try {
+                Future<BackendLockLease> result = executor.submit(() -> waiter.acquire(timedRequest("zk:wait:timed")));
+                Thread.sleep(500L);
+                holderLease.release();
+
+                try (BackendLockLease waiterLease = result.get(3, TimeUnit.SECONDS)) {
+                    assertThat(waiterLease.isValid()).isTrue();
+                }
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
     private static Throwable acquireAndReturnFailure(BackendSession session, String key) {
         try {
             session.acquire(request(key));
@@ -76,5 +99,9 @@ class ZooKeeperAcquireWaitLifecycleTest {
 
     private static LockRequest request(String key) {
         return new LockRequest(new LockKey(key), LockMode.MUTEX, WaitPolicy.indefinite());
+    }
+
+    private static LockRequest timedRequest(String key) {
+        return new LockRequest(new LockKey(key), LockMode.MUTEX, WaitPolicy.timed(Duration.ofSeconds(2)));
     }
 }

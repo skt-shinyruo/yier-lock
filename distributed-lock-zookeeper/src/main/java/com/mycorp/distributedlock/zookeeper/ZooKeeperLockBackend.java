@@ -215,11 +215,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
                     if (predecessorPath == null) {
                         continue;
                     }
-                    boolean deleted = awaitNodeDeletion(predecessorPath, remainingNanos);
-                    if (waitMode != WaitMode.INDEFINITE && !deleted) {
-                        deleteIfExists(contenderPath);
-                        throw timeout(request.key());
-                    }
+                    awaitNodeDeletion(predecessorPath, remainingNanos);
                 }
             } catch (InterruptedException exception) {
                 if (contenderPath != null) {
