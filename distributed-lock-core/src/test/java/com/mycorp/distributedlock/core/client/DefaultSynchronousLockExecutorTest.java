@@ -2,13 +2,16 @@ package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockContext;
 import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
+import com.mycorp.distributedlock.api.exception.LockReentryException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
@@ -19,23 +22,23 @@ import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.FutureTask;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class DefaultLockExecutorTest {
+class DefaultSynchronousLockExecutorTest {
 
     @Test
     void withLockShouldReleaseLeaseAfterAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
 
-        String result = executor.withLock(sampleRequest(), () -> "ok");
+        String result = executor.withLock(sampleRequest(), lease -> "ok");
 
         assertThat(result).isEqualTo("ok");
         assertThat(backend.releaseCount()).hasValue(1);
@@ -45,12 +48,12 @@ class DefaultLockExecutorTest {
     @Test
     void withLockShouldReleaseLeaseWhenActionFails() {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> {
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> {
             throw new IllegalStateException("boom");
         }))
             .isInstanceOf(IllegalStateException.class)
@@ -61,33 +64,57 @@ class DefaultLockExecutorTest {
     }
 
     @Test
-    void withLockShouldExposeCurrentFencingTokenDuringAction() throws Exception {
+    void withLockShouldPassAcquiredLeaseAndBindLockContextDuringAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
-        AtomicLong observedToken = new AtomicLong();
+        AtomicReference<LockLease> callbackLease = new AtomicReference<>();
+        AtomicReference<LockLease> contextLease = new AtomicReference<>();
 
-        String result = executor.withLock(sampleRequest(), () -> {
-            observedToken.set(CurrentLockContext.requireCurrentFencingToken().value());
+        String result = executor.withLock(sampleRequest(), lease -> {
+            callbackLease.set(lease);
+            contextLease.set(LockContext.requireCurrentLease());
             return "ok";
         });
 
         assertThat(result).isEqualTo("ok");
-        assertThat(observedToken).hasValue(1L);
+        assertThat(callbackLease.get()).isSameAs(contextLease.get());
+        assertThat(contextLease.get().fencingToken()).isEqualTo(new FencingToken(1L));
+        assertThat(LockContext.currentLease()).isEmpty();
+    }
+
+    @Test
+    void withLockShouldRejectSameKeyReentryBeforeOpeningNestedSession() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true, true)
+        ));
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), outerLease ->
+            executor.withLock(sampleRequest(), innerLease -> "nested")
+        ))
+            .isInstanceOf(LockReentryException.class)
+            .hasMessageContaining("inventory");
+
+        assertThat(backend.openSessionCount()).hasValue(1);
+        assertThat(backend.releaseCount()).hasValue(1);
+        assertThat(backend.sessionCloseCount()).hasValue(1);
     }
 
     @Test
     void withLockShouldRejectCompletionStageResults() {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> CompletableFuture.completedFuture("ok")))
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> CompletableFuture.completedFuture("ok")))
             .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("SynchronousLockExecutor only supports synchronous actions")
             .hasMessageContaining("CompletionStage");
 
         assertThat(backend.releaseCount()).hasValue(1);
@@ -97,15 +124,16 @@ class DefaultLockExecutorTest {
     @Test
     void withLockShouldRejectFutureResults() {
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
         FutureTask<String> futureTask = new FutureTask<>(() -> "ok");
         futureTask.run();
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> futureTask))
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> futureTask))
             .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("SynchronousLockExecutor only supports synchronous actions")
             .hasMessageContaining("Future");
 
         assertThat(backend.releaseCount()).hasValue(1);
@@ -116,12 +144,12 @@ class DefaultLockExecutorTest {
     void withLockShouldRejectReactivePublisherResultsWhenReactiveStreamsIsPresent() throws Exception {
         Assumptions.assumeTrue(isReactiveStreamsPresent());
         TrackingBackend backend = new TrackingBackend();
-        LockExecutor executor = new DefaultLockExecutor(new DefaultLockClient(
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
             backend,
-            new SupportedLockModes(true, true)
+            new SupportedLockModes(true, true, true)
         ));
 
-        ClassLoader classLoader = DefaultLockExecutorTest.class.getClassLoader();
+        ClassLoader classLoader = DefaultSynchronousLockExecutorTest.class.getClassLoader();
         Class<?> publisherType = Class.forName("org.reactivestreams.Publisher", false, classLoader);
         Object publisher = Proxy.newProxyInstance(
             classLoader,
@@ -129,8 +157,9 @@ class DefaultLockExecutorTest {
             (proxy, method, args) -> null
         );
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> publisher))
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> publisher))
             .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("SynchronousLockExecutor only supports synchronous actions")
             .hasMessageContaining("Publisher");
 
         assertThat(backend.releaseCount()).hasValue(1);
@@ -147,7 +176,7 @@ class DefaultLockExecutorTest {
 
     private static boolean isReactiveStreamsPresent() {
         try {
-            Class.forName("org.reactivestreams.Publisher", false, DefaultLockExecutorTest.class.getClassLoader());
+            Class.forName("org.reactivestreams.Publisher", false, DefaultSynchronousLockExecutorTest.class.getClassLoader());
             return true;
         } catch (ClassNotFoundException exception) {
             return false;
@@ -157,9 +186,11 @@ class DefaultLockExecutorTest {
     private static final class TrackingBackend implements LockBackend {
         private final AtomicInteger releaseCount = new AtomicInteger();
         private final AtomicInteger sessionCloseCount = new AtomicInteger();
+        private final AtomicInteger openSessionCount = new AtomicInteger();
 
         @Override
         public BackendSession openSession() {
+            openSessionCount.incrementAndGet();
             return new BackendSession() {
                 @Override
                 public BackendLockLease acquire(LockRequest lockRequest) {
@@ -184,6 +215,10 @@ class DefaultLockExecutorTest {
 
         AtomicInteger sessionCloseCount() {
             return sessionCloseCount;
+        }
+
+        AtomicInteger openSessionCount() {
+            return openSessionCount;
         }
 
         @Override

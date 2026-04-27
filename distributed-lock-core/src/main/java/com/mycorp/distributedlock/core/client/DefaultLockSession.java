@@ -1,10 +1,12 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
+import com.mycorp.distributedlock.api.exception.LockReentryException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 
@@ -20,6 +22,7 @@ public final class DefaultLockSession implements LockSession {
     private final BackendSession backendSession;
     private final LockRequestValidator validator;
     private final Set<SessionBoundLockLease> activeLeases = ConcurrentHashMap.newKeySet();
+    private final Set<LockKey> activeLeaseKeys = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean closed = new AtomicBoolean();
 
     public DefaultLockSession(
@@ -38,12 +41,21 @@ public final class DefaultLockSession implements LockSession {
             throw new IllegalStateException("Lock session is already closed");
         }
         validator.validate(supportedLockModes, request);
-        BackendLockLease backendLease = backendSession.acquire(request);
-        SessionBoundLockLease lease = new SessionBoundLockLease(backendLease, this::forgetLease);
-        if (!registerLease(lease)) {
-            throw closeLateAcquiredLease(lease);
+        registerKey(request.key());
+        boolean leaseCreated = false;
+        try {
+            BackendLockLease backendLease = backendSession.acquire(request);
+            SessionBoundLockLease lease = new SessionBoundLockLease(backendLease, this::forgetLease);
+            if (!registerLease(lease)) {
+                throw closeLateAcquiredLease(lease);
+            }
+            leaseCreated = true;
+            return lease;
+        } finally {
+            if (!leaseCreated) {
+                activeLeaseKeys.remove(request.key());
+            }
         }
-        return lease;
     }
 
     @Override
@@ -81,8 +93,15 @@ public final class DefaultLockSession implements LockSession {
         return true;
     }
 
+    private void registerKey(LockKey key) {
+        if (!activeLeaseKeys.add(key)) {
+            throw new LockReentryException("Lock key is already held by this session: " + key.value());
+        }
+    }
+
     private void forgetLease(SessionBoundLockLease lease) {
         activeLeases.remove(lease);
+        activeLeaseKeys.remove(lease.key());
     }
 
     private RuntimeException closeLateAcquiredLease(SessionBoundLockLease lease) {

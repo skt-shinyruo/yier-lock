@@ -2,6 +2,7 @@ package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
@@ -10,6 +11,8 @@ import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
+import com.mycorp.distributedlock.api.exception.LockReentryException;
+import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
@@ -34,7 +37,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldReleaseUnclosedLeaseBeforeBackendSessionClose() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
 
         session.acquire(sampleRequest("orders:close-one"));
@@ -48,7 +51,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldReleaseEveryUnclosedLease() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
 
         session.acquire(sampleRequest("orders:close-first"));
@@ -63,7 +66,7 @@ class DefaultLockSessionTest {
     @Test
     void manuallyReleasedLeaseShouldNotBeReleasedAgainWhenSessionCloses() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
         LockLease lease = session.acquire(sampleRequest("orders:manual-release"));
 
@@ -77,7 +80,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldContinueAfterLeaseReleaseFailureAndCloseBackendSession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
         RuntimeException releaseFailure = new LockBackendException("first release failed");
 
@@ -95,7 +98,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldSuppressBackendCloseFailureWhenLeaseReleaseAlreadyFailed() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
         RuntimeException releaseFailure = new LockBackendException("release failed");
         RuntimeException backendCloseFailure = new LockBackendException("backend close failed");
@@ -113,7 +116,7 @@ class DefaultLockSessionTest {
     @Test
     void backendCloseFailureShouldSurfaceAfterLeaseCleanupSucceeds() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
         RuntimeException backendCloseFailure = new LockBackendException("backend close failed");
 
@@ -129,7 +132,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldReleaseLateBackendLeaseWhenSessionClosesDuringAcquire() throws Exception {
         BlockingAcquireBackend backend = new BlockingAcquireBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -159,7 +162,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireAfterSessionCloseShouldFail() {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
         LockSession session = client.openSession();
 
         session.close();
@@ -167,6 +170,52 @@ class DefaultLockSessionTest {
         assertThatThrownBy(() -> session.acquire(sampleRequest("orders:closed")))
             .isInstanceOf(IllegalStateException.class)
             .hasMessageContaining("Lock session is already closed");
+    }
+
+    @Test
+    void acquireShouldRejectSameKeyAlreadyHeldBySession() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+
+        try (LockSession session = client.openSession();
+             LockLease ignored = session.acquire(sampleRequest("orders:reentry"))) {
+            assertThatThrownBy(() -> session.acquire(sampleRequest("orders:reentry")))
+                .isInstanceOf(LockReentryException.class)
+                .hasMessageContaining("orders:reentry");
+        }
+
+        assertThat(backend.leaseCount()).isEqualTo(1);
+    }
+
+    @Test
+    void acquireShouldAllowDifferentKeysInSameSession() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+
+        try (LockSession session = client.openSession();
+             LockLease first = session.acquire(sampleRequest("orders:first"));
+             LockLease second = session.acquire(sampleRequest("orders:second"))) {
+            assertThat(first.key()).isEqualTo(new LockKey("orders:first"));
+            assertThat(second.key()).isEqualTo(new LockKey("orders:second"));
+        }
+    }
+
+    @Test
+    void acquireShouldRejectFixedLeaseWhenCapabilityUnsupported() {
+        TrackingBackend backend = new TrackingBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, false));
+        LockRequest fixedLeaseRequest = new LockRequest(
+            new LockKey("orders:fixed"),
+            LockMode.MUTEX,
+            WaitPolicy.tryOnce(),
+            LeasePolicy.fixed(Duration.ofSeconds(5))
+        );
+
+        try (LockSession session = client.openSession()) {
+            assertThatThrownBy(() -> session.acquire(fixedLeaseRequest))
+                .isInstanceOf(UnsupportedLockCapabilityException.class)
+                .hasMessageContaining("fixed lease");
+        }
     }
 
     private static LockRequest sampleRequest(String key) {
@@ -214,6 +263,10 @@ class DefaultLockSessionTest {
 
         TrackingLease lease(int index) {
             return leases.get(index);
+        }
+
+        int leaseCount() {
+            return leases.size();
         }
 
         int backendCloseCount() {

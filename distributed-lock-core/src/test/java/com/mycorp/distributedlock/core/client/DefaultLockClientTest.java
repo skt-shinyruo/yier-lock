@@ -26,7 +26,7 @@ class DefaultLockClientTest {
     @Test
     void sessionShouldAcquireLeaseWithoutUsingThreadOwnership() throws Exception {
         StubBackend backend = new StubBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
 
         try (LockSession session = client.openSession();
              LockLease lease = session.acquire(sampleRequest(LockMode.MUTEX))) {
@@ -43,7 +43,7 @@ class DefaultLockClientTest {
     @Test
     void sessionShouldRejectUnsupportedModesBeforeBackendAcquire() {
         StubBackend backend = new StubBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(false, true));
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(false, true, true));
 
         try (LockSession session = client.openSession()) {
             assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))

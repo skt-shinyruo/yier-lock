@@ -1,5 +1,6 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.LeaseMode;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
@@ -18,6 +19,9 @@ final class LockRequestValidator {
         }
         if ((mode == LockMode.READ || mode == LockMode.WRITE) && !supportedLockModes.readWriteSupported()) {
             throw new UnsupportedLockCapabilityException("Backend does not support " + mode + " mode");
+        }
+        if (request.leasePolicy().mode() == LeaseMode.FIXED && !supportedLockModes.fixedLeaseDurationSupported()) {
+            throw new UnsupportedLockCapabilityException("Backend does not support fixed lease duration");
         }
     }
 }
