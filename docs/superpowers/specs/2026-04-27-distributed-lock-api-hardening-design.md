@@ -353,7 +353,9 @@ Implementation expectations:
 
 - convert effective lease duration to milliseconds
 - use millisecond-precision Redis expiration for fixed request leases
-- use the effective lease duration for mutex owner keys, write owner keys, reader zset scores, reader zset expiry, and pending writer intent expiry
+- use the effective lease duration for mutex owner keys, write owner keys, and each reader zset member score
+- keep the shared reader zset key expiry aligned with the furthest live reader score, not whichever reader most recently acquired or renewed
+- keep pending writer intent expiry separate from acquired lease duration and long enough to preserve writer-preference semantics between acquire retries
 - derive the renewal cadence from the effective lease duration
 - keep the fencing counter per business key, not per mode
 - preserve current writer-preference behavior for read/write locks
@@ -603,7 +605,9 @@ Mitigation:
 Mitigation:
 
 - use one computed effective lease duration per acquired lease
-- derive Redis TTL, reader expiry, pending writer expiry, and renewal cadence from that value
+- derive owner TTL, reader member scores, and renewal cadence from that value
+- derive shared reader zset expiry from the furthest live reader score
+- keep pending writer expiry tied to the backend/session intent TTL so very short fixed write leases cannot let later readers bypass a waiting writer
 - cover mutex, read, write, and renewal paths with focused tests
 
 ## Acceptance Criteria
