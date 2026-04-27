@@ -6,6 +6,7 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.WaitMode;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
@@ -176,9 +177,12 @@ public final class ZooKeeperLockBackend implements LockBackend {
                 contenderPath = createContenderNode(request);
                 byte[] nodeOwnerData = ownerData(sessionId);
                 String nodeName = nodeName(contenderPath);
-                long deadlineNanos = request.waitPolicy().unbounded()
-                    ? Long.MAX_VALUE
-                    : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+                WaitMode waitMode = request.waitPolicy().mode();
+                long deadlineNanos = switch (waitMode) {
+                    case TRY_ONCE -> System.nanoTime();
+                    case TIMED -> System.nanoTime() + request.waitPolicy().timeout().toNanos();
+                    case INDEFINITE -> Long.MAX_VALUE;
+                };
                 while (true) {
                     ensureActive();
                     List<QueueNode> nodes = queueNodes(request.key().value());
@@ -202,7 +206,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
                         return lease;
                     }
                     long remainingNanos = remainingNanos(deadlineNanos);
-                    if (!request.waitPolicy().unbounded() && remainingNanos <= 0L) {
+                    if (waitMode == WaitMode.TRY_ONCE || remainingNanos <= 0L) {
                         deleteIfExists(contenderPath);
                         throw timeout(request.key());
                     }
@@ -211,7 +215,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
                         continue;
                     }
                     boolean deleted = awaitNodeDeletion(predecessorPath, remainingNanos);
-                    if (!request.waitPolicy().unbounded() && !deleted) {
+                    if (waitMode != WaitMode.INDEFINITE && !deleted) {
                         deleteIfExists(contenderPath);
                         throw timeout(request.key());
                     }
