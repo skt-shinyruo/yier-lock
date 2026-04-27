@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
 import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -40,8 +40,8 @@ public final class RedisBenchmarkEnvironment implements AutoCloseable {
         return runtime.lockClient();
     }
 
-    public LockExecutor lockExecutor() {
-        return runtime.lockExecutor();
+    public SynchronousLockExecutor synchronousLockExecutor() {
+        return runtime.synchronousLockExecutor();
     }
 
     public String redisUri() {

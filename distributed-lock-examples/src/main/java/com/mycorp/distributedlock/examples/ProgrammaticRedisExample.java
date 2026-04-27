@@ -25,9 +25,9 @@ public final class ProgrammaticRedisExample {
                 30L
             ))))
             .build()) {
-            String result = runtime.lockExecutor().withLock(
+            String result = runtime.synchronousLockExecutor().withLock(
                 sampleRequest("example:redis:order-42"),
-                () -> "Redis lease acquired"
+                lease -> "Redis lease acquired with fencing token " + lease.fencingToken().value()
             );
             System.out.println(result);
         }

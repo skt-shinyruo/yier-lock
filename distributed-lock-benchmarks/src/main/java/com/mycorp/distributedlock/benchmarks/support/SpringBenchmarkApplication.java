@@ -1,9 +1,9 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
-import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -17,9 +17,9 @@ public class SpringBenchmarkApplication {
     @Service
     public static class ProgrammaticBenchmarkService {
 
-        private final LockExecutor lockExecutor;
+        private final SynchronousLockExecutor lockExecutor;
 
-        public ProgrammaticBenchmarkService(LockExecutor lockExecutor) {
+        public ProgrammaticBenchmarkService(SynchronousLockExecutor lockExecutor) {
             this.lockExecutor = lockExecutor;
         }
 
@@ -30,7 +30,7 @@ public class SpringBenchmarkApplication {
                     LockMode.MUTEX,
                     WaitPolicy.timed(Duration.ofMillis(250))
                 ),
-                id::hashCode
+                lease -> id.hashCode()
             );
         }
     }
