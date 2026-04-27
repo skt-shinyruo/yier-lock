@@ -71,6 +71,20 @@ class RedisFixedLeasePolicyTest {
     }
 
     @Test
+    void fixedRequestLeaseDurationShouldControlWriteOwnerTtl() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession session = backend.openSession();
+             BackendLockLease ignored = session.acquire(writeRequest(
+                 "redis:fixed:write-ttl",
+                 LeasePolicy.fixed(Duration.ofMillis(750))
+             ))) {
+
+            assertThat(redis.commands().pttl(ownerKey("redis:fixed:write-ttl", LockMode.WRITE)))
+                .isBetween(1L, 750L);
+        }
+    }
+
+    @Test
     void backendDefaultLeaseDurationShouldUseRedisConfiguration() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(2L);
              BackendSession session = backend.openSession();
@@ -113,7 +127,7 @@ class RedisFixedLeasePolicyTest {
                 long elapsedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
 
                 assertThat(failure).isInstanceOf(LockAcquisitionTimeoutException.class);
-                assertThat(elapsedMillis).isLessThan(250L);
+                assertThat(elapsedMillis).isLessThan(100L);
             } finally {
                 attempt.cancel(true);
                 executor.shutdownNow();
@@ -155,6 +169,23 @@ class RedisFixedLeasePolicyTest {
         }
     }
 
+    @Test
+    void writeRenewalShouldUseFixedLeaseDurationInsteadOfBackendDefault() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession session = backend.openSession();
+             BackendLockLease lease = session.acquire(writeRequest(
+                 "redis:fixed:write-renewal",
+                 LeasePolicy.fixed(Duration.ofMillis(1_500))
+             ))) {
+
+            Thread.sleep(1_800L);
+
+            assertThat(lease.isValid()).isTrue();
+            assertThat(redis.commands().pttl(ownerKey("redis:fixed:write-renewal", LockMode.WRITE)))
+                .isBetween(1L, 1_500L);
+        }
+    }
+
     private static LockRequest mutexRequest(String key, LeasePolicy leasePolicy) {
         return new LockRequest(
             new LockKey(key),
@@ -168,6 +199,15 @@ class RedisFixedLeasePolicyTest {
         return new LockRequest(
             new LockKey(key),
             LockMode.READ,
+            WaitPolicy.indefinite(),
+            leasePolicy
+        );
+    }
+
+    private static LockRequest writeRequest(String key, LeasePolicy leasePolicy) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.WRITE,
             WaitPolicy.indefinite(),
             leasePolicy
         );
