@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.testkit;
 
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
@@ -8,6 +9,7 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.api.exception.LockReentryException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.testkit.support.FencedResource;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +44,48 @@ public abstract class LockClientContract {
              LockLease ignored = holder.acquire(request("inventory:mutex", LockMode.MUTEX, Duration.ofSeconds(1)))) {
             assertThat(executor.submit(() -> tryAcquire("inventory:mutex", LockMode.MUTEX, Duration.ofMillis(100))).get()).isFalse();
         }
+    }
+
+    @Test
+    void tryOnceShouldFailImmediatelyWhenKeyIsHeld() throws Exception {
+        runtime = createRuntime();
+        try (LockSession holder = runtime.lockClient().openSession();
+             LockLease ignored = holder.acquire(request("inventory:try-once", LockMode.MUTEX, WaitPolicy.indefinite()))) {
+            Duration elapsed = executor.submit(() -> {
+                long startedNanos = System.nanoTime();
+                assertThat(tryAcquire("inventory:try-once", LockMode.MUTEX, WaitPolicy.tryOnce())).isFalse();
+                return Duration.ofNanos(System.nanoTime() - startedNanos);
+            }).get();
+
+            assertThat(elapsed).isLessThan(Duration.ofMillis(100));
+        }
+    }
+
+    @Test
+    void sameSessionShouldRejectSameKeyReentry() throws Exception {
+        runtime = createRuntime();
+        try (LockSession session = runtime.lockClient().openSession();
+             LockLease ignored = session.acquire(request("inventory:reentry", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+            assertThatThrownBy(() -> session.acquire(request("inventory:reentry", LockMode.MUTEX, WaitPolicy.tryOnce())))
+                .isInstanceOf(LockReentryException.class);
+        }
+    }
+
+    @Test
+    void sameSessionShouldAllowDifferentKeys() throws Exception {
+        runtime = createRuntime();
+        try (LockSession session = runtime.lockClient().openSession();
+             LockLease first = session.acquire(request("inventory:first", LockMode.MUTEX, Duration.ofSeconds(1)));
+             LockLease second = session.acquire(request("inventory:second", LockMode.MUTEX, Duration.ofSeconds(1)))) {
+            assertThat(first.key()).isEqualTo(new LockKey("inventory:first"));
+            assertThat(second.key()).isEqualTo(new LockKey("inventory:second"));
+        }
+    }
+
+    @Test
+    void threeArgumentRequestShouldUseBackendDefaultLeasePolicy() {
+        assertThat(request("inventory:lease-policy", LockMode.MUTEX, WaitPolicy.tryOnce()).leasePolicy())
+            .isEqualTo(LeasePolicy.backendDefault());
     }
 
     @Test
@@ -169,16 +213,20 @@ public abstract class LockClientContract {
     }
 
     protected LockRequest request(String key, LockMode mode, Duration waitTime) {
-        return new LockRequest(
-            new LockKey(key),
-            mode,
-            WaitPolicy.timed(waitTime)
-        );
+        return request(key, mode, WaitPolicy.timed(waitTime));
+    }
+
+    protected LockRequest request(String key, LockMode mode, WaitPolicy waitPolicy) {
+        return new LockRequest(new LockKey(key), mode, waitPolicy);
     }
 
     private boolean tryAcquire(String key, LockMode mode, Duration waitTime) throws Exception {
+        return tryAcquire(key, mode, WaitPolicy.timed(waitTime));
+    }
+
+    private boolean tryAcquire(String key, LockMode mode, WaitPolicy waitPolicy) throws Exception {
         try (LockSession contender = runtime.lockClient().openSession();
-             LockLease ignored = contender.acquire(request(key, mode, waitTime))) {
+             LockLease ignored = contender.acquire(request(key, mode, waitPolicy))) {
             return true;
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
