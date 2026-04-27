@@ -169,6 +169,9 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (failure != null) {
                 throw failure;
             }
+            if (current == SessionState.LOST) {
+                throw lossCause();
+            }
         }
 
         private ZooKeeperLease acquireQueued(LockRequest request) throws InterruptedException {
