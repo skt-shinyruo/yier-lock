@@ -1,18 +1,18 @@
 package com.mycorp.distributedlock.observability;
 
-import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.LockedSupplier;
+import com.mycorp.distributedlock.api.LockedAction;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 
 import java.util.Objects;
 
-public final class ObservedLockExecutor implements LockExecutor {
-    private final LockExecutor delegate;
+public final class ObservedLockExecutor implements SynchronousLockExecutor {
+    private final SynchronousLockExecutor delegate;
     private final LockObservationSink sink;
     private final String backendId;
     private final boolean includeKey;
 
-    public ObservedLockExecutor(LockExecutor delegate, LockObservationSink sink, String backendId, boolean includeKey) {
+    public ObservedLockExecutor(SynchronousLockExecutor delegate, LockObservationSink sink, String backendId, boolean includeKey) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.sink = Objects.requireNonNull(sink, "sink");
         this.backendId = backendId;
@@ -20,7 +20,7 @@ public final class ObservedLockExecutor implements LockExecutor {
     }
 
     @Override
-    public <T> T withLock(LockRequest request, LockedSupplier<T> action) throws Exception {
+    public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
         long startedNanos = System.nanoTime();
         try {
             T result = delegate.withLock(request, action);

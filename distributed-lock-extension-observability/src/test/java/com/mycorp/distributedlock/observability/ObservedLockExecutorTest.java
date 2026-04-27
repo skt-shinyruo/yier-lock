@@ -1,12 +1,13 @@
 package com.mycorp.distributedlock.observability;
 
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LockedAction;
+import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
-import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -28,14 +29,14 @@ class ObservedLockExecutorTest {
     @Test
     void withLockShouldRecordSuccessfulScopeCompletion() throws Exception {
         List<LockObservationEvent> events = new ArrayList<>();
-        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+        SynchronousLockExecutor executor = new ObservedLockExecutor(new SynchronousLockExecutor() {
             @Override
-            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) throws Exception {
-                return action.get();
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(mock(LockLease.class));
             }
         }, events::add, "redis", false);
 
-        String result = executor.withLock(sampleRequest(), () -> "ok");
+        String result = executor.withLock(sampleRequest(), lease -> "ok");
 
         assertThat(result).isEqualTo("ok");
         assertThat(events).singleElement().satisfies(event -> {
@@ -48,14 +49,14 @@ class ObservedLockExecutorTest {
     @Test
     void withLockShouldRecordFailedScopeCompletion() {
         List<LockObservationEvent> events = new ArrayList<>();
-        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+        SynchronousLockExecutor executor = new ObservedLockExecutor(new SynchronousLockExecutor() {
             @Override
-            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) throws Exception {
-                return action.get();
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(mock(LockLease.class));
             }
         }, events::add, "redis", true);
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> {
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> {
             throw new IllegalStateException("boom");
         })).isInstanceOf(IllegalStateException.class);
 
@@ -69,14 +70,14 @@ class ObservedLockExecutorTest {
     @Test
     void withLockShouldCollapseTimeoutIntoFailureScopeOutcome() {
         List<LockObservationEvent> events = new ArrayList<>();
-        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+        SynchronousLockExecutor executor = new ObservedLockExecutor(new SynchronousLockExecutor() {
             @Override
-            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) {
+            public <T> T withLock(LockRequest request, LockedAction<T> action) {
                 throw new LockAcquisitionTimeoutException("timed out");
             }
         }, events::add, "redis", true);
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> "ignored"))
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> "ignored"))
             .isInstanceOf(LockAcquisitionTimeoutException.class);
 
         assertThat(events).singleElement().satisfies(event -> {
@@ -88,31 +89,33 @@ class ObservedLockExecutorTest {
 
     @Test
     void withLockShouldNotLetSinkFailureMaskSuccessfulScope() throws Exception {
-        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+        SynchronousLockExecutor executor = new ObservedLockExecutor(new SynchronousLockExecutor() {
             @Override
-            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) throws Exception {
-                return action.get();
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(mock(LockLease.class));
             }
         }, event -> {
             throw new IllegalStateException("sink failed");
         }, "redis", false);
 
-        assertThat(executor.withLock(sampleRequest(), () -> "ok")).isEqualTo("ok");
+        String result = executor.withLock(sampleRequest(), lease -> "ok");
+
+        assertThat(result).isEqualTo("ok");
     }
 
     @Test
     void withLockShouldNotLetSinkFailureMaskScopeFailure() {
         IllegalStateException actionFailure = new IllegalStateException("boom");
-        LockExecutor executor = new ObservedLockExecutor(new LockExecutor() {
+        SynchronousLockExecutor executor = new ObservedLockExecutor(new SynchronousLockExecutor() {
             @Override
-            public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) throws Exception {
-                return action.get();
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(mock(LockLease.class));
             }
         }, event -> {
             throw new IllegalStateException("sink failed");
         }, "redis", false);
 
-        assertThatThrownBy(() -> executor.withLock(sampleRequest(), () -> {
+        assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> {
             throw actionFailure;
         })).isSameAs(actionFailure);
     }
@@ -128,12 +131,12 @@ class ObservedLockExecutorTest {
 
         LockRuntime delegate = mock(LockRuntime.class);
         when(delegate.lockClient()).thenReturn(client);
-        when(delegate.lockExecutor()).thenReturn(mock(LockExecutor.class));
+        when(delegate.synchronousLockExecutor()).thenReturn(mock(SynchronousLockExecutor.class));
 
         List<LockObservationEvent> events = new ArrayList<>();
         LockRuntime observedRuntime = ObservedLockRuntime.decorate(delegate, events::add, "redis", false);
 
-        String result = observedRuntime.lockExecutor().withLock(sampleRequest(), () -> "ok");
+        String result = observedRuntime.synchronousLockExecutor().withLock(sampleRequest(), leaseArgument -> "ok");
 
         assertThat(result).isEqualTo("ok");
         assertThat(events).hasSize(2);
@@ -143,7 +146,7 @@ class ObservedLockExecutorTest {
         assertThat(events.get(1).surface()).isEqualTo("executor");
         verify(client).openSession();
         verify(session).acquire(sampleRequest());
-        verify(delegate, never()).lockExecutor();
+        verify(delegate, never()).synchronousLockExecutor();
     }
 
     private static LockRequest sampleRequest() {

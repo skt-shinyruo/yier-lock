@@ -1,16 +1,16 @@
 package com.mycorp.distributedlock.observability.springboot.integration;
 
-import com.mycorp.distributedlock.api.LockExecutor;
-import com.mycorp.distributedlock.api.LockKey;
-import com.mycorp.distributedlock.api.LockMode;
-import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockLease;
-import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.api.LockSession;
-import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockLease;
+import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.observability.springboot.config.DistributedLockObservabilityAutoConfiguration;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
@@ -46,7 +46,7 @@ class DistributedLockObservabilityAutoConfigurationTest {
     @Test
     void shouldRecordAcquireAndScopeMeters() {
         contextRunner.run(context -> {
-            LockExecutor executor = context.getBean(LockExecutor.class);
+            SynchronousLockExecutor executor = context.getBean(SynchronousLockExecutor.class);
             SimpleMeterRegistry registry = context.getBean(SimpleMeterRegistry.class);
             String value;
             try {
@@ -56,7 +56,7 @@ class DistributedLockObservabilityAutoConfigurationTest {
                         LockMode.MUTEX,
                         WaitPolicy.timed(Duration.ofSeconds(1))
                     ),
-                    () -> "ok"
+                    lease -> "ok"
                 );
             } catch (Exception exception) {
                 throw new RuntimeException(exception);
@@ -164,11 +164,14 @@ class DistributedLockObservabilityAutoConfigurationTest {
         }
 
         @Override
-        public LockExecutor lockExecutor() {
-            return new LockExecutor() {
+        public SynchronousLockExecutor synchronousLockExecutor() {
+            return new SynchronousLockExecutor() {
                 @Override
-                public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedSupplier<T> action) throws Exception {
-                    return action.get();
+                public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedAction<T> action) throws Exception {
+                    try (LockSession session = lockClient().openSession();
+                         LockLease lease = session.acquire(request)) {
+                        return action.execute(lease);
+                    }
                 }
             };
         }

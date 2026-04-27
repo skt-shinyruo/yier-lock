@@ -1,8 +1,8 @@
 package com.mycorp.distributedlock.observability;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
-import com.mycorp.distributedlock.core.client.DefaultLockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
+import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 
 import java.util.Objects;
@@ -18,12 +18,17 @@ import java.util.Objects;
 public final class ObservedLockRuntime implements LockRuntime {
     private final LockRuntime delegate;
     private final LockClient lockClient;
-    private final LockExecutor lockExecutor;
+    private final SynchronousLockExecutor synchronousLockExecutor;
 
     private ObservedLockRuntime(LockRuntime delegate, LockObservationSink sink, String backendId, boolean includeKey) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.lockClient = new ObservedLockClient(delegate.lockClient(), sink, backendId, includeKey);
-        this.lockExecutor = new ObservedLockExecutor(new DefaultLockExecutor(lockClient), sink, backendId, includeKey);
+        this.synchronousLockExecutor = new ObservedLockExecutor(
+            new DefaultSynchronousLockExecutor(lockClient),
+            sink,
+            backendId,
+            includeKey
+        );
     }
 
     public static ObservedLockRuntime decorate(
@@ -41,8 +46,8 @@ public final class ObservedLockRuntime implements LockRuntime {
     }
 
     @Override
-    public LockExecutor lockExecutor() {
-        return lockExecutor;
+    public SynchronousLockExecutor synchronousLockExecutor() {
+        return synchronousLockExecutor;
     }
 
     @Override
