@@ -9,10 +9,14 @@ public final class FencedResource {
     private final AtomicLong latestToken = new AtomicLong();
 
     public void write(FencingToken token, String value) {
-        long previous = latestToken.get();
-        if (token.value() <= previous) {
-            throw new IllegalStateException("stale fencing token");
+        while (true) {
+            long previous = latestToken.get();
+            if (token.value() <= previous) {
+                throw new IllegalStateException("stale fencing token");
+            }
+            if (latestToken.compareAndSet(previous, token.value())) {
+                return;
+            }
         }
-        latestToken.set(token.value());
     }
 }

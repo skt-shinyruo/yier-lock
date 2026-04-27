@@ -15,8 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class InMemoryLockBackend implements LockBackend {
 
@@ -29,67 +27,120 @@ public final class InMemoryLockBackend implements LockBackend {
 
     static BackendLockLease acquireLease(Map<String, InMemoryLockState> lockStates, LockRequest request)
         throws InterruptedException {
-        InMemoryLockState state = lockStates.computeIfAbsent(request.key().value(), ignored -> new InMemoryLockState());
-        boolean acquired = switch (request.mode()) {
-            case MUTEX -> acquireMutex(state, request.waitPolicy());
-            case READ -> acquireRead(state, request.waitPolicy());
-            case WRITE -> acquireWrite(state, request.waitPolicy());
-        };
-
+        String keyValue = request.key().value();
+        InMemoryLockState state = lockStates.computeIfAbsent(keyValue, ignored -> new InMemoryLockState());
+        String ownerId = java.util.UUID.randomUUID().toString();
+        boolean acquired = state.acquire(ownerId, request.mode(), request.waitPolicy());
         if (!acquired) {
-            throw new LockAcquisitionTimeoutException("Timed out acquiring lock for " + request.key().value());
+            throw new LockAcquisitionTimeoutException("Timed out acquiring lock for " + keyValue);
         }
-
-        return new InMemoryLease(
-            request.key(),
-            request.mode(),
-            new FencingToken(state.fencingCounter.incrementAndGet()),
-            state,
-            new AtomicBoolean(false)
-        );
-    }
-
-    static void unlockState(InMemoryLockState state, LockMode mode) {
-        switch (mode) {
-            case MUTEX -> state.readWrite.writeLock().unlock();
-            case READ -> state.readWrite.readLock().unlock();
-            case WRITE -> state.readWrite.writeLock().unlock();
+        try {
+            return new InMemoryLease(
+                request.key(),
+                request.mode(),
+                new FencingToken(state.nextFence()),
+                keyValue,
+                ownerId,
+                state,
+                lockStates,
+                new AtomicBoolean(false)
+            );
+        } catch (RuntimeException exception) {
+            state.release(ownerId, request.mode());
+            removeIfIdle(lockStates, keyValue, state);
+            throw exception;
         }
     }
 
-    private static boolean acquireMutex(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        return tryLock(state.readWrite.writeLock(), waitPolicy);
-    }
-
-    private static boolean acquireRead(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        return tryLock(state.readWrite.readLock(), waitPolicy);
-    }
-
-    private static boolean acquireWrite(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        return tryLock(state.readWrite.writeLock(), waitPolicy);
-    }
-
-    private static boolean tryLock(Lock lock, WaitPolicy waitPolicy) throws InterruptedException {
-        return switch (waitPolicy.mode()) {
-            case TRY_ONCE -> lock.tryLock();
-            case TIMED -> lock.tryLock(waitPolicy.timeout().toMillis(), TimeUnit.MILLISECONDS);
-            case INDEFINITE -> {
-                lock.lockInterruptibly();
-                yield true;
-            }
-        };
+    private static void removeIfIdle(Map<String, InMemoryLockState> lockStates, String key, InMemoryLockState state) {
+        if (state.isIdle()) {
+            lockStates.remove(key, state);
+        }
     }
 
     static final class InMemoryLockState {
-        final ReentrantReadWriteLock readWrite = new ReentrantReadWriteLock();
-        final AtomicLong fencingCounter = new AtomicLong();
+        private final java.util.Map<String, LockMode> owners = new java.util.HashMap<>();
+        private final AtomicLong fencingCounter = new AtomicLong();
+        private String exclusiveOwner;
+
+        synchronized boolean acquire(String ownerId, LockMode mode, WaitPolicy waitPolicy) throws InterruptedException {
+            return switch (waitPolicy.mode()) {
+                case TRY_ONCE -> {
+                    if (!canAcquire(mode)) {
+                        yield false;
+                    }
+                    addOwner(ownerId, mode);
+                    yield true;
+                }
+                case TIMED -> acquireTimed(ownerId, mode, waitPolicy.timeout().toNanos());
+                case INDEFINITE -> {
+                    while (!canAcquire(mode)) {
+                        wait();
+                    }
+                    addOwner(ownerId, mode);
+                    yield true;
+                }
+            };
+        }
+
+        synchronized long nextFence() {
+            return fencingCounter.incrementAndGet();
+        }
+
+        synchronized void release(String ownerId, LockMode mode) {
+            LockMode removed = owners.remove(ownerId);
+            if (removed == null) {
+                return;
+            }
+            if (removed != mode) {
+                throw new IllegalStateException("lock mode mismatch for in-memory owner");
+            }
+            if (ownerId.equals(exclusiveOwner)) {
+                exclusiveOwner = null;
+            }
+            notifyAll();
+        }
+
+        synchronized boolean isIdle() {
+            return owners.isEmpty();
+        }
+
+        private boolean acquireTimed(String ownerId, LockMode mode, long remainingNanos) throws InterruptedException {
+            long deadlineNanos = System.nanoTime() + remainingNanos;
+            while (!canAcquire(mode)) {
+                if (remainingNanos <= 0L) {
+                    return false;
+                }
+                TimeUnit.NANOSECONDS.timedWait(this, remainingNanos);
+                remainingNanos = deadlineNanos - System.nanoTime();
+            }
+            addOwner(ownerId, mode);
+            return true;
+        }
+
+        private boolean canAcquire(LockMode mode) {
+            return switch (mode) {
+                case MUTEX, WRITE -> owners.isEmpty();
+                case READ -> exclusiveOwner == null;
+            };
+        }
+
+        private void addOwner(String ownerId, LockMode mode) {
+            owners.put(ownerId, mode);
+            if (mode == LockMode.MUTEX || mode == LockMode.WRITE) {
+                exclusiveOwner = ownerId;
+            }
+        }
     }
 
     private record InMemoryLease(
         LockKey key,
         LockMode mode,
         FencingToken fencingToken,
+        String keyValue,
+        String ownerId,
         InMemoryLockState lockState,
+        Map<String, InMemoryLockState> lockStates,
         AtomicBoolean released
     ) implements BackendLockLease {
 
@@ -106,7 +157,7 @@ public final class InMemoryLockBackend implements LockBackend {
         @Override
         public void release() {
             if (released.compareAndSet(false, true)) {
-                unlockState(lockState, mode);
+                lockState.release(ownerId, mode);
             }
         }
     }
