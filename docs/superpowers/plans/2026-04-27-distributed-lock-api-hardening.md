@@ -1086,10 +1086,6 @@ private long effectiveLeaseMillis(LockRequest request) {
     };
 }
 
-private String effectiveLeaseSecondsArgument(long leaseMillis) {
-    return String.valueOf(Math.max(1L, TimeUnit.MILLISECONDS.toSeconds(leaseMillis)));
-}
-
 private long deadlineNanos(WaitPolicy waitPolicy) {
     return switch (waitPolicy.mode()) {
         case TRY_ONCE -> System.nanoTime();
@@ -1135,7 +1131,9 @@ private long tryAcquireRead(String key, long leaseMillis)
 private long tryAcquireWrite(String key, String writerIntent, long leaseMillis)
 ```
 
-Pass `effectiveLeaseSecondsArgument(leaseMillis)` to existing scripts.
+Pass the millisecond `leaseMillis` value to Redis scripts so fixed request leases keep sub-second precision.
+For read locks, keep each reader member score based on its own `leaseMillis`, but set the shared reader zset key expiry to the furthest live reader score.
+For write acquisition, keep pending writer intent expiry on the backend/session intent TTL instead of the acquired lease TTL; otherwise a very short fixed write lease can let later readers bypass a waiting writer between retries.
 Construct `RedisLease` with `leaseMillis`:
 
 ```java
@@ -1155,7 +1153,7 @@ Add a field to `RedisLease`:
 private final long leaseMillis;
 ```
 
-Use `effectiveLeaseSecondsArgument(leaseMillis)` inside `refresh()` instead of `configuration.leaseSeconds()`.
+Use `leaseMillis` inside `refresh()` instead of `configuration.leaseSeconds()`.
 
 - [ ] **Step 6: Keep session renewal on backend default**
 
