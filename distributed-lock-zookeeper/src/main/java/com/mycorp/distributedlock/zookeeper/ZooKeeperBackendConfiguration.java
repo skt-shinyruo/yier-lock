@@ -13,5 +13,9 @@ public record ZooKeeperBackendConfiguration(String connectString, String basePat
         if (basePath.isBlank() || !basePath.startsWith("/")) {
             throw new IllegalArgumentException("basePath must start with '/'");
         }
+        if (basePath.length() > 1 && basePath.endsWith("/")) {
+            basePath = basePath.substring(0, basePath.length() - 1);
+        }
+        org.apache.zookeeper.common.PathUtils.validatePath(basePath);
     }
 }

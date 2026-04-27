@@ -38,7 +38,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-public final class ZooKeeperLockBackend implements LockBackend {
+public class ZooKeeperLockBackend implements LockBackend {
 
     private final ZooKeeperBackendConfiguration configuration;
 
@@ -64,6 +64,9 @@ public final class ZooKeeperLockBackend implements LockBackend {
     @Override
     public void close() {
         // No shared backend resources remain once each session owns its own client.
+    }
+
+    void beforeFenceIssued(String contenderPath) {
     }
 
     private CuratorFramework newClient() {
@@ -197,7 +200,17 @@ public final class ZooKeeperLockBackend implements LockBackend {
                         );
                     }
                     if (canAcquire(nodes, current)) {
+                        verifyContenderStillOwned(contenderPath, nodeOwnerData, request.key().value());
+                        beforeFenceIssued(contenderPath);
                         long fence = nextFence(request.key().value());
+                        verifyContenderStillOwned(contenderPath, nodeOwnerData, request.key().value());
+                        List<QueueNode> afterFenceNodes = queueNodes(request.key().value());
+                        QueueNode afterFenceCurrent = currentNode(afterFenceNodes, nodeName);
+                        if (afterFenceCurrent == null || !canAcquire(afterFenceNodes, afterFenceCurrent)) {
+                            throw new LockSessionLostException(
+                                "ZooKeeper contender node no longer owns lock for key " + request.key().value()
+                            );
+                        }
                         ZooKeeperLease lease = new ZooKeeperLease(
                             request.key(),
                             request.mode(),
@@ -243,6 +256,17 @@ public final class ZooKeeperLockBackend implements LockBackend {
                     "Failed to acquire ZooKeeper lock for key " + request.key().value(),
                     exception
                 );
+            }
+        }
+
+        private void verifyContenderStillOwned(String contenderPath, byte[] ownerData, String key) throws Exception {
+            try {
+                byte[] currentData = curatorFramework.getData().forPath(contenderPath);
+                if (!Arrays.equals(currentData, ownerData)) {
+                    throw new LockSessionLostException("ZooKeeper contender node ownership changed for key " + key);
+                }
+            } catch (KeeperException.NoNodeException exception) {
+                throw new LockSessionLostException("ZooKeeper contender node disappeared for key " + key, exception);
             }
         }
 
@@ -368,7 +392,8 @@ public final class ZooKeeperLockBackend implements LockBackend {
                         .forPath(counterPath, longToBytes(next));
                     return next;
                 } catch (KeeperException.BadVersionException ignored) {
-                    // Retry optimistic update until the counter is advanced successfully.
+                    ensureActive();
+                    Thread.sleep(java.util.concurrent.ThreadLocalRandom.current().nextLong(1L, 6L));
                 }
             }
         }
@@ -548,15 +573,26 @@ public final class ZooKeeperLockBackend implements LockBackend {
     }
 
     private long sequence(String nodeName) {
-        return Long.parseLong(nodeName.substring(nodeName.lastIndexOf('-') + 1));
+        String suffix = nodeName.substring(nodeName.lastIndexOf('-') + 1);
+        if (!suffix.matches("\\d+")) {
+            throw new LockBackendException("Malformed ZooKeeper lock queue node: " + nodeName);
+        }
+        return Long.parseLong(suffix);
     }
 
     private String queueRootPath(String key) {
-        return configuration.basePath() + "/rw/" + encodeKeySegment(key) + "/locks";
+        return joinPath(configuration.basePath(), "rw/" + encodeKeySegment(key) + "/locks");
     }
 
     private String fenceCounterPath(String key) {
-        return configuration.basePath() + "/fence/" + encodeKeySegment(key);
+        return joinPath(configuration.basePath(), "fence/" + encodeKeySegment(key));
+    }
+
+    private String joinPath(String first, String second) {
+        if ("/".equals(first)) {
+            return "/" + second;
+        }
+        return first + "/" + second;
     }
 
     private String encodeKeySegment(String key) {
