@@ -202,7 +202,9 @@ public class ZooKeeperLockBackend implements LockBackend {
                     if (canAcquire(nodes, current)) {
                         verifyContenderStillOwned(contenderPath, nodeOwnerData, request.key().value());
                         beforeFenceIssued(contenderPath);
+                        ensureActive();
                         long fence = nextFence(request.key().value());
+                        ensureActive();
                         verifyContenderStillOwned(contenderPath, nodeOwnerData, request.key().value());
                         List<QueueNode> afterFenceNodes = queueNodes(request.key().value());
                         QueueNode afterFenceCurrent = currentNode(afterFenceNodes, nodeName);
@@ -211,6 +213,7 @@ public class ZooKeeperLockBackend implements LockBackend {
                                 "ZooKeeper contender node no longer owns lock for key " + request.key().value()
                             );
                         }
+                        ensureActive();
                         ZooKeeperLease lease = new ZooKeeperLease(
                             request.key(),
                             request.mode(),
@@ -219,6 +222,7 @@ public class ZooKeeperLockBackend implements LockBackend {
                             nodeOwnerData,
                             this
                         );
+                        ensureActive();
                         activeLeases.put(lease.ownerPath(), lease);
                         return lease;
                     }
@@ -385,7 +389,11 @@ public class ZooKeeperLockBackend implements LockBackend {
             while (true) {
                 Stat stat = new Stat();
                 byte[] current = curatorFramework.getData().storingStatIn(stat).forPath(counterPath);
-                long next = bytesToLong(current) + 1L;
+                long currentFence = bytesToLong(current);
+                if (currentFence == Long.MAX_VALUE) {
+                    throw new LockBackendException("ZooKeeper fencing counter overflow for key " + key);
+                }
+                long next = currentFence + 1L;
                 try {
                     curatorFramework.setData()
                         .withVersion(stat.getVersion())
