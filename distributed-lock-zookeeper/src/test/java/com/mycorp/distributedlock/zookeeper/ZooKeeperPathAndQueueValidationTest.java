@@ -80,6 +80,29 @@ class ZooKeeperPathAndQueueValidationTest {
         }
     }
 
+    @Test
+    void negativeQueueNodeSequenceShouldFailWithBackendException() throws Exception {
+        try (TestingServer server = new TestingServer();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
+             CuratorFramework client = CuratorFrameworkFactory.newClient(server.getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
+            client.start();
+            assertThat(client.blockUntilConnected(10, TimeUnit.SECONDS)).isTrue();
+            String childName = "read--2147483648";
+            String queueRoot = "/distributed-locks/rw/" + encode("zk:negative-node") + "/locks";
+            client.create().creatingParentsIfNeeded().forPath(queueRoot + "/" + childName);
+
+            try (BackendSession session = backend.openSession()) {
+                assertThatThrownBy(() -> session.acquire(new LockRequest(
+                    new LockKey("zk:negative-node"),
+                    LockMode.READ,
+                    WaitPolicy.tryOnce()
+                )))
+                    .isInstanceOf(LockBackendException.class)
+                    .hasMessageContaining(childName);
+            }
+        }
+    }
+
     private static String encode(String key) {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(key.getBytes(StandardCharsets.UTF_8));
     }

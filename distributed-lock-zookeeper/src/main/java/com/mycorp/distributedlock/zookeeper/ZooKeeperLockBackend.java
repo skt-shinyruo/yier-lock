@@ -589,19 +589,19 @@ public class ZooKeeperLockBackend implements LockBackend {
 
     private QueueNode queueNode(String name) {
         if (name.startsWith("mutex-")) {
-            return new QueueNode(name, LockMode.MUTEX, sequence(name));
+            return new QueueNode(name, LockMode.MUTEX, sequence(name, "mutex-"));
         }
         if (name.startsWith("read-")) {
-            return new QueueNode(name, LockMode.READ, sequence(name));
+            return new QueueNode(name, LockMode.READ, sequence(name, "read-"));
         }
         if (name.startsWith("write-")) {
-            return new QueueNode(name, LockMode.WRITE, sequence(name));
+            return new QueueNode(name, LockMode.WRITE, sequence(name, "write-"));
         }
         return null;
     }
 
-    private long sequence(String nodeName) {
-        String suffix = nodeName.substring(nodeName.lastIndexOf('-') + 1);
+    private long sequence(String nodeName, String prefix) {
+        String suffix = nodeName.substring(prefix.length());
         if (!suffix.matches("\\d+")) {
             throw new LockBackendException("Malformed ZooKeeper lock queue node: " + nodeName);
         }
