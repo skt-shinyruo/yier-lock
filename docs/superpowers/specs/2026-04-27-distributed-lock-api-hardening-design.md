@@ -96,6 +96,8 @@ public final class LockContext {
 
     public static Optional<FencingToken> currentFencingToken();
 
+    public static boolean containsLease(LockKey key);
+
     public static LockLease requireCurrentLease();
 
     public static FencingToken requireCurrentFencingToken();
@@ -104,6 +106,7 @@ public final class LockContext {
 
 `SynchronousLockExecutor` and Spring `@DistributedLock` bind this context for the current thread while the protected action is executing.
 The context is read-only for normal callers.
+`currentLease()` returns the top active synchronous scope, while `containsLease(...)` scans every nested binding on the current thread.
 Any binding hook needed by core or Spring must be treated as an integration detail and kept out of application examples.
 
 This does not make the kernel thread-bound.
@@ -276,7 +279,7 @@ Rules:
 
 - A single `LockSession` must not hold two active leases for the same `LockKey`, regardless of mode
 - A same-session same-key acquisition attempt fails fast with `LockReentryException`
-- `SynchronousLockExecutor` must fail fast with `LockReentryException` when the current synchronous `LockContext` already holds the same `LockKey`
+- `SynchronousLockExecutor` must fail fast with `LockReentryException` when any lease in the current synchronous `LockContext` binding stack already holds the same `LockKey`
 - read-to-write upgrades and write-to-read downgrades are not supported
 - callers that need nested critical sections must compose them under one outer lease or use distinct lock keys
 
@@ -306,7 +309,7 @@ Examples and Spring auto-configuration must inject `SynchronousLockExecutor`.
 `DefaultSynchronousLockExecutor` should:
 
 1. validate request and callback
-2. check `LockContext` for same-key reentry before opening a new session
+2. check the full `LockContext` binding stack for same-key reentry before opening a new session
 3. open a session
 4. acquire the lease
 5. bind `LockContext`
