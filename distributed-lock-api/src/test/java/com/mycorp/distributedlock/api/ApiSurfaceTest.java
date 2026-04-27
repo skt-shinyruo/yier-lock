@@ -10,6 +10,9 @@ import com.mycorp.distributedlock.api.exception.LockSessionLostException;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.time.Duration;
 import java.util.Arrays;
@@ -133,6 +136,72 @@ class ApiSurfaceTest {
     }
 
     @Test
+    void lockContextShouldBindAndRestoreLeasesInLifoOrder() {
+        LockLease firstLease = new FakeLockLease("first", 1);
+        LockLease secondLease = new FakeLockLease("second", 2);
+
+        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(LockContext.currentFencingToken()).isEmpty();
+        assertThatThrownBy(LockContext::requireCurrentLease)
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(LockContext::requireCurrentFencingToken)
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> LockContext.bind(null))
+                .isInstanceOf(NullPointerException.class);
+
+        try (LockContext.Binding firstBinding = LockContext.bind(firstLease)) {
+            assertThat(LockContext.currentLease()).containsSame(firstLease);
+            assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
+            assertThat(LockContext.requireCurrentLease()).isSameAs(firstLease);
+            assertThat(LockContext.requireCurrentFencingToken()).isEqualTo(firstLease.fencingToken());
+
+            LockContext.Binding secondBinding = LockContext.bind(secondLease);
+            assertThat(LockContext.currentLease()).containsSame(secondLease);
+            assertThat(LockContext.currentFencingToken()).contains(secondLease.fencingToken());
+            secondBinding.close();
+            secondBinding.close();
+
+            assertThat(LockContext.currentLease()).containsSame(firstLease);
+            assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
+        }
+
+        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(LockContext.currentFencingToken()).isEmpty();
+    }
+
+    @Test
+    void lockContextBindingShouldRejectOutOfOrderCloseWithoutCorruptingContext() {
+        LockLease firstLease = new FakeLockLease("first", 1);
+        LockLease secondLease = new FakeLockLease("second", 2);
+        LockContext.Binding firstBinding = LockContext.bind(firstLease);
+        LockContext.Binding secondBinding = LockContext.bind(secondLease);
+
+        assertThatThrownBy(firstBinding::close)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(LockContext.currentLease()).containsSame(secondLease);
+        assertThat(LockContext.currentFencingToken()).contains(secondLease.fencingToken());
+
+        secondBinding.close();
+        firstBinding.close();
+        assertThat(LockContext.currentLease()).isEmpty();
+    }
+
+    @Test
+    void lockContextBindingShouldExposeOnlyCloseAsPublicOperation() {
+        assertThat(Modifier.isPublic(LockContext.Binding.class.getModifiers())).isTrue();
+        assertThat(Modifier.isFinal(LockContext.Binding.class.getModifiers())).isTrue();
+        assertThat(AutoCloseable.class).isAssignableFrom(LockContext.Binding.class);
+        assertThat(Arrays.stream(LockContext.Binding.class.getDeclaredConstructors())
+                .map(Constructor::getModifiers)
+                .noneMatch(Modifier::isPublic))
+                .isTrue();
+        assertThat(Arrays.stream(LockContext.Binding.class.getDeclaredMethods())
+                .filter(method -> Modifier.isPublic(method.getModifiers()))
+                .map(Method::getName))
+                .containsExactly("close");
+    }
+
+    @Test
     void apiShouldExposeTheSupportedExceptionTypes() {
         assertThat(LockOwnershipLostException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
         assertThat(LockAcquisitionTimeoutException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
@@ -141,5 +210,44 @@ class ApiSurfaceTest {
         assertThat(LockSessionLostException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
         assertThat(UnsupportedLockCapabilityException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
         assertThat(LockReentryException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
+    }
+
+    private static final class FakeLockLease implements LockLease {
+        private final LockKey key;
+        private final FencingToken fencingToken;
+
+        private FakeLockLease(String key, long fencingTokenValue) {
+            this.key = new LockKey(key);
+            this.fencingToken = new FencingToken(fencingTokenValue);
+        }
+
+        @Override
+        public LockKey key() {
+            return key;
+        }
+
+        @Override
+        public LockMode mode() {
+            return LockMode.MUTEX;
+        }
+
+        @Override
+        public FencingToken fencingToken() {
+            return fencingToken;
+        }
+
+        @Override
+        public LeaseState state() {
+            return LeaseState.ACTIVE;
+        }
+
+        @Override
+        public boolean isValid() {
+            return true;
+        }
+
+        @Override
+        public void release() {
+        }
     }
 }
