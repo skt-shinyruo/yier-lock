@@ -43,6 +43,7 @@ class DefaultSynchronousLockExecutorTest {
         assertThat(result).isEqualTo("ok");
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+        assertThat(LockContext.currentLease()).isEmpty();
     }
 
     @Test
@@ -61,6 +62,7 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+        assertThat(LockContext.currentLease()).isEmpty();
     }
 
     @Test
@@ -105,6 +107,37 @@ class DefaultSynchronousLockExecutorTest {
     }
 
     @Test
+    void withLockShouldRestoreOuterLockContextAfterNestedDifferentKeyScope() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true, true)
+        ));
+        AtomicReference<LockLease> outerBeforeInner = new AtomicReference<>();
+        AtomicReference<LockLease> innerContext = new AtomicReference<>();
+        AtomicReference<LockLease> outerAfterInner = new AtomicReference<>();
+
+        String result = executor.withLock(sampleRequest("inventory:outer"), outerLease -> {
+            outerBeforeInner.set(LockContext.requireCurrentLease());
+            assertThat(outerBeforeInner.get()).isSameAs(outerLease);
+            String innerResult = executor.withLock(sampleRequest("inventory:inner"), innerLease -> {
+                innerContext.set(LockContext.requireCurrentLease());
+                assertThat(innerContext.get()).isSameAs(innerLease);
+                return "inner";
+            });
+            outerAfterInner.set(LockContext.requireCurrentLease());
+            assertThat(outerAfterInner.get()).isSameAs(outerLease);
+            return innerResult;
+        });
+
+        assertThat(result).isEqualTo("inner");
+        assertThat(outerBeforeInner.get().key()).isEqualTo(new LockKey("inventory:outer"));
+        assertThat(innerContext.get().key()).isEqualTo(new LockKey("inventory:inner"));
+        assertThat(outerAfterInner.get()).isSameAs(outerBeforeInner.get());
+        assertThat(LockContext.currentLease()).isEmpty();
+    }
+
+    @Test
     void withLockShouldRejectCompletionStageResults() {
         TrackingBackend backend = new TrackingBackend();
         SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
@@ -119,6 +152,7 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+        assertThat(LockContext.currentLease()).isEmpty();
     }
 
     @Test
@@ -138,6 +172,7 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+        assertThat(LockContext.currentLease()).isEmpty();
     }
 
     @Test
@@ -164,11 +199,16 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
+        assertThat(LockContext.currentLease()).isEmpty();
     }
 
     private static LockRequest sampleRequest() {
+        return sampleRequest("inventory");
+    }
+
+    private static LockRequest sampleRequest(String key) {
         return new LockRequest(
-            new LockKey("inventory"),
+            new LockKey(key),
             LockMode.MUTEX,
             WaitPolicy.timed(Duration.ofSeconds(1))
         );

@@ -216,6 +216,27 @@ class DefaultLockSessionTest {
                 .isInstanceOf(UnsupportedLockCapabilityException.class)
                 .hasMessageContaining("fixed lease");
         }
+
+        assertThat(backend.leaseCount()).isEqualTo(0);
+    }
+
+    @Test
+    void acquireShouldAllowRetryForSameKeyAfterBackendAcquireFailure() throws Exception {
+        FailingFirstAcquireBackend backend = new FailingFirstAcquireBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        RuntimeException acquireFailure = new LockBackendException("backend acquire failed");
+        backend.failNextAcquire(acquireFailure);
+
+        try (LockSession session = client.openSession()) {
+            assertThatThrownBy(() -> session.acquire(sampleRequest("orders:retry")))
+                .isSameAs(acquireFailure);
+
+            try (LockLease lease = session.acquire(sampleRequest("orders:retry"))) {
+                assertThat(lease.key()).isEqualTo(new LockKey("orders:retry"));
+            }
+        }
+
+        assertThat(backend.leaseCount()).isEqualTo(1);
     }
 
     private static LockRequest sampleRequest(String key) {
@@ -320,6 +341,52 @@ class DefaultLockSessionTest {
 
         TrackingLease lease() {
             return lease.get();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class FailingFirstAcquireBackend implements LockBackend {
+        private final List<TrackingLease> leases = new CopyOnWriteArrayList<>();
+        private final AtomicReference<RuntimeException> acquireFailure = new AtomicReference<>();
+
+        @Override
+        public BackendSession openSession() {
+            return new BackendSession() {
+                @Override
+                public BackendLockLease acquire(LockRequest lockRequest) {
+                    RuntimeException failure = acquireFailure.getAndSet(null);
+                    if (failure != null) {
+                        throw failure;
+                    }
+                    TrackingLease lease = new TrackingLease(
+                        lockRequest.key(),
+                        lockRequest.mode(),
+                        new FencingToken(leases.size() + 1L)
+                    );
+                    leases.add(lease);
+                    return lease;
+                }
+
+                @Override
+                public SessionState state() {
+                    return SessionState.ACTIVE;
+                }
+
+                @Override
+                public void close() {
+                }
+            };
+        }
+
+        void failNextAcquire(RuntimeException failure) {
+            acquireFailure.set(failure);
+        }
+
+        int leaseCount() {
+            return leases.size();
         }
 
         @Override
