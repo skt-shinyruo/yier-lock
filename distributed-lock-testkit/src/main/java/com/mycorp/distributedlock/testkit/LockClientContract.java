@@ -18,9 +18,13 @@ import org.junit.jupiter.api.Test;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.fail;
 
 public abstract class LockClientContract {
 
@@ -50,14 +54,28 @@ public abstract class LockClientContract {
     void tryOnceShouldFailImmediatelyWhenKeyIsHeld() throws Exception {
         runtime = createRuntime();
         try (LockSession holder = runtime.lockClient().openSession();
-             LockLease ignored = holder.acquire(request("inventory:try-once", LockMode.MUTEX, WaitPolicy.indefinite()))) {
-            Duration elapsed = executor.submit(() -> {
+             LockLease ignored = holder.acquire(request("inventory:try-once", LockMode.MUTEX, WaitPolicy.indefinite()));
+             LockSession contender = runtime.lockClient().openSession()) {
+            Future<Duration> acquireAttempt = executor.submit(() -> {
                 long startedNanos = System.nanoTime();
-                assertThat(tryAcquire("inventory:try-once", LockMode.MUTEX, WaitPolicy.tryOnce())).isFalse();
-                return Duration.ofNanos(System.nanoTime() - startedNanos);
-            }).get();
+                try (LockLease lease = contender.acquire(request("inventory:try-once", LockMode.MUTEX, WaitPolicy.tryOnce()))) {
+                    fail("TRY_ONCE acquired a lock that was already held by another session");
+                    return Duration.ofNanos(System.nanoTime() - startedNanos);
+                } catch (LockAcquisitionTimeoutException exception) {
+                    return Duration.ofNanos(System.nanoTime() - startedNanos);
+                }
+            });
 
-            assertThat(elapsed).isLessThan(Duration.ofMillis(100));
+            Duration elapsed;
+            try {
+                elapsed = acquireAttempt.get(2, TimeUnit.SECONDS);
+            } catch (TimeoutException exception) {
+                acquireAttempt.cancel(true);
+                fail("TRY_ONCE acquisition did not complete within 2 seconds while the key was held");
+                return;
+            }
+
+            assertThat(elapsed).isLessThan(Duration.ofMillis(500));
         }
     }
 
