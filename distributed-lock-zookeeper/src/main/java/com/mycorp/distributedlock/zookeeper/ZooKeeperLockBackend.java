@@ -96,6 +96,7 @@ public final class ZooKeeperLockBackend implements LockBackend {
         private final ConcurrentMap<String, ZooKeeperLease> activeLeases = new ConcurrentHashMap<>();
         private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.ACTIVE);
         private final AtomicReference<RuntimeException> lossCause = new AtomicReference<>();
+        private final Object terminalMonitor = new Object();
 
         private ZooKeeperBackendSession(String sessionId, CuratorFramework curatorFramework) {
             this.sessionId = sessionId;
@@ -135,6 +136,9 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (current == SessionState.ACTIVE) {
                 closingActiveSession = state.compareAndSet(SessionState.ACTIVE, SessionState.CLOSED);
                 current = state.get();
+                if (closingActiveSession) {
+                    signalTerminalWaiters();
+                }
                 if (!closingActiveSession && current == SessionState.CLOSED) {
                     return;
                 }
@@ -164,9 +168,6 @@ public final class ZooKeeperLockBackend implements LockBackend {
             curatorFramework.close();
             if (failure != null) {
                 throw failure;
-            }
-            if (current == SessionState.LOST) {
-                throw lossCause();
             }
         }
 
@@ -228,7 +229,11 @@ public final class ZooKeeperLockBackend implements LockBackend {
                 throw exception;
             } catch (RuntimeException exception) {
                 if (contenderPath != null) {
-                    deleteIfExists(contenderPath);
+                    try {
+                        deleteIfExists(contenderPath);
+                    } catch (RuntimeException cleanupFailure) {
+                        exception.addSuppressed(cleanupFailure);
+                    }
                 }
                 throw exception;
             } catch (Exception exception) {
@@ -311,11 +316,17 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (stat == null) {
                 return true;
             }
-            if (remainingNanos == Long.MAX_VALUE) {
-                latch.await();
-                return true;
+            long waitNanos = remainingNanos == Long.MAX_VALUE
+                ? TimeUnit.MILLISECONDS.toNanos(250L)
+                : Math.min(remainingNanos, TimeUnit.MILLISECONDS.toNanos(250L));
+            synchronized (terminalMonitor) {
+                if (state.get() != SessionState.ACTIVE) {
+                    ensureActive();
+                }
+                terminalMonitor.wait(TimeUnit.NANOSECONDS.toMillis(waitNanos), (int) (waitNanos % 1_000_000L));
             }
-            return latch.await(Math.max(1L, remainingNanos), TimeUnit.NANOSECONDS);
+            ensureActive();
+            return latch.getCount() == 0L || curatorFramework.checkExists().forPath(path) == null;
         }
 
         private void forgetLease(ZooKeeperLease lease) {
@@ -386,8 +397,15 @@ public final class ZooKeeperLockBackend implements LockBackend {
             if (!state.compareAndSet(SessionState.ACTIVE, SessionState.LOST)) {
                 return;
             }
+            signalTerminalWaiters();
             for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
                 lease.markLost();
+            }
+        }
+
+        private void signalTerminalWaiters() {
+            synchronized (terminalMonitor) {
+                terminalMonitor.notifyAll();
             }
         }
     }
