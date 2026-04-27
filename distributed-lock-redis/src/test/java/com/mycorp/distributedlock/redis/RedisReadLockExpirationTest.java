@@ -3,7 +3,9 @@ package com.mycorp.distributedlock.redis;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
@@ -17,6 +19,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RedisReadLockExpirationTest {
 
@@ -84,11 +87,47 @@ class RedisReadLockExpirationTest {
         }
     }
 
+    @Test
+    void shortReaderShouldNotShrinkSharedReadKeyExpiryBelowLongReaderScore() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession longReaderSession = backend.openSession();
+             BackendLockLease longReaderLease = longReaderSession.acquire(readRequest(
+                 "read:mixed-fixed",
+                 LeasePolicy.fixed(Duration.ofMillis(2_000))
+             ));
+             BackendSession shortReaderSession = backend.openSession();
+             BackendLockLease shortReaderLease = shortReaderSession.acquire(readRequest(
+                 "read:mixed-fixed",
+                 LeasePolicy.fixed(Duration.ofMillis(240))
+             ))) {
+            cancelRenewal(longReaderLease);
+
+            shortReaderLease.release();
+            Thread.sleep(500L);
+
+            assertThat(longReaderLease.isValid()).isTrue();
+
+            try (BackendSession writerSession = backend.openSession()) {
+                assertThatThrownBy(() -> writerSession.acquire(writeRequest("read:mixed-fixed")))
+                    .isInstanceOf(LockAcquisitionTimeoutException.class);
+            }
+        }
+    }
+
     private static LockRequest readRequest(String key) {
         return new LockRequest(
             new LockKey(key),
             LockMode.READ,
             WaitPolicy.indefinite()
+        );
+    }
+
+    private static LockRequest readRequest(String key, LeasePolicy leasePolicy) {
+        return new LockRequest(
+            new LockKey(key),
+            LockMode.READ,
+            WaitPolicy.indefinite(),
+            leasePolicy
         );
     }
 

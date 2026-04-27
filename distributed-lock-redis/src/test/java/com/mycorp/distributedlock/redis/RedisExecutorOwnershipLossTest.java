@@ -1,6 +1,8 @@
 package com.mycorp.distributedlock.redis;
 
+import com.mycorp.distributedlock.api.LeaseState;
 import com.mycorp.distributedlock.api.LockKey;
+import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
@@ -28,7 +30,7 @@ class RedisExecutorOwnershipLossTest {
 
             assertThatThrownBy(() -> executor.withLock(request("redis:executor-loss"), lease -> {
                 redis.stopContainer();
-                Thread.sleep(Duration.ofSeconds(2).toMillis());
+                waitUntilLost(lease);
                 return "ok";
             }))
                 .isInstanceOf(LockOwnershipLostException.class)
@@ -42,5 +44,16 @@ class RedisExecutorOwnershipLossTest {
             LockMode.MUTEX,
             WaitPolicy.timed(Duration.ofSeconds(1))
         );
+    }
+
+    private static void waitUntilLost(LockLease lease) throws InterruptedException {
+        long deadlineNanos = System.nanoTime() + Duration.ofSeconds(3).toNanos();
+        while (System.nanoTime() < deadlineNanos) {
+            if (lease.state() == LeaseState.LOST) {
+                return;
+            }
+            Thread.sleep(25L);
+        }
+        throw new AssertionError("Redis lease was not marked lost");
     }
 }

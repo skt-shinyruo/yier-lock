@@ -1,5 +1,6 @@
 package com.mycorp.distributedlock.redis;
 
+import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
@@ -25,6 +26,7 @@ class RedisReadWriteWriterPreferenceTest {
     private static final String WRITER_PROGRESS_KEY = "redis:rw:writer-progress";
     private static final String WRITER_TIMEOUT_KEY = "redis:rw:writer-timeout";
     private static final String MANUAL_PENDING_KEY = "redis:rw:manual-pending";
+    private static final String SHORT_FIXED_WRITER_KEY = "redis:rw:short-fixed-writer";
 
     private static RedisTestSupport.RunningRedis redis;
 
@@ -101,6 +103,35 @@ class RedisReadWriteWriterPreferenceTest {
     }
 
     @Test
+    void shortFixedWriteLeaseShouldKeepPendingIntentAliveBetweenRetries() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L)) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            BackendSession readerSession = backend.openSession();
+            BackendLockLease readerLease = readerSession.acquire(readRequest(SHORT_FIXED_WRITER_KEY, Duration.ofSeconds(1)));
+            BackendSession writerSession = backend.openSession();
+            Future<BackendLockLease> writerAttempt = executor.submit(() ->
+                writerSession.acquire(writeRequest(
+                    SHORT_FIXED_WRITER_KEY,
+                    Duration.ofMillis(600),
+                    LeasePolicy.fixed(Duration.ofMillis(1))
+                ))
+            );
+
+            try {
+                assertThat(awaitPendingWriterIntent(SHORT_FIXED_WRITER_KEY, 1L)).isTrue();
+
+                assertThat(anyTryOnceReadSucceeds(backend, SHORT_FIXED_WRITER_KEY, Duration.ofMillis(200))).isFalse();
+            } finally {
+                writerAttempt.cancel(true);
+                closeQuietly(writerSession);
+                closeQuietly(readerLease);
+                closeQuietly(readerSession);
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
     void livePendingWriterIntentShouldBlockReadersUntilItExpires() throws Exception {
         String pendingKey = pendingWritersKey(MANUAL_PENDING_KEY);
         redis.commands().zadd(pendingKey, System.currentTimeMillis() + 250L, "manual-writer");
@@ -116,9 +147,29 @@ class RedisReadWriteWriterPreferenceTest {
         }
     }
 
+    private static boolean anyTryOnceReadSucceeds(RedisLockBackend backend, String key, Duration duration) throws Exception {
+        long deadlineNanos = System.nanoTime() + duration.toNanos();
+        while (System.nanoTime() < deadlineNanos) {
+            if (tryAcquireReadOnce(backend, key)) {
+                return true;
+            }
+            Thread.sleep(5L);
+        }
+        return false;
+    }
+
     private static boolean tryAcquireRead(RedisLockBackend backend, String key, Duration waitTime) throws Exception {
         try (BackendSession session = backend.openSession();
              BackendLockLease lease = session.acquire(readRequest(key, waitTime))) {
+            return lease.isValid();
+        } catch (LockAcquisitionTimeoutException exception) {
+            return false;
+        }
+    }
+
+    private static boolean tryAcquireReadOnce(RedisLockBackend backend, String key) throws Exception {
+        try (BackendSession session = backend.openSession();
+             BackendLockLease lease = session.acquire(readRequest(key, WaitPolicy.tryOnce()))) {
             return lease.isValid();
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
@@ -135,12 +186,16 @@ class RedisReadWriteWriterPreferenceTest {
     }
 
     private static boolean awaitPendingWriterIntent(String key) throws InterruptedException {
+        return awaitPendingWriterIntent(key, 25L);
+    }
+
+    private static boolean awaitPendingWriterIntent(String key, long pollMillis) throws InterruptedException {
         long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (System.nanoTime() < deadlineNanos) {
             if (pendingWriterCount(key) > 0) {
                 return true;
             }
-            Thread.sleep(25L);
+            Thread.sleep(pollMillis);
         }
         return false;
     }
@@ -155,18 +210,27 @@ class RedisReadWriteWriterPreferenceTest {
     }
 
     private static LockRequest readRequest(String key, Duration waitTime) {
+        return readRequest(key, WaitPolicy.timed(waitTime));
+    }
+
+    private static LockRequest readRequest(String key, WaitPolicy waitPolicy) {
         return new LockRequest(
             new LockKey(key),
             LockMode.READ,
-            WaitPolicy.timed(waitTime)
+            waitPolicy
         );
     }
 
     private static LockRequest writeRequest(String key, Duration waitTime) {
+        return writeRequest(key, waitTime, LeasePolicy.backendDefault());
+    }
+
+    private static LockRequest writeRequest(String key, Duration waitTime, LeasePolicy leasePolicy) {
         return new LockRequest(
             new LockKey(key),
             LockMode.WRITE,
-            WaitPolicy.timed(waitTime)
+            WaitPolicy.timed(waitTime),
+            leasePolicy
         );
     }
 
