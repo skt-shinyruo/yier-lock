@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -70,7 +71,7 @@ class RedisReadLockExpirationTest {
         try (RedisLockBackend activeBackend = redis.newBackend(1L);
              BackendSession activeReaderSession = activeBackend.openSession();
              BackendLockLease activeReaderLease = activeReaderSession.acquire(readRequest("read:stale-valid"))) {
-            cancelRenewal(expiredReaderSession);
+            cancelRenewal(expiredReaderLease);
 
             Thread.sleep(Duration.ofSeconds(2).toMillis());
 
@@ -99,11 +100,17 @@ class RedisReadLockExpirationTest {
         );
     }
 
-    private static void cancelRenewal(BackendSession session) throws Exception {
-        Field renewalTaskField = session.getClass().getDeclaredField("renewalTask");
+    private static void cancelRenewal(BackendLockLease lease) throws Exception {
+        Field renewalTaskField = lease.getClass().getDeclaredField("renewalTask");
         renewalTaskField.setAccessible(true);
-        ScheduledFuture<?> renewalTask = (ScheduledFuture<?>) renewalTaskField.get(session);
-        renewalTask.cancel(false);
+        @SuppressWarnings("unchecked")
+        AtomicReference<ScheduledFuture<?>> renewalTask =
+            (AtomicReference<ScheduledFuture<?>>) renewalTaskField.get(lease);
+        ScheduledFuture<?> scheduled = renewalTask.getAndSet(null);
+        if (scheduled == null) {
+            return;
+        }
+        scheduled.cancel(false);
     }
 
     private static void closeQuietly(AutoCloseable closeable) {

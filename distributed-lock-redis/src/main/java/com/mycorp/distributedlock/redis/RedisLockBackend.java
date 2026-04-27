@@ -229,6 +229,7 @@ public final class RedisLockBackend implements LockBackend {
                     if (lease != null) {
                         acquired = true;
                         activeLeases.put(lease.ownerValue(), lease);
+                        lease.startRenewal();
                         return lease;
                     }
                     if (request.waitPolicy().mode() == WaitMode.TRY_ONCE || System.nanoTime() >= deadlineNanos) {
@@ -390,24 +391,27 @@ public final class RedisLockBackend implements LockBackend {
         }
 
         private ScheduledFuture<?> scheduleRenewal() {
-            return renewalExecutor.scheduleAtFixedRate(this::renew, 250L, 250L, TimeUnit.MILLISECONDS);
+            long sessionLeaseMillis = TimeUnit.SECONDS.toMillis(configuration.leaseSeconds());
+            long periodMillis = renewalPeriodMillis(sessionLeaseMillis);
+            long initialDelayMillis = initialRenewalDelayMillis(sessionLeaseMillis, periodMillis);
+            return renewalExecutor.scheduleAtFixedRate(this::renewSession, initialDelayMillis, periodMillis, TimeUnit.MILLISECONDS);
         }
 
-        private void renew() {
+        private void renewSession() {
             if (closed.get()) {
                 return;
             }
             try {
                 if (!renewSessionKey()) {
                     markSessionLost(new LockSessionLostException("Redis session lost: " + sessionId));
-                    return;
-                }
-                for (RedisLease lease : activeLeases.values()) {
-                    lease.refresh();
                 }
             } catch (RuntimeException exception) {
                 markSessionLost(new LockSessionLostException("Redis session lost: " + sessionId, exception));
             }
+        }
+
+        private void markSessionLostFromRenewal(RuntimeException cause) {
+            markSessionLost(new LockSessionLostException("Redis session lost: " + sessionId, cause));
         }
 
         private boolean renewSessionKey() {
@@ -474,7 +478,7 @@ public final class RedisLockBackend implements LockBackend {
             if (request.leasePolicy().mode() == LeaseMode.BACKEND_DEFAULT) {
                 return TimeUnit.SECONDS.toMillis(configuration.leaseSeconds());
             }
-            return request.leasePolicy().duration().toMillis();
+            return Math.max(1L, request.leasePolicy().duration().toMillis());
         }
     }
 
@@ -487,6 +491,7 @@ public final class RedisLockBackend implements LockBackend {
         private final RedisBackendSession session;
         private final long leaseMillis;
         private final AtomicReference<LeaseState> state = new AtomicReference<>(LeaseState.ACTIVE);
+        private final AtomicReference<ScheduledFuture<?>> renewalTask = new AtomicReference<>();
 
         private RedisLease(
             LockKey key,
@@ -542,6 +547,7 @@ public final class RedisLockBackend implements LockBackend {
                 return;
             }
             if (current == LeaseState.LOST) {
+                cancelRenewal();
                 session.forgetLease(this);
                 throw new LockOwnershipLostException("Redis lock ownership lost for key " + key.value());
             }
@@ -572,12 +578,40 @@ public final class RedisLockBackend implements LockBackend {
                     throw new LockOwnershipLostException("Redis lock ownership lost for key " + key.value());
                 }
                 state.set(LeaseState.RELEASED);
+                cancelRenewal();
                 session.forgetLease(this);
             } catch (RuntimeException exception) {
                 if (exception instanceof LockOwnershipLostException || exception instanceof LockBackendException) {
                     throw exception;
                 }
                 throw new LockBackendException("Failed to release Redis lock for key " + key.value(), exception);
+            }
+        }
+
+        private void startRenewal() {
+            long periodMillis = renewalPeriodMillis(leaseMillis);
+            long initialDelayMillis = initialRenewalDelayMillis(leaseMillis, periodMillis);
+            ScheduledFuture<?> scheduled = renewalExecutor.scheduleAtFixedRate(
+                this::renewLease,
+                initialDelayMillis,
+                periodMillis,
+                TimeUnit.MILLISECONDS
+            );
+            if (!renewalTask.compareAndSet(null, scheduled)) {
+                scheduled.cancel(false);
+            }
+        }
+
+        private void renewLease() {
+            if (state.get() != LeaseState.ACTIVE || session.state() != SessionState.ACTIVE) {
+                cancelRenewal();
+                return;
+            }
+            try {
+                refresh();
+            } catch (RuntimeException exception) {
+                cancelRenewal();
+                session.markSessionLostFromRenewal(exception);
             }
         }
 
@@ -641,7 +675,15 @@ public final class RedisLockBackend implements LockBackend {
 
         private void markLost() {
             state.compareAndSet(LeaseState.ACTIVE, LeaseState.LOST);
+            cancelRenewal();
             session.forgetLease(this);
+        }
+
+        private void cancelRenewal() {
+            ScheduledFuture<?> scheduled = renewalTask.getAndSet(null);
+            if (scheduled != null) {
+                scheduled.cancel(false);
+            }
         }
 
         private String ownerValue() {
@@ -655,5 +697,13 @@ public final class RedisLockBackend implements LockBackend {
 
     private static String writerIntentValue(String sessionId, String attemptId) {
         return sessionId + ":writer:" + attemptId;
+    }
+
+    private static long renewalPeriodMillis(long leaseMillis) {
+        return Math.max(1L, leaseMillis / 5L);
+    }
+
+    private static long initialRenewalDelayMillis(long leaseMillis, long periodMillis) {
+        return Math.min(periodMillis, Math.max(1L, leaseMillis / 10L));
     }
 }
