@@ -110,6 +110,20 @@ class LockRuntimeBuilderTest {
     }
 
     @Test
+    void builderShouldRejectNullCapabilitiesBeforeCreatingBackend() {
+        TrackingBackendModule module = new TrackingBackendModule("redis", null);
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(module));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("redis")
+            .hasMessageContaining("capabilities must not be null");
+        assertThat(module.createBackendAttempted()).isFalse();
+    }
+
+    @Test
     void builderShouldExposeLockClientAndExecutorWithExplicitMutexOnlyBackend() throws Exception {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("mutex-only")
@@ -142,6 +156,28 @@ class LockRuntimeBuilderTest {
                 new BackendCapabilities(true, true, true, true, false)
             )))
             .build()) {
+            assertThat(runtime.synchronousLockExecutor()).isNotNull();
+        }
+    }
+
+    @Test
+    void builderShouldReuseValidatedCapabilitiesAfterBackendCreation() throws Exception {
+        try (LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("volatile")
+            .backendModules(List.of(new VolatileCapabilitiesBackendModule(
+                new BackendCapabilities(true, false, true, true, true)
+            )))
+            .build()) {
+            try (LockSession session = runtime.lockClient().openSession()) {
+                try (LockLease lease = session.acquire(sampleRequest(LockMode.MUTEX))) {
+                    assertThat(lease.mode()).isEqualTo(LockMode.MUTEX);
+                }
+
+                assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.READ)))
+                    .isInstanceOf(UnsupportedLockCapabilityException.class)
+                    .hasMessageContaining("READ");
+            }
+
             assertThat(runtime.synchronousLockExecutor()).isNotNull();
         }
     }
@@ -243,6 +279,34 @@ class LockRuntimeBuilderTest {
 
         private boolean createBackendAttempted() {
             return createBackendAttempted;
+        }
+    }
+
+    private static final class VolatileCapabilitiesBackendModule implements BackendModule {
+        private final BackendCapabilities firstCapabilities;
+        private boolean capabilitiesReturned;
+
+        private VolatileCapabilitiesBackendModule(BackendCapabilities firstCapabilities) {
+            this.firstCapabilities = firstCapabilities;
+        }
+
+        @Override
+        public String id() {
+            return "volatile";
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            if (capabilitiesReturned) {
+                return null;
+            }
+            capabilitiesReturned = true;
+            return firstCapabilities;
+        }
+
+        @Override
+        public LockBackend createBackend() {
+            return stubBackend();
         }
     }
 

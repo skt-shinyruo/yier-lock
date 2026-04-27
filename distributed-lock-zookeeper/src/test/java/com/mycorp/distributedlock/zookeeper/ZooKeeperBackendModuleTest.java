@@ -21,7 +21,7 @@ class ZooKeeperBackendModuleTest {
         );
 
         assertThat(module.id()).isEqualTo("zookeeper");
-        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true));
+        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true, false));
     }
 
     @Test
@@ -36,7 +36,7 @@ class ZooKeeperBackendModuleTest {
         BackendModule module = discoverZooKeeperProvider();
 
         assertThat(module.id()).isEqualTo("zookeeper");
-        assertThat(module.capabilities()).isEqualTo(BackendCapabilities.standard());
+        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true, false));
     }
 
     @Test

@@ -19,7 +19,7 @@ class RedisBackendModuleTest {
         RedisBackendModule module = new RedisBackendModule(new RedisBackendConfiguration("redis://localhost:6379", 30L));
 
         assertThat(module.id()).isEqualTo("redis");
-        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true));
+        assertThat(module.capabilities()).isEqualTo(BackendCapabilities.standard());
     }
 
     @Test
