@@ -69,6 +69,9 @@ public class ZooKeeperLockBackend implements LockBackend {
     void beforeFenceIssued(String contenderPath) {
     }
 
+    void beforeLeaseRegistered(String contenderPath) {
+    }
+
     private CuratorFramework newClient() {
         return CuratorFrameworkFactory.newClient(
             configuration.connectString(),
@@ -100,6 +103,7 @@ public class ZooKeeperLockBackend implements LockBackend {
         private final AtomicReference<SessionState> state = new AtomicReference<>(SessionState.ACTIVE);
         private final AtomicReference<RuntimeException> lossCause = new AtomicReference<>();
         private final Object terminalMonitor = new Object();
+        private final Object leaseRegistrationMonitor = new Object();
 
         private ZooKeeperBackendSession(String sessionId, CuratorFramework curatorFramework) {
             this.sessionId = sessionId;
@@ -222,8 +226,7 @@ public class ZooKeeperLockBackend implements LockBackend {
                             nodeOwnerData,
                             this
                         );
-                        ensureActive();
-                        activeLeases.put(lease.ownerPath(), lease);
+                        registerActiveLease(lease);
                         return lease;
                     }
                     long remainingNanos = remainingNanos(deadlineNanos);
@@ -360,6 +363,21 @@ public class ZooKeeperLockBackend implements LockBackend {
             activeLeases.remove(lease.ownerPath());
         }
 
+        private void registerActiveLease(ZooKeeperLease lease) {
+            synchronized (leaseRegistrationMonitor) {
+                ensureActive();
+                beforeLeaseRegistered(lease.ownerPath());
+                activeLeases.put(lease.ownerPath(), lease);
+                try {
+                    ensureActive();
+                } catch (RuntimeException exception) {
+                    activeLeases.remove(lease.ownerPath(), lease);
+                    lease.markLost();
+                    throw exception;
+                }
+            }
+        }
+
         private void deleteIfExists(String path) {
             try {
                 curatorFramework.delete().forPath(path);
@@ -425,13 +443,15 @@ public class ZooKeeperLockBackend implements LockBackend {
         }
 
         private void markSessionLost(RuntimeException cause) {
-            lossCause.compareAndSet(null, cause);
-            if (!state.compareAndSet(SessionState.ACTIVE, SessionState.LOST)) {
-                return;
-            }
-            signalTerminalWaiters();
-            for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
-                lease.markLost();
+            synchronized (leaseRegistrationMonitor) {
+                lossCause.compareAndSet(null, cause);
+                if (!state.compareAndSet(SessionState.ACTIVE, SessionState.LOST)) {
+                    return;
+                }
+                signalTerminalWaiters();
+                for (ZooKeeperLease lease : new ArrayList<>(activeLeases.values())) {
+                    lease.markLost();
+                }
             }
         }
 

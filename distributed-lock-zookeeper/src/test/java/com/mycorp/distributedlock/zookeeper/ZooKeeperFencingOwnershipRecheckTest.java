@@ -86,6 +86,30 @@ class ZooKeeperFencingOwnershipRecheckTest {
         }
     }
 
+    @Test
+    void sessionLossImmediatelyBeforeLeaseRegistrationShouldNotReturnLease() throws Exception {
+        try (TestingServer server = new TestingServer();
+             LosingBeforeRegistrationBackend backend = new LosingBeforeRegistrationBackend(
+                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
+             )) {
+            BackendSession session = backend.openSession();
+            backend.session = session;
+            try {
+                assertThatThrownBy(() -> session.acquire(new LockRequest(
+                    new LockKey("zk:fence:lost-before-registration"),
+                    LockMode.MUTEX,
+                    WaitPolicy.tryOnce()
+                )))
+                    .isInstanceOf(LockSessionLostException.class);
+            } finally {
+                try {
+                    session.close();
+                } catch (LockSessionLostException ignored) {
+                }
+            }
+        }
+    }
+
     private static final class DeletingBackend extends ZooKeeperLockBackend {
         private DeletingBackend(ZooKeeperBackendConfiguration configuration) {
             super(configuration);
@@ -114,6 +138,25 @@ class ZooKeeperFencingOwnershipRecheckTest {
                 Method markSessionLost = session.getClass().getDeclaredMethod("markSessionLost", RuntimeException.class);
                 markSessionLost.setAccessible(true);
                 markSessionLost.invoke(session, new LockSessionLostException("ZooKeeper session lost during test"));
+            } catch (ReflectiveOperationException exception) {
+                throw new RuntimeException(exception);
+            }
+        }
+    }
+
+    private static final class LosingBeforeRegistrationBackend extends ZooKeeperLockBackend {
+        private BackendSession session;
+
+        private LosingBeforeRegistrationBackend(ZooKeeperBackendConfiguration configuration) {
+            super(configuration);
+        }
+
+        @Override
+        void beforeLeaseRegistered(String contenderPath) {
+            try {
+                Method markSessionLost = session.getClass().getDeclaredMethod("markSessionLost", RuntimeException.class);
+                markSessionLost.setAccessible(true);
+                markSessionLost.invoke(session, new LockSessionLostException("ZooKeeper session lost during registration test"));
             } catch (ReflectiveOperationException exception) {
                 throw new RuntimeException(exception);
             }
