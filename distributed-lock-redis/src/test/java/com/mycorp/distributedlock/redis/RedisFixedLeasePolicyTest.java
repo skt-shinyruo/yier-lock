@@ -127,14 +127,31 @@ class RedisFixedLeasePolicyTest {
              BackendSession session = backend.openSession();
              BackendLockLease lease = session.acquire(mutexRequest(
                  "redis:fixed:renewal",
-                 LeasePolicy.fixed(Duration.ofMillis(900))
+                 LeasePolicy.fixed(Duration.ofMillis(1_500))
              ))) {
 
-            Thread.sleep(1_200L);
+            Thread.sleep(1_800L);
 
             assertThat(lease.isValid()).isTrue();
             assertThat(redis.commands().pttl(ownerKey("redis:fixed:renewal", LockMode.MUTEX)))
-                .isBetween(1L, 900L);
+                .isBetween(1L, 1_500L);
+        }
+    }
+
+    @Test
+    void renewalShouldRefreshBeforeShortFixedLeaseCanExpire() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L);
+             BackendSession session = backend.openSession();
+             BackendLockLease lease = session.acquire(mutexRequest(
+                 "redis:fixed:short-renewal",
+                 LeasePolicy.fixed(Duration.ofMillis(240))
+             ))) {
+
+            Thread.sleep(350L);
+
+            assertThat(lease.isValid()).isTrue();
+            assertThat(redis.commands().pttl(ownerKey("redis:fixed:short-renewal", LockMode.MUTEX)))
+                .isBetween(1L, 240L);
         }
     }
 
