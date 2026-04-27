@@ -5,11 +5,11 @@ import com.mycorp.distributedlock.api.LeaseState;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 final class SessionBoundLockLease implements LockLease {
@@ -22,7 +22,7 @@ final class SessionBoundLockLease implements LockLease {
 
     private final BackendLockLease delegate;
     private final Consumer<SessionBoundLockLease> unregister;
-    private final AtomicReference<LifecycleState> lifecycle = new AtomicReference<>(LifecycleState.ACTIVE);
+    private LifecycleState lifecycle = LifecycleState.ACTIVE;
 
     SessionBoundLockLease(BackendLockLease delegate, Consumer<SessionBoundLockLease> unregister) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
@@ -76,18 +76,20 @@ final class SessionBoundLockLease implements LockLease {
     }
 
     private boolean beginRelease() {
-        while (true) {
-            LifecycleState current = lifecycle.get();
-            if (current == LifecycleState.TERMINAL) {
+        synchronized (this) {
+            while (lifecycle == LifecycleState.RELEASING) {
+                try {
+                    wait();
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                    throw new LockBackendException("Interrupted while waiting for lock release", exception);
+                }
+            }
+            if (lifecycle == LifecycleState.TERMINAL) {
                 return false;
             }
-            if (current == LifecycleState.RELEASING) {
-                Thread.onSpinWait();
-                continue;
-            }
-            if (lifecycle.compareAndSet(LifecycleState.ACTIVE, LifecycleState.RELEASING)) {
-                return true;
-            }
+            lifecycle = LifecycleState.RELEASING;
+            return true;
         }
     }
 
@@ -100,11 +102,16 @@ final class SessionBoundLockLease implements LockLease {
     }
 
     private void finishRelease(boolean terminal) {
-        if (terminal) {
-            lifecycle.set(LifecycleState.TERMINAL);
-            unregister.accept(this);
-            return;
+        synchronized (this) {
+            if (terminal) {
+                lifecycle = LifecycleState.TERMINAL;
+            } else {
+                lifecycle = LifecycleState.ACTIVE;
+            }
+            notifyAll();
         }
-        lifecycle.compareAndSet(LifecycleState.RELEASING, LifecycleState.ACTIVE);
+        if (terminal) {
+            unregister.accept(this);
+        }
     }
 }
