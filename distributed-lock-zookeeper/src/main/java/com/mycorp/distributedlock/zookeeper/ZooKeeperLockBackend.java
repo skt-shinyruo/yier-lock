@@ -577,7 +577,11 @@ public class ZooKeeperLockBackend implements LockBackend {
         if (!suffix.matches("\\d+")) {
             throw new LockBackendException("Malformed ZooKeeper lock queue node: " + nodeName);
         }
-        return Long.parseLong(suffix);
+        try {
+            return Long.parseLong(suffix);
+        } catch (NumberFormatException exception) {
+            throw new LockBackendException("Malformed ZooKeeper lock queue node: " + nodeName, exception);
+        }
     }
 
     private String queueRootPath(String key) {
