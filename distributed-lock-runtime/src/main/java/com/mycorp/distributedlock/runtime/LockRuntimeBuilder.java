@@ -47,12 +47,12 @@ public final class LockRuntimeBuilder {
             : List.copyOf(explicitBackendModules);
 
         BackendModule selectedModule = selectBackendModule(availableModules);
-        validateCapabilities(selectedModule);
+        BackendCapabilities capabilities = validateCapabilities(selectedModule);
         LockBackend backend = selectedModule.createBackend();
         SupportedLockModes supportedLockModes = new SupportedLockModes(
-            selectedModule.capabilities().mutexSupported(),
-            selectedModule.capabilities().readWriteSupported(),
-            selectedModule.capabilities().fixedLeaseDurationSupported()
+            capabilities.mutexSupported(),
+            capabilities.readWriteSupported(),
+            capabilities.fixedLeaseDurationSupported()
         );
         LockClient lockClient = new DefaultLockClient(backend, supportedLockModes);
         SynchronousLockExecutor synchronousLockExecutor = new DefaultSynchronousLockExecutor(lockClient);
@@ -72,7 +72,7 @@ public final class LockRuntimeBuilder {
             .orElseThrow(() -> new LockConfigurationException("Requested backend not found: " + backendId));
     }
 
-    private void validateCapabilities(BackendModule module) {
+    private BackendCapabilities validateCapabilities(BackendModule module) {
         BackendCapabilities capabilities = module.capabilities();
         if (capabilities == null) {
             throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
@@ -94,6 +94,8 @@ public final class LockRuntimeBuilder {
                 "Backend module does not satisfy runtime requirements: " + module.id() + " missing " + missingRequirements
             );
         }
+
+        return capabilities;
     }
 
     private void validateUniqueBackendIds(List<BackendModule> availableModules) {
