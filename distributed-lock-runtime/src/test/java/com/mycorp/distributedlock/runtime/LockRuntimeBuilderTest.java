@@ -53,7 +53,7 @@ class LockRuntimeBuilderTest {
             .backend("redis")
             .backendModules(List.of(new StubBackendModule(
                 "redis",
-                new BackendCapabilities(false, true, true, true)
+                new BackendCapabilities(false, true, true, true, true)
             )));
 
         assertThatThrownBy(builder::build)
@@ -68,7 +68,7 @@ class LockRuntimeBuilderTest {
             .backend("redis")
             .backendModules(List.of(new StubBackendModule(
                 "redis",
-                new BackendCapabilities(true, true, false, true)
+                new BackendCapabilities(true, true, false, true, true)
             )));
 
         assertThatThrownBy(builder::build)
@@ -83,7 +83,7 @@ class LockRuntimeBuilderTest {
             .backend("redis")
             .backendModules(List.of(new StubBackendModule(
                 "redis",
-                new BackendCapabilities(true, true, true, false)
+                new BackendCapabilities(true, true, true, false, true)
             )));
 
         assertThatThrownBy(builder::build)
@@ -96,7 +96,7 @@ class LockRuntimeBuilderTest {
     void builderShouldRejectInvalidCapabilitiesBeforeCreatingBackend() {
         TrackingBackendModule module = new TrackingBackendModule(
             "redis",
-            new BackendCapabilities(false, true, true, true)
+            new BackendCapabilities(false, true, true, true, true)
         );
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
             .backend("redis")
@@ -115,7 +115,7 @@ class LockRuntimeBuilderTest {
             .backend("mutex-only")
             .backendModules(List.of(new StubBackendModule(
                 "mutex-only",
-                new BackendCapabilities(true, false, true, true)
+                new BackendCapabilities(true, false, true, true, true)
             )))
             .build()) {
             try (LockSession session = runtime.lockClient().openSession()) {
@@ -128,8 +128,21 @@ class LockRuntimeBuilderTest {
                     .hasMessageContaining("READ");
             }
 
-            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.MUTEX), () -> "ok");
+            String result = runtime.synchronousLockExecutor().withLock(sampleRequest(LockMode.MUTEX), lease -> "ok");
             assertThat(result).isEqualTo("ok");
+        }
+    }
+
+    @Test
+    void builderShouldAllowBackendWithoutFixedLeaseDurationSupportAtStartup() throws Exception {
+        try (LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("zookeeper")
+            .backendModules(List.of(new StubBackendModule(
+                "zookeeper",
+                new BackendCapabilities(true, true, true, true, false)
+            )))
+            .build()) {
+            assertThat(runtime.synchronousLockExecutor()).isNotNull();
         }
     }
 
@@ -138,7 +151,7 @@ class LockRuntimeBuilderTest {
         try (LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("zookeeper")
             .backendModules(List.of(
-                new StubBackendModule("redis", new BackendCapabilities(true, false, true, true)),
+                new StubBackendModule("redis", new BackendCapabilities(true, false, true, true, true)),
                 new StubBackendModule("zookeeper", BackendCapabilities.standard())
             ))
             .build()) {
@@ -148,7 +161,7 @@ class LockRuntimeBuilderTest {
                 }
             }
 
-            String result = runtime.lockExecutor().withLock(sampleRequest(LockMode.WRITE), () -> "ok");
+            String result = runtime.synchronousLockExecutor().withLock(sampleRequest(LockMode.WRITE), lease -> "ok");
             assertThat(result).isEqualTo("ok");
         }
     }

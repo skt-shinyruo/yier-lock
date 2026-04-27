@@ -4,10 +4,11 @@ public record BackendCapabilities(
     boolean mutexSupported,
     boolean readWriteSupported,
     boolean fencingSupported,
-    boolean renewableSessionsSupported
+    boolean renewableSessionsSupported,
+    boolean fixedLeaseDurationSupported
 ) {
 
     public static BackendCapabilities standard() {
-        return new BackendCapabilities(true, true, true, true);
+        return new BackendCapabilities(true, true, true, true, true);
     }
 }
