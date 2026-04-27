@@ -19,6 +19,18 @@ public final class LockContext {
         return currentLease().map(LockLease::fencingToken);
     }
 
+    public static boolean containsLease(LockKey key) {
+        Objects.requireNonNull(key, "key");
+        Frame frame = CURRENT_FRAME.get();
+        while (frame != null) {
+            if (frame.lease().key().equals(key)) {
+                return true;
+            }
+            frame = frame.previous();
+        }
+        return false;
+    }
+
     public static LockLease requireCurrentLease() {
         return currentLease()
                 .orElseThrow(() -> new IllegalStateException("No lock lease is bound to the current thread"));

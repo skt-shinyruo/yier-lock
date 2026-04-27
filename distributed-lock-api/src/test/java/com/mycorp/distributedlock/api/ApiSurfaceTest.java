@@ -130,6 +130,7 @@ class ApiSurfaceTest {
     void lockContextShouldExposeCurrentLeaseAndFencingTokenAccessors() throws Exception {
         assertThat(LockContext.class.getMethod("currentLease").getReturnType().getSimpleName()).isEqualTo("Optional");
         assertThat(LockContext.class.getMethod("currentFencingToken").getReturnType().getSimpleName()).isEqualTo("Optional");
+        assertThat(LockContext.class.getMethod("containsLease", LockKey.class).getReturnType()).isEqualTo(boolean.class);
         assertThat(LockContext.class.getMethod("requireCurrentLease").getReturnType()).isEqualTo(LockLease.class);
         assertThat(LockContext.class.getMethod("requireCurrentFencingToken").getReturnType()).isEqualTo(FencingToken.class);
         assertThat(LockContext.class.getMethod("bind", LockLease.class).getReturnType().getSimpleName()).isEqualTo("Binding");
@@ -142,31 +143,41 @@ class ApiSurfaceTest {
 
         assertThat(LockContext.currentLease()).isEmpty();
         assertThat(LockContext.currentFencingToken()).isEmpty();
+        assertThat(LockContext.containsLease(firstLease.key())).isFalse();
         assertThatThrownBy(LockContext::requireCurrentLease)
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(LockContext::requireCurrentFencingToken)
                 .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> LockContext.containsLease(null))
+                .isInstanceOf(NullPointerException.class);
         assertThatThrownBy(() -> LockContext.bind(null))
                 .isInstanceOf(NullPointerException.class);
 
         try (LockContext.Binding firstBinding = LockContext.bind(firstLease)) {
             assertThat(LockContext.currentLease()).containsSame(firstLease);
             assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
+            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
+            assertThat(LockContext.containsLease(secondLease.key())).isFalse();
             assertThat(LockContext.requireCurrentLease()).isSameAs(firstLease);
             assertThat(LockContext.requireCurrentFencingToken()).isEqualTo(firstLease.fencingToken());
 
             LockContext.Binding secondBinding = LockContext.bind(secondLease);
             assertThat(LockContext.currentLease()).containsSame(secondLease);
             assertThat(LockContext.currentFencingToken()).contains(secondLease.fencingToken());
+            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
+            assertThat(LockContext.containsLease(secondLease.key())).isTrue();
             secondBinding.close();
             secondBinding.close();
 
             assertThat(LockContext.currentLease()).containsSame(firstLease);
             assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
+            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
+            assertThat(LockContext.containsLease(secondLease.key())).isFalse();
         }
 
         assertThat(LockContext.currentLease()).isEmpty();
         assertThat(LockContext.currentFencingToken()).isEmpty();
+        assertThat(LockContext.containsLease(firstLease.key())).isFalse();
     }
 
     @Test

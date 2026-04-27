@@ -107,6 +107,27 @@ class DefaultSynchronousLockExecutorTest {
     }
 
     @Test
+    void withLockShouldRejectSameKeyReentryAcrossNestedDifferentKeyScope() throws Exception {
+        TrackingBackend backend = new TrackingBackend();
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
+            backend,
+            new SupportedLockModes(true, true, true)
+        ));
+
+        assertThatThrownBy(() -> executor.withLock(sampleRequest("inventory:outer"), outerLease ->
+            executor.withLock(sampleRequest("inventory:inner"), innerLease ->
+                executor.withLock(sampleRequest("inventory:outer"), repeatedLease -> "nested")
+            )
+        ))
+            .isInstanceOf(LockReentryException.class)
+            .hasMessageContaining("inventory:outer");
+
+        assertThat(backend.openSessionCount()).hasValue(2);
+        assertThat(backend.releaseCount()).hasValue(2);
+        assertThat(backend.sessionCloseCount()).hasValue(2);
+    }
+
+    @Test
     void withLockShouldRestoreOuterLockContextAfterNestedDifferentKeyScope() throws Exception {
         TrackingBackend backend = new TrackingBackend();
         SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(

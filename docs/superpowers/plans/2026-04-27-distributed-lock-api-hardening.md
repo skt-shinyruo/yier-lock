@@ -188,17 +188,30 @@ import java.util.Optional;
 
 public final class LockContext {
 
-    private static final ThreadLocal<LockLease> CURRENT_LEASE = new ThreadLocal<>();
+    private static final ThreadLocal<Frame> CURRENT_FRAME = new ThreadLocal<>();
 
     private LockContext() {
     }
 
     public static Optional<LockLease> currentLease() {
-        return Optional.ofNullable(CURRENT_LEASE.get());
+        return Optional.ofNullable(CURRENT_FRAME.get())
+            .map(Frame::lease);
     }
 
     public static Optional<FencingToken> currentFencingToken() {
         return currentLease().map(LockLease::fencingToken);
+    }
+
+    public static boolean containsLease(LockKey key) {
+        Objects.requireNonNull(key, "key");
+        Frame frame = CURRENT_FRAME.get();
+        while (frame != null) {
+            if (frame.lease().key().equals(key)) {
+                return true;
+            }
+            frame = frame.previous();
+        }
+        return false;
     }
 
     public static LockLease requireCurrentLease() {
@@ -213,17 +226,17 @@ public final class LockContext {
 
     public static Binding bind(LockLease lease) {
         Objects.requireNonNull(lease, "lease");
-        LockLease previous = CURRENT_LEASE.get();
-        CURRENT_LEASE.set(lease);
-        return new Binding(previous);
+        Frame frame = new Frame(lease, CURRENT_FRAME.get());
+        CURRENT_FRAME.set(frame);
+        return new Binding(frame);
     }
 
     public static final class Binding implements AutoCloseable {
-        private final LockLease previous;
+        private final Frame frame;
         private boolean closed;
 
-        private Binding(LockLease previous) {
-            this.previous = previous;
+        private Binding(Frame frame) {
+            this.frame = frame;
         }
 
         @Override
@@ -231,13 +244,19 @@ public final class LockContext {
             if (closed) {
                 return;
             }
+            if (CURRENT_FRAME.get() != frame) {
+                throw new IllegalStateException("Lock context bindings must be closed in LIFO order");
+            }
             closed = true;
-            if (previous == null) {
-                CURRENT_LEASE.remove();
+            if (frame.previous() == null) {
+                CURRENT_FRAME.remove();
                 return;
             }
-            CURRENT_LEASE.set(previous);
+            CURRENT_FRAME.set(frame.previous());
         }
+    }
+
+    private record Frame(LockLease lease, Frame previous) {
     }
 }
 ```
@@ -599,11 +618,9 @@ public final class DefaultSynchronousLockExecutor implements SynchronousLockExec
     }
 
     private static void rejectReentry(LockRequest request) {
-        LockContext.currentLease()
-            .filter(lease -> lease.key().equals(request.key()))
-            .ifPresent(lease -> {
-                throw new LockReentryException("Lock key is already held in the current synchronous scope: " + request.key().value());
-            });
+        if (LockContext.containsLease(request.key())) {
+            throw new LockReentryException("Lock key is already held in the current synchronous scope: " + request.key().value());
+        }
     }
 
     private static void rejectAsyncResult(Object result) {

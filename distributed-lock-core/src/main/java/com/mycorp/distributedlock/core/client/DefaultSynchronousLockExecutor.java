@@ -37,13 +37,11 @@ public final class DefaultSynchronousLockExecutor implements SynchronousLockExec
     }
 
     private static void rejectReentry(LockRequest request) {
-        LockContext.currentLease()
-            .filter(lease -> lease.key().equals(request.key()))
-            .ifPresent(lease -> {
-                throw new LockReentryException(
-                    "Lock key is already held in the current synchronous scope: " + request.key().value()
-                );
-            });
+        if (LockContext.containsLease(request.key())) {
+            throw new LockReentryException(
+                "Lock key is already held in the current synchronous scope: " + request.key().value()
+            );
+        }
     }
 
     private static void rejectAsyncResult(Object result) {
