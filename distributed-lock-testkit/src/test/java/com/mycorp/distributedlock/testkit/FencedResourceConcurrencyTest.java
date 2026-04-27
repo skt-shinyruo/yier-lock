@@ -8,6 +8,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,6 +36,32 @@ class FencedResourceConcurrencyTest {
         }
     }
 
+    @Test
+    void staleConcurrentWriteMustNotOverwriteNewerToken() throws Exception {
+        CountDownLatch staleRead = new CountDownLatch(1);
+        CountDownLatch freshWritten = new CountDownLatch(1);
+        FencedResource resource = new FencedResource(token -> {
+            if (token.value() == 1L) {
+                staleRead.countDown();
+                await(freshWritten);
+            }
+        });
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            Future<Boolean> stale = executor.submit(() -> write(resource, new FencingToken(1L)));
+            assertThat(staleRead.await(1, TimeUnit.SECONDS)).isTrue();
+
+            resource.write(new FencingToken(2L), "fresh");
+            freshWritten.countDown();
+
+            assertThat(stale.get(1, TimeUnit.SECONDS)).isFalse();
+            assertThat(write(resource, new FencingToken(2L))).isFalse();
+        } finally {
+            freshWritten.countDown();
+            executor.shutdownNow();
+        }
+    }
+
     private static boolean writeAfterStart(FencedResource resource, FencingToken token, CountDownLatch start) throws Exception {
         start.await();
         return write(resource, token);
@@ -46,6 +73,17 @@ class FencedResourceConcurrencyTest {
             return true;
         } catch (IllegalStateException exception) {
             return false;
+        }
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(1, TimeUnit.SECONDS)) {
+                throw new AssertionError("timed out waiting for concurrent write");
+            }
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(exception);
         }
     }
 }
