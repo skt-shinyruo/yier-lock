@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public final class InMemoryLockBackend implements LockBackend {
@@ -57,27 +58,26 @@ public final class InMemoryLockBackend implements LockBackend {
     }
 
     private static boolean acquireMutex(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        if (waitPolicy.unbounded()) {
-            state.readWrite.writeLock().lockInterruptibly();
-            return true;
-        }
-        return state.readWrite.writeLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+        return tryLock(state.readWrite.writeLock(), waitPolicy);
     }
 
     private static boolean acquireRead(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        if (waitPolicy.unbounded()) {
-            state.readWrite.readLock().lockInterruptibly();
-            return true;
-        }
-        return state.readWrite.readLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+        return tryLock(state.readWrite.readLock(), waitPolicy);
     }
 
     private static boolean acquireWrite(InMemoryLockState state, WaitPolicy waitPolicy) throws InterruptedException {
-        if (waitPolicy.unbounded()) {
-            state.readWrite.writeLock().lockInterruptibly();
-            return true;
-        }
-        return state.readWrite.writeLock().tryLock(waitPolicy.waitTime().toMillis(), TimeUnit.MILLISECONDS);
+        return tryLock(state.readWrite.writeLock(), waitPolicy);
+    }
+
+    private static boolean tryLock(Lock lock, WaitPolicy waitPolicy) throws InterruptedException {
+        return switch (waitPolicy.mode()) {
+            case TRY_ONCE -> lock.tryLock();
+            case TIMED -> lock.tryLock(waitPolicy.timeout().toMillis(), TimeUnit.MILLISECONDS);
+            case INDEFINITE -> {
+                lock.lockInterruptibly();
+                yield true;
+            }
+        };
     }
 
     static final class InMemoryLockState {

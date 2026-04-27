@@ -37,7 +37,12 @@ public final class BlockingLeaseBackend implements LockBackend {
                     );
                 }
                 acquireAttempted.countDown();
-                Thread.sleep(lockRequest.waitPolicy().unbounded() ? 5_000L : lockRequest.waitPolicy().waitTime().toMillis());
+                long sleepMillis = switch (lockRequest.waitPolicy().mode()) {
+                    case TRY_ONCE -> 0L;
+                    case TIMED -> lockRequest.waitPolicy().timeout().toMillis();
+                    case INDEFINITE -> 5_000L;
+                };
+                Thread.sleep(sleepMillis);
                 throw new LockAcquisitionTimeoutException("Timed out acquiring test lease for " + lockRequest.key().value());
             }
 
