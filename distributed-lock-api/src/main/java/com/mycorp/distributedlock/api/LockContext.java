@@ -32,14 +32,16 @@ public final class LockContext {
         Objects.requireNonNull(lease, "lease");
         LockLease previous = CURRENT_LEASE.get();
         CURRENT_LEASE.set(lease);
-        return new Binding(previous);
+        return new Binding(lease, previous);
     }
 
     public static final class Binding implements AutoCloseable {
+        private final LockLease boundLease;
         private final LockLease previous;
         private boolean closed;
 
-        private Binding(LockLease previous) {
+        private Binding(LockLease boundLease, LockLease previous) {
+            this.boundLease = boundLease;
             this.previous = previous;
         }
 
@@ -47,6 +49,9 @@ public final class LockContext {
         public void close() {
             if (closed) {
                 return;
+            }
+            if (CURRENT_LEASE.get() != boundLease) {
+                throw new IllegalStateException("Lock context bindings must be closed in LIFO order");
             }
             closed = true;
             if (previous == null) {
