@@ -1,11 +1,17 @@
 package com.mycorp.distributedlock.testkit;
 
 import com.mycorp.distributedlock.api.LockLease;
+import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockMode;
+import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
+import com.mycorp.distributedlock.testkit.support.InMemoryLockBackend;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
 
@@ -50,11 +56,36 @@ class InMemoryLockBackendThreadOwnershipTest extends LockClientContract {
         LockSession session = runtime.lockClient().openSession();
         session.acquire(request("in-memory:cross-thread-close", LockMode.MUTEX, Duration.ofSeconds(1)));
         try {
-            Future<?> close = closeExecutor.submit(session::close);
+            Future<?> close = closeExecutor.submit(() -> {
+                session.close();
+                return null;
+            });
             close.get(1, TimeUnit.SECONDS);
 
             assertThat(executor.submit(() -> tryAcquire("in-memory:cross-thread-close", LockMode.MUTEX, Duration.ofMillis(200))).get())
                 .isTrue();
+        } finally {
+            closeExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void backendSessionCloseReleasesActiveLeasesFromADifferentThread() throws Exception {
+        InMemoryLockBackend backend = new InMemoryLockBackend();
+        BackendSession session = backend.openSession();
+        session.acquire(backendRequest("in-memory:backend-cross-thread-close", LockMode.MUTEX, Duration.ofSeconds(1)));
+        ExecutorService closeExecutor = Executors.newSingleThreadExecutor();
+        try {
+            Future<?> close = closeExecutor.submit(() -> {
+                session.close();
+                return null;
+            });
+            close.get(1, TimeUnit.SECONDS);
+
+            try (BackendSession contender = backend.openSession();
+                 BackendLockLease ignored = contender.acquire(backendRequest("in-memory:backend-cross-thread-close", LockMode.MUTEX, Duration.ofMillis(200)))) {
+                assertThat(ignored.isValid()).isTrue();
+            }
         } finally {
             closeExecutor.shutdownNow();
         }
@@ -67,5 +98,9 @@ class InMemoryLockBackendThreadOwnershipTest extends LockClientContract {
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
         }
+    }
+
+    private static LockRequest backendRequest(String key, LockMode mode, Duration waitTime) {
+        return new LockRequest(new LockKey(key), mode, WaitPolicy.timed(waitTime));
     }
 }
