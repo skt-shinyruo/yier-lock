@@ -1,11 +1,13 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeaseMode;
 import com.mycorp.distributedlock.api.LeaseState;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
+import com.mycorp.distributedlock.api.WaitMode;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
@@ -46,7 +48,7 @@ public final class RedisLockBackend implements LockBackend {
             + "if redis.call('zcard', KEYS[3]) > 0 then return 0 end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "redis.call('set', KEYS[1], owner, 'EX', tonumber(ARGV[2])) "
+            + "redis.call('set', KEYS[1], owner, 'PX', tonumber(ARGV[2])) "
             + "return fence";
 
     private static final String READ_ACQUIRE_SCRIPT =
@@ -65,7 +67,7 @@ public final class RedisLockBackend implements LockBackend {
             + "if redis.call('exists', KEYS[5]) == 1 then return 0 end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
+            + "local ttlMs = tonumber(ARGV[2]) "
             + "redis.call('zadd', KEYS[3], nowMs + ttlMs, owner) "
             + "redis.call('pexpire', KEYS[3], ttlMs) "
             + "return fence";
@@ -73,7 +75,7 @@ public final class RedisLockBackend implements LockBackend {
     private static final String WRITE_ACQUIRE_SCRIPT =
         "local now = redis.call('time') "
             + "local nowMs = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000) "
-            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
+            + "local ttlMs = tonumber(ARGV[2]) "
             + "local readerType = redis.call('type', KEYS[3]).ok "
             + "if readerType == 'hash' then return 0 end "
             + "if readerType ~= 'none' and readerType ~= 'zset' then return 0 end "
@@ -90,14 +92,14 @@ public final class RedisLockBackend implements LockBackend {
             + "if redis.call('zcard', KEYS[5]) == 0 then redis.call('del', KEYS[5]) end "
             + "local fence = redis.call('incr', KEYS[4]) "
             + "local owner = ARGV[1] .. ':' .. fence "
-            + "redis.call('set', KEYS[2], owner, 'EX', tonumber(ARGV[2])) "
+            + "redis.call('set', KEYS[2], owner, 'PX', ttlMs) "
             + "return fence";
 
     private static final String VALUE_RELEASE_SCRIPT =
         "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
 
     private static final String VALUE_REFRESH_SCRIPT =
-        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], tonumber(ARGV[2])) else return 0 end";
 
     private static final String PENDING_WRITER_CLEANUP_SCRIPT =
         "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
@@ -120,7 +122,7 @@ public final class RedisLockBackend implements LockBackend {
             + "if redis.call('type', KEYS[1]).ok ~= 'zset' then return 0 end "
             + "redis.call('zremrangebyscore', KEYS[1], '-inf', nowMs) "
             + "if redis.call('zscore', KEYS[1], ARGV[1]) == false then return 0 end "
-            + "local ttlMs = tonumber(ARGV[2]) * 1000 "
+            + "local ttlMs = tonumber(ARGV[2]) "
             + "redis.call('zadd', KEYS[1], nowMs + ttlMs, ARGV[1]) "
             + "redis.call('pexpire', KEYS[1], ttlMs) "
             + "return 1";
@@ -219,9 +221,7 @@ public final class RedisLockBackend implements LockBackend {
             boolean acquired = false;
 
             try {
-                long deadlineNanos = request.waitPolicy().unbounded()
-                    ? Long.MAX_VALUE
-                    : System.nanoTime() + request.waitPolicy().waitTime().toNanos();
+                long deadlineNanos = deadlineNanos(request);
 
                 do {
                     ensureActive();
@@ -231,12 +231,10 @@ public final class RedisLockBackend implements LockBackend {
                         activeLeases.put(lease.ownerValue(), lease);
                         return lease;
                     }
-                    if (!request.waitPolicy().unbounded() && System.nanoTime() >= deadlineNanos) {
+                    if (request.waitPolicy().mode() == WaitMode.TRY_ONCE || System.nanoTime() >= deadlineNanos) {
                         throw new LockAcquisitionTimeoutException("Timed out acquiring Redis lock for key " + request.key().value());
                     }
-                    Thread.sleep(request.waitPolicy().unbounded()
-                        ? 25L
-                        : Math.min(25L, Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()))));
+                    Thread.sleep(sleepMillis(request, deadlineNanos));
                 } while (true);
             } finally {
                 if (!acquired && writerIntent != null) {
@@ -295,10 +293,11 @@ public final class RedisLockBackend implements LockBackend {
         }
 
         private RedisLease tryAcquire(LockRequest request, String writerIntent) {
+            long leaseMillis = effectiveLeaseMillis(request);
             long fence = switch (request.mode()) {
-                case MUTEX -> tryAcquireMutex(request.key().value());
-                case READ -> tryAcquireRead(request.key().value());
-                case WRITE -> tryAcquireWrite(request.key().value(), Objects.requireNonNull(writerIntent, "writerIntent"));
+                case MUTEX -> tryAcquireMutex(request.key().value(), leaseMillis);
+                case READ -> tryAcquireRead(request.key().value(), leaseMillis);
+                case WRITE -> tryAcquireWrite(request.key().value(), leaseMillis, Objects.requireNonNull(writerIntent, "writerIntent"));
             };
             if (fence <= 0) {
                 return null;
@@ -309,11 +308,12 @@ public final class RedisLockBackend implements LockBackend {
                 request.mode(),
                 new FencingToken(fence),
                 ownerValue(sessionId, fence),
-                this
+                this,
+                leaseMillis
             );
         }
 
-        private long tryAcquireMutex(String key) {
+        private long tryAcquireMutex(String key, long leaseMillis) {
             try {
                 Long result = commands.eval(
                     MUTEX_ACQUIRE_SCRIPT,
@@ -326,7 +326,7 @@ public final class RedisLockBackend implements LockBackend {
                         pendingWritersKey(key)
                     },
                     sessionId,
-                    String.valueOf(configuration.leaseSeconds())
+                    String.valueOf(leaseMillis)
                 );
                 return result == null ? 0L : result;
             } catch (RuntimeException exception) {
@@ -334,7 +334,7 @@ public final class RedisLockBackend implements LockBackend {
             }
         }
 
-        private long tryAcquireRead(String key) {
+        private long tryAcquireRead(String key, long leaseMillis) {
             try {
                 Long result = commands.eval(
                     READ_ACQUIRE_SCRIPT,
@@ -347,7 +347,7 @@ public final class RedisLockBackend implements LockBackend {
                         pendingWritersKey(key)
                     },
                     sessionId,
-                    String.valueOf(configuration.leaseSeconds())
+                    String.valueOf(leaseMillis)
                 );
                 return result == null ? 0L : result;
             } catch (RuntimeException exception) {
@@ -355,7 +355,7 @@ public final class RedisLockBackend implements LockBackend {
             }
         }
 
-        private long tryAcquireWrite(String key, String writerIntent) {
+        private long tryAcquireWrite(String key, long leaseMillis, String writerIntent) {
             try {
                 Long result = commands.eval(
                     WRITE_ACQUIRE_SCRIPT,
@@ -368,7 +368,7 @@ public final class RedisLockBackend implements LockBackend {
                         pendingWritersKey(key)
                     },
                     sessionId,
-                    String.valueOf(configuration.leaseSeconds()),
+                    String.valueOf(leaseMillis),
                     writerIntent
                 );
                 return result == null ? 0L : result;
@@ -390,8 +390,7 @@ public final class RedisLockBackend implements LockBackend {
         }
 
         private ScheduledFuture<?> scheduleRenewal() {
-            long periodMillis = Math.max(250L, TimeUnit.SECONDS.toMillis(configuration.leaseSeconds()) / 3L);
-            return renewalExecutor.scheduleAtFixedRate(this::renew, periodMillis, periodMillis, TimeUnit.MILLISECONDS);
+            return renewalExecutor.scheduleAtFixedRate(this::renew, 250L, 250L, TimeUnit.MILLISECONDS);
         }
 
         private void renew() {
@@ -455,6 +454,28 @@ public final class RedisLockBackend implements LockBackend {
                 throw new LockSessionLostException("Redis session lost: " + sessionId);
             }
         }
+
+        private long deadlineNanos(LockRequest request) {
+            return switch (request.waitPolicy().mode()) {
+                case TRY_ONCE -> System.nanoTime();
+                case TIMED -> System.nanoTime() + request.waitPolicy().timeout().toNanos();
+                case INDEFINITE -> Long.MAX_VALUE;
+            };
+        }
+
+        private long sleepMillis(LockRequest request, long deadlineNanos) {
+            if (request.waitPolicy().mode() == WaitMode.INDEFINITE) {
+                return 25L;
+            }
+            return Math.min(25L, Math.max(1L, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime())));
+        }
+
+        private long effectiveLeaseMillis(LockRequest request) {
+            if (request.leasePolicy().mode() == LeaseMode.BACKEND_DEFAULT) {
+                return TimeUnit.SECONDS.toMillis(configuration.leaseSeconds());
+            }
+            return request.leasePolicy().duration().toMillis();
+        }
     }
 
     private final class RedisLease implements BackendLockLease {
@@ -464,6 +485,7 @@ public final class RedisLockBackend implements LockBackend {
         private final FencingToken fencingToken;
         private final String ownerValue;
         private final RedisBackendSession session;
+        private final long leaseMillis;
         private final AtomicReference<LeaseState> state = new AtomicReference<>(LeaseState.ACTIVE);
 
         private RedisLease(
@@ -471,13 +493,15 @@ public final class RedisLockBackend implements LockBackend {
             LockMode mode,
             FencingToken fencingToken,
             String ownerValue,
-            RedisBackendSession session
+            RedisBackendSession session,
+            long leaseMillis
         ) {
             this.key = key;
             this.mode = mode;
             this.fencingToken = fencingToken;
             this.ownerValue = ownerValue;
             this.session = session;
+            this.leaseMillis = leaseMillis;
         }
 
         @Override
@@ -568,21 +592,21 @@ public final class RedisLockBackend implements LockBackend {
                         ScriptOutputType.INTEGER,
                         new String[]{ownerKey(key.value(), LockMode.MUTEX)},
                         ownerValue,
-                        String.valueOf(configuration.leaseSeconds())
+                        String.valueOf(leaseMillis)
                     );
                     case READ -> commands.eval(
                         READ_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
                         new String[]{readersKey(key.value())},
                         ownerValue,
-                        String.valueOf(configuration.leaseSeconds())
+                        String.valueOf(leaseMillis)
                     );
                     case WRITE -> commands.eval(
                         VALUE_REFRESH_SCRIPT,
                         ScriptOutputType.INTEGER,
                         new String[]{ownerKey(key.value(), LockMode.WRITE)},
                         ownerValue,
-                        String.valueOf(configuration.leaseSeconds())
+                        String.valueOf(leaseMillis)
                     );
                 };
                 if (result == null || result == 0L) {
