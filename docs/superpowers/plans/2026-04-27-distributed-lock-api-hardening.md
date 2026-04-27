@@ -1598,10 +1598,12 @@ Add `LockReentryException`, `WaitPolicy.tryOnce()`, and `LeasePolicy.fixed(...)`
 Run:
 
 ```bash
-mvn -q -pl distributed-lock-examples,distributed-lock-benchmarks -am test -DskipITs -Dsurefire.failIfNoSpecifiedTests=false
+mvn -q -pl distributed-lock-examples -am test -DskipITs -Dsurefire.failIfNoSpecifiedTests=false
+mvn -q install -DskipTests
+mvn -q -f distributed-lock-benchmarks/pom.xml -Dtest=BenchmarkEnvironmentSmokeTest test -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
-Expected: PASS.
+Expected: PASS. `distributed-lock-benchmarks` is intentionally outside the root reactor, so the smoke test runs through its module POM after current snapshots are installed. The benchmark smoke test expects Redis at `127.0.0.1:6379` and ZooKeeper at `127.0.0.1:2181`, or equivalent `benchmark.*` system properties / `BENCHMARK_*` environment variables.
 
 - [ ] **Step 5: Commit docs and examples**
 
