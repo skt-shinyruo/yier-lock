@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -38,9 +38,10 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
                 assertThat(context).hasSingleBean(LockClient.class);
-                assertThat(context).hasSingleBean(LockExecutor.class);
+                assertThat(context).hasSingleBean(SynchronousLockExecutor.class);
                 assertThat(context).hasSingleBean(LockKeyResolver.class);
                 assertThat(context).hasSingleBean(DistributedLockAspect.class);
+                assertThat(context).doesNotHaveBean("lockExecutor");
                 assertThat(context).doesNotHaveBean("lockManager");
             });
     }
@@ -124,7 +125,8 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).doesNotHaveBean(LockRuntime.class);
                 assertThat(context).doesNotHaveBean(LockClient.class);
-                assertThat(context).doesNotHaveBean(LockExecutor.class);
+                assertThat(context).doesNotHaveBean(SynchronousLockExecutor.class);
+                assertThat(context).doesNotHaveBean("lockExecutor");
                 assertThat(context).doesNotHaveBean(DistributedLockAspect.class);
                 assertThat(context).doesNotHaveBean("lockManager");
             });
@@ -152,7 +154,7 @@ class DistributedLockAutoConfigurationIntegrationTest {
 
                 @Override
                 public BackendCapabilities capabilities() {
-                    return new BackendCapabilities(true, true, false, false);
+                    return new BackendCapabilities(true, true, false, false, false);
                 }
 
                 @Override

@@ -7,7 +7,7 @@ This starter is the Spring Boot 3 integration layer for distributed lock 2.0.
 The starter only provides:
 
 - `LockRuntime` auto-configuration
-- `LockClient` and `LockExecutor` bean exposure
+- `LockClient` and `SynchronousLockExecutor` bean exposure
 - `@DistributedLock` method interception
 - SpEL-based lock key resolution
 
@@ -76,7 +76,6 @@ distributed:
     spring:
       annotation:
         enabled: true
-        default-timeout: 5s
 ```
 
 Backend-specific properties are provided by the matching backend Spring module. For Redis:
@@ -105,8 +104,9 @@ distributed:
 @Service
 class OrderService {
 
-    @DistributedLock(key = "order:#{#p0}", waitFor = "2s")
+    @DistributedLock(key = "order:#{#p0}", waitFor = "2s", leaseFor = "10s")
     public void processOrder(String orderId) {
+        FencingToken token = LockContext.requireCurrentFencingToken();
         // critical section
     }
 }
@@ -117,6 +117,10 @@ Supported annotation fields:
 - `key`
 - `mode`
 - `waitFor`
+- `leaseFor`
+
+Blank `waitFor` waits indefinitely, `waitFor = "0s"` tries once, and a positive value waits up to that duration.
+Blank `leaseFor` uses the backend default lease duration, while a positive value requests a fixed lease duration.
 
 Lock keys follow Spring template-expression semantics. Literal keys such as `order:42` pass through unchanged, while templates such as `order:#{#p0}` are evaluated against the intercepted method arguments.
 
@@ -132,9 +136,9 @@ Backend progress semantics are backend-specific. Redis read/write locks are writ
 @Service
 class UserService {
 
-    private final LockExecutor lockExecutor;
+    private final SynchronousLockExecutor lockExecutor;
 
-    UserService(LockExecutor lockExecutor) {
+    UserService(SynchronousLockExecutor lockExecutor) {
         this.lockExecutor = lockExecutor;
     }
 
@@ -145,7 +149,7 @@ class UserService {
                 LockMode.MUTEX,
                 WaitPolicy.timed(Duration.ofSeconds(2))
             ),
-            userId::hashCode
+            lease -> userId.hashCode()
         );
     }
 }

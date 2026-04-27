@@ -1,14 +1,14 @@
 package com.mycorp.distributedlock.springboot.aop;
 
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
-import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
 import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -25,25 +25,22 @@ import java.util.concurrent.Future;
 @Aspect
 public final class DistributedLockAspect {
 
-    private final LockExecutor lockExecutor;
+    private final SynchronousLockExecutor lockExecutor;
     private final LockKeyResolver lockKeyResolver;
-    private final DistributedLockProperties properties;
 
     public DistributedLockAspect(
-        LockExecutor lockExecutor,
-        LockKeyResolver lockKeyResolver,
-        DistributedLockProperties properties
+        SynchronousLockExecutor lockExecutor,
+        LockKeyResolver lockKeyResolver
     ) {
         this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
         this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
-        this.properties = Objects.requireNonNull(properties, "properties");
     }
 
     @Around("@annotation(distributedLock)")
     public Object around(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) throws Throwable {
         ensureSynchronousReturnType(joinPoint);
         LockRequest request = resolveRequest(joinPoint, distributedLock);
-        return lockExecutor.withLock(request, () -> proceed(joinPoint));
+        return lockExecutor.withLock(request, lease -> proceed(joinPoint));
     }
 
     private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) {
@@ -51,7 +48,8 @@ public final class DistributedLockAspect {
         return new LockRequest(
             new LockKey(key),
             resolveMode(distributedLock.mode()),
-            resolveWaitPolicy(distributedLock)
+            resolveWaitPolicy(distributedLock),
+            resolveLeasePolicy(distributedLock)
         );
     }
 
@@ -68,6 +66,9 @@ public final class DistributedLockAspect {
         if (waitTimeout == null) {
             return WaitPolicy.indefinite();
         }
+        if (waitTimeout.isZero()) {
+            return WaitPolicy.tryOnce();
+        }
         return WaitPolicy.timed(waitTimeout);
     }
 
@@ -75,7 +76,15 @@ public final class DistributedLockAspect {
         if (distributedLock.waitFor() != null && !distributedLock.waitFor().isBlank()) {
             return DurationStyle.detectAndParse(distributedLock.waitFor());
         }
-        return properties.getSpring().getAnnotation().getDefaultTimeout();
+        return null;
+    }
+
+    private LeasePolicy resolveLeasePolicy(DistributedLock distributedLock) {
+        if (distributedLock.leaseFor() == null || distributedLock.leaseFor().isBlank()) {
+            return LeasePolicy.backendDefault();
+        }
+        Duration leaseDuration = DurationStyle.detectAndParse(distributedLock.leaseFor());
+        return LeasePolicy.fixed(leaseDuration);
     }
 
     private Object proceed(ProceedingJoinPoint joinPoint) throws Exception {

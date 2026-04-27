@@ -14,4 +14,6 @@ public @interface DistributedLock {
     DistributedLockMode mode() default DistributedLockMode.MUTEX;
 
     String waitFor() default "";
+
+    String leaseFor() default "";
 }
