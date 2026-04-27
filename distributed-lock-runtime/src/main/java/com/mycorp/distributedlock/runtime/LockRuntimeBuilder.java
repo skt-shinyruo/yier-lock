@@ -1,11 +1,11 @@
 package com.mycorp.distributedlock.runtime;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.client.DefaultLockClient;
-import com.mycorp.distributedlock.core.client.DefaultLockExecutor;
+import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
 import com.mycorp.distributedlock.core.client.SupportedLockModes;
 import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
@@ -51,11 +51,12 @@ public final class LockRuntimeBuilder {
         LockBackend backend = selectedModule.createBackend();
         SupportedLockModes supportedLockModes = new SupportedLockModes(
             selectedModule.capabilities().mutexSupported(),
-            selectedModule.capabilities().readWriteSupported()
+            selectedModule.capabilities().readWriteSupported(),
+            selectedModule.capabilities().fixedLeaseDurationSupported()
         );
         LockClient lockClient = new DefaultLockClient(backend, supportedLockModes);
-        LockExecutor lockExecutor = new DefaultLockExecutor(lockClient);
-        return new DefaultLockRuntime(lockClient, lockExecutor);
+        SynchronousLockExecutor synchronousLockExecutor = new DefaultSynchronousLockExecutor(lockClient);
+        return new DefaultLockRuntime(lockClient, synchronousLockExecutor);
     }
 
     private BackendModule selectBackendModule(List<BackendModule> availableModules) {

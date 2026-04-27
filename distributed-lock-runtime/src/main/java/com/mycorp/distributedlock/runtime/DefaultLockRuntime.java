@@ -1,18 +1,18 @@
 package com.mycorp.distributedlock.runtime;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 
 import java.util.Objects;
 
 public final class DefaultLockRuntime implements LockRuntime {
 
     private final LockClient lockClient;
-    private final LockExecutor lockExecutor;
+    private final SynchronousLockExecutor synchronousLockExecutor;
 
-    public DefaultLockRuntime(LockClient lockClient, LockExecutor lockExecutor) {
+    public DefaultLockRuntime(LockClient lockClient, SynchronousLockExecutor synchronousLockExecutor) {
         this.lockClient = Objects.requireNonNull(lockClient, "lockClient");
-        this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
+        this.synchronousLockExecutor = Objects.requireNonNull(synchronousLockExecutor, "synchronousLockExecutor");
     }
 
     @Override
@@ -21,8 +21,8 @@ public final class DefaultLockRuntime implements LockRuntime {
     }
 
     @Override
-    public LockExecutor lockExecutor() {
-        return lockExecutor;
+    public SynchronousLockExecutor synchronousLockExecutor() {
+        return synchronousLockExecutor;
     }
 
     @Override

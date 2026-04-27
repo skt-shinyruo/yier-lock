@@ -21,7 +21,7 @@ public final class ZooKeeperBackendModule implements BackendModule {
 
     @Override
     public BackendCapabilities capabilities() {
-        return BackendCapabilities.standard();
+        return new BackendCapabilities(true, true, true, true, false);
     }
 
     @Override
