@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockExecutor;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.context.ConfigurableApplicationContext;
 
@@ -40,8 +40,8 @@ public final class SpringBenchmarkEnvironment implements AutoCloseable {
         return applicationContext.getBean(LockClient.class);
     }
 
-    public LockExecutor lockExecutor() {
-        return applicationContext.getBean(LockExecutor.class);
+    public SynchronousLockExecutor synchronousLockExecutor() {
+        return applicationContext.getBean(SynchronousLockExecutor.class);
     }
 
     public SpringBenchmarkApplication.ProgrammaticBenchmarkService programmaticService() {

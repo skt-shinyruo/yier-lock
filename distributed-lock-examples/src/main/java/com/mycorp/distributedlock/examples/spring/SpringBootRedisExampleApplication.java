@@ -1,9 +1,9 @@
 package com.mycorp.distributedlock.examples.spring;
 
-import com.mycorp.distributedlock.api.LockExecutor;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import org.springframework.boot.CommandLineRunner;
@@ -22,13 +22,13 @@ public class SpringBootRedisExampleApplication {
     }
 
     @Bean
-    CommandLineRunner demoRunner(OrderService orderService, LockExecutor lockExecutor) {
+    CommandLineRunner demoRunner(OrderService orderService, SynchronousLockExecutor lockExecutor) {
         return args -> {
             orderService.processOrder("42");
 
             String result = lockExecutor.withLock(
                 sampleRequest("example:spring:user-9"),
-                () -> "Manual Spring lease acquired"
+                lease -> "Manual Spring lease acquired with fencing token " + lease.fencingToken().value()
             );
             System.out.println(result);
         };

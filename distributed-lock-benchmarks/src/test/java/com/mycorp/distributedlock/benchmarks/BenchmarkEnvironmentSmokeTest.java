@@ -18,7 +18,7 @@ class BenchmarkEnvironmentSmokeTest {
     @Test
     void redisEnvironmentShouldCreateWorkingRuntime() throws Exception {
         try (RedisBenchmarkEnvironment environment = RedisBenchmarkEnvironment.start()) {
-            String result = environment.lockExecutor().withLock(sampleRequest("bench:smoke:redis"), () -> "ok");
+            String result = environment.synchronousLockExecutor().withLock(sampleRequest("bench:smoke:redis"), lease -> "ok");
             assertThat(result).isEqualTo("ok");
         }
     }
@@ -26,7 +26,7 @@ class BenchmarkEnvironmentSmokeTest {
     @Test
     void zooKeeperEnvironmentShouldCreateWorkingRuntime() throws Exception {
         try (ZooKeeperBenchmarkEnvironment environment = ZooKeeperBenchmarkEnvironment.start()) {
-            String result = environment.lockExecutor().withLock(sampleRequest("bench:smoke:zk"), () -> "ok");
+            String result = environment.synchronousLockExecutor().withLock(sampleRequest("bench:smoke:zk"), lease -> "ok");
             assertThat(result).isEqualTo("ok");
         }
     }
@@ -35,7 +35,7 @@ class BenchmarkEnvironmentSmokeTest {
     void springEnvironmentShouldExposeBenchmarkService() throws Exception {
         try (SpringBenchmarkEnvironment environment = SpringBenchmarkEnvironment.start()) {
             assertThat(environment.lockClient()).isNotNull();
-            assertThat(environment.lockExecutor()).isNotNull();
+            assertThat(environment.synchronousLockExecutor()).isNotNull();
             assertThat(environment.programmaticService()).isNotNull();
             assertThat(environment.annotatedService()).isNotNull();
         }

@@ -21,7 +21,7 @@ public final class BenchmarkWorkloads {
     }
 
     public static void mutexLifecycle(LockRuntime runtime, String key, Blackhole blackhole) throws Exception {
-        String result = runtime.lockExecutor().withLock(mutexRequest(key, WaitPolicy.indefinite()), () -> {
+        String result = runtime.synchronousLockExecutor().withLock(mutexRequest(key, WaitPolicy.indefinite()), lease -> {
             Blackhole.consumeCPU(64);
             return key;
         });
@@ -62,7 +62,7 @@ public final class BenchmarkWorkloads {
     }
 
     public static void readSection(LockRuntime runtime, String key, Blackhole blackhole) throws Exception {
-        String result = runtime.lockExecutor().withLock(readRequest(key, WaitPolicy.indefinite()), () -> {
+        String result = runtime.synchronousLockExecutor().withLock(readRequest(key, WaitPolicy.indefinite()), lease -> {
             Blackhole.consumeCPU(64);
             return key;
         });
@@ -70,7 +70,7 @@ public final class BenchmarkWorkloads {
     }
 
     public static void writeSection(LockRuntime runtime, String key, Blackhole blackhole) throws Exception {
-        String result = runtime.lockExecutor().withLock(writeRequest(key, WaitPolicy.indefinite()), () -> {
+        String result = runtime.synchronousLockExecutor().withLock(writeRequest(key, WaitPolicy.indefinite()), lease -> {
             Blackhole.consumeCPU(64);
             return key;
         });
@@ -88,7 +88,7 @@ public final class BenchmarkWorkloads {
         try (LockRuntime runtime = runtimeFactory.get();
              LockSession session = runtime.lockClient().openSession()) {
             blackhole.consume(runtime.lockClient());
-            blackhole.consume(runtime.lockExecutor());
+            blackhole.consume(runtime.synchronousLockExecutor());
             blackhole.consume(session.state());
             blackhole.consume(mutexRequest(BenchmarkKeys.unique("runtime-lifecycle-mutex", backend, Thread.currentThread().getId()), WaitPolicy.timed(Duration.ofMillis(10))));
             blackhole.consume(readRequest(BenchmarkKeys.unique("runtime-lifecycle-rw", backend, Thread.currentThread().getId()), WaitPolicy.timed(Duration.ofMillis(10))));

@@ -12,15 +12,15 @@ Because of that, rerun `mvn -q install -DskipTests` after changing runtime, back
 ## Benchmark Suites
 
 - `MutexLifecycleBenchmark`
-- `LockExecutor` scoped mutex acquire/release
+- `SynchronousLockExecutor` scoped mutex acquire/release
 - `MutexContentionBenchmark`
 - `LockClient` + `LockSession` timed contention paths
 - `ReadWriteLockBenchmark`
-- read/write scoped execution through `LockExecutor`
+- read/write scoped execution through `SynchronousLockExecutor`
 - `RuntimeLifecycleBenchmark`
-- runtime construction with `LockClient` / `LockExecutor` access
+- runtime construction with `LockClient` / `SynchronousLockExecutor` access
 - `SpringStarterBenchmark`
-- `@DistributedLock` and programmatic `LockExecutor` through Spring Boot starter
+- `@DistributedLock` and programmatic `SynchronousLockExecutor` through Spring Boot starter
 
 ## Commands
 

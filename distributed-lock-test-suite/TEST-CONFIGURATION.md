@@ -7,7 +7,7 @@
 - `ApiSurfaceTest`
 - `LockBackendSurfaceTest`
 - `DefaultLockClientTest`
-- `DefaultLockExecutorTest`
+- `DefaultSynchronousLockExecutorTest`
 - `LockRuntimeBuilderTest`
 - `InMemoryLockClientContractTest`
 - `RedisBackendModuleTest`
@@ -45,7 +45,7 @@ mvn -pl distributed-lock-zookeeper -am test \
 
 # core / testkit
 mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
-  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultLockExecutorTest,InMemoryLockClientContractTest \
+  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultSynchronousLockExecutorTest,InMemoryLockClientContractTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 ```
 
@@ -55,3 +55,4 @@ mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
 - `distributed-lock-benchmarks` 不参与默认 reactor，也不作为主线验收条件。
 - `distributed-lock-benchmarks` 依赖本地已安装的 snapshot；修改 runtime/backend/starter 后要先重新执行 `mvn -q install -DskipTests`。
 - 示例代码已经迁移到 `distributed-lock-examples`，旧 `examples/` 不再是有效资产。
+- 当前主线覆盖非重入、`LockReentryException`、`WaitPolicy.tryOnce()` 和 `LeasePolicy.fixed(...)` 的兼容性边界。
