@@ -5,13 +5,14 @@ import java.util.Optional;
 
 public final class LockContext {
 
-    private static final ThreadLocal<LockLease> CURRENT_LEASE = new ThreadLocal<>();
+    private static final ThreadLocal<Frame> CURRENT_FRAME = new ThreadLocal<>();
 
     private LockContext() {
     }
 
     public static Optional<LockLease> currentLease() {
-        return Optional.ofNullable(CURRENT_LEASE.get());
+        return Optional.ofNullable(CURRENT_FRAME.get())
+                .map(Frame::lease);
     }
 
     public static Optional<FencingToken> currentFencingToken() {
@@ -30,19 +31,17 @@ public final class LockContext {
 
     public static Binding bind(LockLease lease) {
         Objects.requireNonNull(lease, "lease");
-        LockLease previous = CURRENT_LEASE.get();
-        CURRENT_LEASE.set(lease);
-        return new Binding(lease, previous);
+        Frame frame = new Frame(lease, CURRENT_FRAME.get());
+        CURRENT_FRAME.set(frame);
+        return new Binding(frame);
     }
 
     public static final class Binding implements AutoCloseable {
-        private final LockLease boundLease;
-        private final LockLease previous;
+        private final Frame frame;
         private boolean closed;
 
-        private Binding(LockLease boundLease, LockLease previous) {
-            this.boundLease = boundLease;
-            this.previous = previous;
+        private Binding(Frame frame) {
+            this.frame = frame;
         }
 
         @Override
@@ -50,15 +49,18 @@ public final class LockContext {
             if (closed) {
                 return;
             }
-            if (CURRENT_LEASE.get() != boundLease) {
+            if (CURRENT_FRAME.get() != frame) {
                 throw new IllegalStateException("Lock context bindings must be closed in LIFO order");
             }
             closed = true;
-            if (previous == null) {
-                CURRENT_LEASE.remove();
+            if (frame.previous() == null) {
+                CURRENT_FRAME.remove();
                 return;
             }
-            CURRENT_LEASE.set(previous);
+            CURRENT_FRAME.set(frame.previous());
         }
+    }
+
+    private record Frame(LockLease lease, Frame previous) {
     }
 }

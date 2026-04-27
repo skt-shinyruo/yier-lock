@@ -187,6 +187,23 @@ class ApiSurfaceTest {
     }
 
     @Test
+    void lockContextBindingShouldRejectOutOfOrderCloseForSameLeaseInstance() {
+        LockLease lease = new FakeLockLease("same", 1);
+        LockContext.Binding firstBinding = LockContext.bind(lease);
+        LockContext.Binding secondBinding = LockContext.bind(lease);
+
+        assertThatThrownBy(firstBinding::close)
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(LockContext.currentLease()).containsSame(lease);
+        assertThat(LockContext.currentFencingToken()).contains(lease.fencingToken());
+
+        secondBinding.close();
+        assertThat(LockContext.currentLease()).containsSame(lease);
+        firstBinding.close();
+        assertThat(LockContext.currentLease()).isEmpty();
+    }
+
+    @Test
     void lockContextBindingShouldExposeOnlyCloseAsPublicOperation() {
         assertThat(Modifier.isPublic(LockContext.Binding.class.getModifiers())).isTrue();
         assertThat(Modifier.isFinal(LockContext.Binding.class.getModifiers())).isTrue();
