@@ -1,6 +1,6 @@
 package com.mycorp.distributedlock.api.exception;
 
-public class LockSessionLostException extends RuntimeException {
+public class LockSessionLostException extends DistributedLockException {
 
     public LockSessionLostException(String message) {
         super(message);
