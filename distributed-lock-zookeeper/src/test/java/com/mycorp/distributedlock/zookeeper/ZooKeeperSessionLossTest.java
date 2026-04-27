@@ -52,6 +52,21 @@ class ZooKeeperSessionLossTest {
     }
 
     @Test
+    void directCloseAfterSessionLossShouldReportSessionLost() throws Exception {
+        try (TestingServer server = new TestingServer();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
+                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
+             )) {
+            BackendSession session = backend.openSession();
+            CuratorFramework curatorFramework = ((CuratorBackedSession) session).curatorFramework();
+            KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), server.getConnectString());
+
+            waitUntilState(session, SessionState.LOST);
+            assertThatThrownBy(session::close).isInstanceOf(LockSessionLostException.class);
+        }
+    }
+
+    @Test
     void lostLeaseShouldExposeLostStateAndRejectRelease() throws Exception {
         try (TestingServer server = new TestingServer();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(

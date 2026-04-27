@@ -27,8 +27,8 @@ class ZooKeeperAcquireWaitLifecycleTest {
         try (TestingServer server = new TestingServer();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
              BackendSession holder = backend.openSession();
-             BackendLockLease ignored = holder.acquire(request("zk:wait:lost"));
-             BackendSession waiter = backend.openSession()) {
+             BackendLockLease ignored = holder.acquire(request("zk:wait:lost"))) {
+            BackendSession waiter = backend.openSession();
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 Future<Throwable> result = executor.submit(() -> acquireAndReturnFailure(waiter, "zk:wait:lost"));
@@ -40,6 +40,7 @@ class ZooKeeperAcquireWaitLifecycleTest {
                 assertThat(failure).isInstanceOf(LockSessionLostException.class);
             } finally {
                 executor.shutdownNow();
+                closeQuietly(waiter);
             }
         }
     }
@@ -103,5 +104,13 @@ class ZooKeeperAcquireWaitLifecycleTest {
 
     private static LockRequest timedRequest(String key) {
         return new LockRequest(new LockKey(key), LockMode.MUTEX, WaitPolicy.timed(Duration.ofSeconds(2)));
+    }
+
+    private static void closeQuietly(BackendSession session) {
+        try {
+            session.close();
+        } catch (RuntimeException ignored) {
+        } catch (Exception ignored) {
+        }
     }
 }
