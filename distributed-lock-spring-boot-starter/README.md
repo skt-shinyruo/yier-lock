@@ -183,6 +183,8 @@ The starter is covered by:
 - `DistributedLockAutoConfigurationIntegrationTest`
 - `DistributedLockAspectIntegrationTest`
 - `DistributedLockAsyncGuardTest`
+- `DistributedLockProxyBoundaryTest`
+- `SpelLockKeyResolverTest`
 - `RedisBackendModuleAutoConfigurationTest`
 - `ZooKeeperBackendModuleAutoConfigurationTest`
 - `RedisStarterIntegrationTest`
