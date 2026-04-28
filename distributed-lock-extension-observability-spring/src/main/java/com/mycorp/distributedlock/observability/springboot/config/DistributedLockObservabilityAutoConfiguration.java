@@ -28,11 +28,18 @@ public class DistributedLockObservabilityAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean
-    public LockObservationSink lockObservationSink(ObjectProvider<MeterRegistry> meterRegistry) {
+    public LockObservationSink lockObservationSink(
+        ObjectProvider<MeterRegistry> meterRegistry,
+        DistributedLockObservabilityProperties properties
+    ) {
         List<LockObservationSink> sinks = new ArrayList<>();
-        meterRegistry.ifAvailable(registry -> sinks.add(new MicrometerLockObservationSink(registry)));
-        sinks.add(new LoggingLockObservationSink());
-        return new CompositeLockObservationSink(sinks);
+        if (properties.getMetrics().isEnabled()) {
+            meterRegistry.ifAvailable(registry -> sinks.add(new MicrometerLockObservationSink(registry)));
+        }
+        if (properties.getLogging().isEnabled()) {
+            sinks.add(new LoggingLockObservationSink());
+        }
+        return sinks.isEmpty() ? LockObservationSink.NOOP : new CompositeLockObservationSink(sinks);
     }
 
     @Bean
@@ -48,6 +55,9 @@ public class DistributedLockObservabilityAutoConfiguration {
                     return bean;
                 }
                 LockObservationSink sink = sinkProvider.getIfAvailable(() -> LockObservationSink.NOOP);
+                if (sink == LockObservationSink.NOOP) {
+                    return bean;
+                }
                 DistributedLockProperties lockProperties = lockPropertiesProvider.getIfAvailable();
                 DistributedLockObservabilityProperties observabilityProperties = observabilityPropertiesProvider.getIfAvailable();
                 return ObservedLockRuntime.decorate(

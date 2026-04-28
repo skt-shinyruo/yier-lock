@@ -12,6 +12,7 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.observability.springboot.config.DistributedLockObservabilityAutoConfiguration;
+import com.mycorp.distributedlock.runtime.DefaultLockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
@@ -82,6 +83,34 @@ class DistributedLockObservabilityAutoConfigurationTest {
                 "distributed.lock.observability.enabled=true"
             )
             .run(context -> assertThat(context.getBean(LockRuntime.class)).isInstanceOf(CustomRuntime.class));
+    }
+
+    @Test
+    void shouldNotDecorateRuntimeWhenAllSinksAreDisabled() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.observability.logging.enabled=false",
+                "distributed.lock.observability.metrics.enabled=false"
+            )
+            .run(context -> assertThat(context.getBean(LockRuntime.class)).isInstanceOf(DefaultLockRuntime.class));
+    }
+
+    @Test
+    void shouldKeepMetricsLowCardinalityWhenLockKeyLoggingIsEnabled() {
+        contextRunner
+            .withPropertyValues("distributed.lock.observability.include-lock-key-in-logs=true")
+            .run(context -> {
+                SimpleMeterRegistry registry = context.getBean(SimpleMeterRegistry.class);
+                LockRuntime runtime = context.getBean(LockRuntime.class);
+                runtime.synchronousLockExecutor().withLock(
+                    new LockRequest(new LockKey("secret-key"), LockMode.MUTEX, WaitPolicy.tryOnce()),
+                    lease -> "ok"
+                );
+
+                assertThat(registry.getMeters()).allSatisfy(meter ->
+                    assertThat(meter.getId().getTags()).noneMatch(tag -> tag.getValue().equals("secret-key"))
+                );
+            });
     }
 
     @Configuration(proxyBeanMethods = false)
