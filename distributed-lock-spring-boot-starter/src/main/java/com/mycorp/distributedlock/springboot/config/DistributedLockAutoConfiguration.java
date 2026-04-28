@@ -70,8 +70,8 @@ public class DistributedLockAutoConfiguration {
         matchIfMissing = true
     )
     public DistributedLockAspect distributedLockAspect(
-        SynchronousLockExecutor lockExecutor,
-        LockKeyResolver lockKeyResolver
+        ObjectProvider<SynchronousLockExecutor> lockExecutor,
+        ObjectProvider<LockKeyResolver> lockKeyResolver
     ) {
         return new DistributedLockAspect(lockExecutor, lockKeyResolver);
     }

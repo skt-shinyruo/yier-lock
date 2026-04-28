@@ -18,6 +18,7 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.aspectj.lang.reflect.SourceLocation;
 import org.aspectj.runtime.internal.AroundClosure;
 import org.springframework.aop.support.StaticMethodMatcherPointcutAdvisor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.core.Ordered;
 
@@ -31,16 +32,16 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
 
     private static final long serialVersionUID = 1L;
 
-    private final SynchronousLockExecutor lockExecutor;
-    private final LockKeyResolver lockKeyResolver;
+    private final ObjectProvider<SynchronousLockExecutor> lockExecutorProvider;
+    private final ObjectProvider<LockKeyResolver> lockKeyResolverProvider;
     private final DistributedLockMethodResolver methodResolver = new DistributedLockMethodResolver();
 
     public DistributedLockAspect(
-        SynchronousLockExecutor lockExecutor,
-        LockKeyResolver lockKeyResolver
+        ObjectProvider<SynchronousLockExecutor> lockExecutorProvider,
+        ObjectProvider<LockKeyResolver> lockKeyResolverProvider
     ) {
-        this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
-        this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
+        this.lockExecutorProvider = Objects.requireNonNull(lockExecutorProvider, "lockExecutorProvider");
+        this.lockKeyResolverProvider = Objects.requireNonNull(lockKeyResolverProvider, "lockKeyResolverProvider");
         setAdvice(this);
     }
 
@@ -60,11 +61,11 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
         DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(invocation.getMethod(), targetClass, null);
         ensureSynchronous(resolved);
         LockRequest request = resolveRequest(new MethodInvocationProceedingJoinPoint(invocation), resolved.distributedLock());
-        return lockExecutor.withLock(request, lease -> proceed(invocation));
+        return lockExecutorProvider.getObject().withLock(request, lease -> proceed(invocation));
     }
 
     private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) {
-        String key = lockKeyResolver.resolveKey(joinPoint, distributedLock.key());
+        String key = lockKeyResolverProvider.getObject().resolveKey(joinPoint, distributedLock.key());
         return new LockRequest(
             new LockKey(key),
             resolveMode(distributedLock.mode()),
