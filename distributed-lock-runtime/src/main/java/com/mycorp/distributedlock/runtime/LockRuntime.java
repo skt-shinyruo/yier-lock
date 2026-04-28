@@ -8,4 +8,7 @@ public interface LockRuntime extends AutoCloseable {
     LockClient lockClient();
 
     SynchronousLockExecutor synchronousLockExecutor();
+
+    @Override
+    void close();
 }

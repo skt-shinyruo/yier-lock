@@ -21,6 +21,9 @@ public final class LockRuntimeBuilder {
     private final List<BackendModule> explicitBackendModules = new ArrayList<>();
     private String backendId;
 
+    private record ModuleMetadata(BackendModule module, String id, BackendCapabilities capabilities) {
+    }
+
     private LockRuntimeBuilder() {
     }
 
@@ -42,26 +45,27 @@ public final class LockRuntimeBuilder {
     }
 
     public LockRuntime build() {
-        List<BackendModule> availableModules = explicitBackendModules.isEmpty()
+        List<ModuleMetadata> availableModules = validateModules(explicitBackendModules.isEmpty()
             ? new ServiceLoaderBackendRegistry().discover()
-            : List.copyOf(explicitBackendModules);
+            : new ArrayList<>(explicitBackendModules));
 
-        BackendModule selectedModule = selectBackendModule(availableModules);
-        BackendCapabilities capabilities = validateCapabilities(selectedModule);
-        LockBackend backend = selectedModule.createBackend();
+        ModuleMetadata selectedModule = selectBackendModule(availableModules);
+        validateCapabilities(selectedModule);
+        LockBackend backend = selectedModule.module().createBackend();
+        if (backend == null) {
+            throw new LockConfigurationException("Backend module returned null backend: " + selectedModule.id());
+        }
         SupportedLockModes supportedLockModes = new SupportedLockModes(
-            capabilities.mutexSupported(),
-            capabilities.readWriteSupported(),
-            capabilities.fixedLeaseDurationSupported()
+            selectedModule.capabilities().mutexSupported(),
+            selectedModule.capabilities().readWriteSupported(),
+            selectedModule.capabilities().fixedLeaseDurationSupported()
         );
         LockClient lockClient = new DefaultLockClient(backend, supportedLockModes);
         SynchronousLockExecutor synchronousLockExecutor = new DefaultSynchronousLockExecutor(lockClient);
         return new DefaultLockRuntime(lockClient, synchronousLockExecutor);
     }
 
-    private BackendModule selectBackendModule(List<BackendModule> availableModules) {
-        validateUniqueBackendIds(availableModules);
-
+    private ModuleMetadata selectBackendModule(List<ModuleMetadata> availableModules) {
         if (backendId == null || backendId.isBlank()) {
             throw new LockConfigurationException("A backend id must be configured before building the lock runtime");
         }
@@ -72,20 +76,15 @@ public final class LockRuntimeBuilder {
             .orElseThrow(() -> new LockConfigurationException("Requested backend not found: " + backendId));
     }
 
-    private BackendCapabilities validateCapabilities(BackendModule module) {
-        BackendCapabilities capabilities = module.capabilities();
-        if (capabilities == null) {
-            throw new LockConfigurationException("Backend module capabilities must not be null: " + module.id());
-        }
-
+    private void validateCapabilities(ModuleMetadata module) {
         List<String> missingRequirements = new ArrayList<>();
-        if (!capabilities.mutexSupported()) {
+        if (!module.capabilities().mutexSupported()) {
             missingRequirements.add("mutexSupported");
         }
-        if (!capabilities.fencingSupported()) {
+        if (!module.capabilities().fencingSupported()) {
             missingRequirements.add("fencingSupported");
         }
-        if (!capabilities.renewableSessionsSupported()) {
+        if (!module.capabilities().renewableSessionsSupported()) {
             missingRequirements.add("renewableSessionsSupported");
         }
 
@@ -94,13 +93,31 @@ public final class LockRuntimeBuilder {
                 "Backend module does not satisfy runtime requirements: " + module.id() + " missing " + missingRequirements
             );
         }
-
-        return capabilities;
     }
 
-    private void validateUniqueBackendIds(List<BackendModule> availableModules) {
+    private List<ModuleMetadata> validateModules(List<BackendModule> modules) {
+        List<ModuleMetadata> metadata = new ArrayList<>();
+        for (BackendModule module : modules) {
+            if (module == null) {
+                throw new LockConfigurationException("Backend module must not be null");
+            }
+            String id = module.id();
+            if (id == null || id.isBlank()) {
+                throw new LockConfigurationException("Backend module id must not be blank");
+            }
+            BackendCapabilities capabilities = module.capabilities();
+            if (capabilities == null) {
+                throw new LockConfigurationException("Backend module capabilities must not be null: " + id);
+            }
+            metadata.add(new ModuleMetadata(module, id, capabilities));
+        }
+        validateUniqueBackendIds(metadata);
+        return metadata;
+    }
+
+    private void validateUniqueBackendIds(List<ModuleMetadata> availableModules) {
         Map<String, Long> moduleCountsById = availableModules.stream()
-            .collect(Collectors.groupingBy(BackendModule::id, Collectors.counting()));
+            .collect(Collectors.groupingBy(ModuleMetadata::id, Collectors.counting()));
 
         moduleCountsById.entrySet().stream()
             .filter(entry -> entry.getValue() > 1)
