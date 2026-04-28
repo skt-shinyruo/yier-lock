@@ -56,6 +56,30 @@ class DistributedLockAsyncGuardTest {
         });
     }
 
+    @Test
+    void shouldRejectAsyncVoidBeforeInvocation() {
+        contextRunner.run(context -> {
+            AsyncService service = context.getBean(AsyncService.class);
+
+            assertThatThrownBy(() -> service.processAsyncVoid("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("@Async");
+            assertThat(service.wasInvoked()).isFalse();
+        });
+    }
+
+    @Test
+    void objectReturningAsyncValueShouldBeRejectedByExecutorDefenseInDepth() {
+        contextRunner.run(context -> {
+            AsyncService service = context.getBean(AsyncService.class);
+
+            assertThatThrownBy(() -> service.processObjectAsync("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("CompletionStage");
+            assertThat(service.wasInvoked()).isTrue();
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
 
@@ -82,6 +106,18 @@ class DistributedLockAsyncGuardTest {
 
         @DistributedLock(key = "job:#{#p0}")
         public Future<String> processFuture(String jobId) {
+            invoked.set(true);
+            return CompletableFuture.completedFuture("processed-" + jobId);
+        }
+
+        @DistributedLock(key = "job:#{#p0}")
+        @org.springframework.scheduling.annotation.Async
+        public void processAsyncVoid(String jobId) {
+            invoked.set(true);
+        }
+
+        @DistributedLock(key = "job:#{#p0}")
+        public Object processObjectAsync(String jobId) {
             invoked.set(true);
             return CompletableFuture.completedFuture("processed-" + jobId);
         }

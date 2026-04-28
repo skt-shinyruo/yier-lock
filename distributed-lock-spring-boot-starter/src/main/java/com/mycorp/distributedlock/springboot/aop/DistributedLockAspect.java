@@ -13,8 +13,9 @@ import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
-import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.boot.convert.DurationStyle;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -23,10 +24,12 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Future;
 
 @Aspect
+@Order(Ordered.HIGHEST_PRECEDENCE + 100)
 public final class DistributedLockAspect {
 
     private final SynchronousLockExecutor lockExecutor;
     private final LockKeyResolver lockKeyResolver;
+    private final DistributedLockMethodResolver methodResolver = new DistributedLockMethodResolver();
 
     public DistributedLockAspect(
         SynchronousLockExecutor lockExecutor,
@@ -36,10 +39,14 @@ public final class DistributedLockAspect {
         this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
     }
 
-    @Around("@annotation(distributedLock)")
-    public Object around(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) throws Throwable {
-        ensureSynchronousReturnType(joinPoint);
-        LockRequest request = resolveRequest(joinPoint, distributedLock);
+    @Around("@annotation(com.mycorp.distributedlock.springboot.annotation.DistributedLock) || @within(com.mycorp.distributedlock.springboot.annotation.DistributedLock)")
+    public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
+        DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(joinPoint, null);
+        if (resolved.distributedLock() == null) {
+            return joinPoint.proceed();
+        }
+        ensureSynchronous(resolved);
+        LockRequest request = resolveRequest(joinPoint, resolved.distributedLock());
         return lockExecutor.withLock(request, lease -> proceed(joinPoint));
     }
 
@@ -99,12 +106,20 @@ public final class DistributedLockAspect {
         }
     }
 
-    private void ensureSynchronousReturnType(ProceedingJoinPoint joinPoint) {
-        if (!(joinPoint.getSignature() instanceof MethodSignature methodSignature)) {
-            return;
+    private void ensureSynchronous(DistributedLockMethodResolver.ResolvedLockMethod resolved) {
+        if (resolved.asyncAnnotated()) {
+            throw new LockConfigurationException(
+                "@DistributedLock does not support @Async methods: " + resolved.specificMethod()
+            );
         }
 
-        Method method = methodSignature.getMethod();
+        ensureSynchronousReturnType(resolved.proxiedMethod());
+        if (!resolved.specificMethod().equals(resolved.proxiedMethod())) {
+            ensureSynchronousReturnType(resolved.specificMethod());
+        }
+    }
+
+    private void ensureSynchronousReturnType(Method method) {
         Class<?> returnType = method.getReturnType();
         if (CompletionStage.class.isAssignableFrom(returnType)
             || Future.class.isAssignableFrom(returnType)
