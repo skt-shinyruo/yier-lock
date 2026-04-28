@@ -4,22 +4,23 @@ import com.mycorp.distributedlock.observability.LockObservationSink;
 import com.mycorp.distributedlock.observability.ObservedLockRuntime;
 import com.mycorp.distributedlock.runtime.DefaultLockRuntime;
 import com.mycorp.distributedlock.observability.springboot.logging.LoggingLockObservationSink;
-import com.mycorp.distributedlock.observability.springboot.metrics.MicrometerLockObservationSink;
 import com.mycorp.distributedlock.observability.springboot.support.CompositeLockObservationSink;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
-import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @AutoConfiguration(after = com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration.class)
 @EnableConfigurationProperties(DistributedLockObservabilityProperties.class)
@@ -29,12 +30,12 @@ public class DistributedLockObservabilityAutoConfiguration {
     @Bean
     @ConditionalOnMissingBean
     public LockObservationSink lockObservationSink(
-        ObjectProvider<MeterRegistry> meterRegistry,
+        ObjectProvider<MicrometerLockObservationSinkProvider> micrometerSinkProvider,
         DistributedLockObservabilityProperties properties
     ) {
         List<LockObservationSink> sinks = new ArrayList<>();
         if (properties.getMetrics().isEnabled()) {
-            meterRegistry.ifAvailable(registry -> sinks.add(new MicrometerLockObservationSink(registry)));
+            micrometerSinkProvider.ifAvailable(provider -> provider.getIfAvailable().ifPresent(sinks::add));
         }
         if (properties.getLogging().isEnabled()) {
             sinks.add(new LoggingLockObservationSink());
@@ -68,5 +69,22 @@ public class DistributedLockObservabilityAutoConfiguration {
                 );
             }
         };
+    }
+
+    interface MicrometerLockObservationSinkProvider {
+        Optional<LockObservationSink> getIfAvailable();
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(io.micrometer.core.instrument.MeterRegistry.class)
+    static class MicrometerLockObservationConfiguration {
+        @Bean
+        MicrometerLockObservationSinkProvider micrometerLockObservationSinkProvider(
+            ObjectProvider<io.micrometer.core.instrument.MeterRegistry> meterRegistry
+        ) {
+            return () -> meterRegistry.stream()
+                .findFirst()
+                .map(com.mycorp.distributedlock.observability.springboot.metrics.MicrometerLockObservationSink::new);
+        }
     }
 }
