@@ -35,6 +35,9 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
         Method method = signature.getMethod();
         Object[] args = joinPoint.getArgs();
         String[] parameterNames = parameterNameDiscoverer.getParameterNames(method);
+        if (parameterNames == null) {
+            parameterNames = signature.getParameterNames();
+        }
 
         StandardEvaluationContext context = new StandardEvaluationContext();
         context.setVariable("args", args);
