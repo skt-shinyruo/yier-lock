@@ -10,12 +10,16 @@ import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
 import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
+import org.aopalliance.intercept.MethodInterceptor;
+import org.aopalliance.intercept.MethodInvocation;
 import org.aspectj.lang.ProceedingJoinPoint;
-import org.aspectj.lang.annotation.Around;
-import org.aspectj.lang.annotation.Aspect;
+import org.aspectj.lang.Signature;
+import org.aspectj.lang.reflect.MethodSignature;
+import org.aspectj.lang.reflect.SourceLocation;
+import org.aspectj.runtime.internal.AroundClosure;
+import org.springframework.aop.support.StaticMethodMatcherPointcutAdvisor;
 import org.springframework.boot.convert.DurationStyle;
 import org.springframework.core.Ordered;
-import org.springframework.core.annotation.Order;
 
 import java.lang.reflect.Method;
 import java.time.Duration;
@@ -23,9 +27,9 @@ import java.util.Objects;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Future;
 
-@Aspect
-@Order(Ordered.HIGHEST_PRECEDENCE + 100)
-public final class DistributedLockAspect {
+public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvisor implements MethodInterceptor {
+
+    private static final long serialVersionUID = 1L;
 
     private final SynchronousLockExecutor lockExecutor;
     private final LockKeyResolver lockKeyResolver;
@@ -37,28 +41,26 @@ public final class DistributedLockAspect {
     ) {
         this.lockExecutor = Objects.requireNonNull(lockExecutor, "lockExecutor");
         this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
+        setAdvice(this);
     }
 
-    @Around("execution(* *(..))"
-        + " && !within(org.springframework..*)"
-        + " && !@within(org.springframework.context.annotation.Configuration)"
-        + " && !within(com.mycorp.distributedlock.springboot.aop..*)"
-        + " && !within(com.mycorp.distributedlock.springboot.config..*)"
-        + " && !within(com.mycorp.distributedlock.springboot.key..*)"
-        + " && !within(com.mycorp.distributedlock.springboot.integration.DistributedLockAspectIntegrationTest$CapturingBackend)"
-        + " && !within(com.mycorp.distributedlock.springboot.integration.DistributedLockAspectIntegrationTest$CapturingBackendModule)"
-        + " && !within(com.mycorp.distributedlock.api..*)"
-        + " && !within(com.mycorp.distributedlock.core..*)"
-        + " && !within(com.mycorp.distributedlock.runtime..*)"
-        + " && !within(com.mycorp.distributedlock.testkit..*)")
-    public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
-        DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(joinPoint, null);
-        if (resolved.distributedLock() == null) {
-            return joinPoint.proceed();
-        }
+    @Override
+    public int getOrder() {
+        return Ordered.HIGHEST_PRECEDENCE + 100;
+    }
+
+    @Override
+    public boolean matches(Method method, Class<?> targetClass) {
+        return methodResolver.resolve(method, targetClass, null).distributedLock() != null;
+    }
+
+    @Override
+    public Object invoke(MethodInvocation invocation) throws Throwable {
+        Class<?> targetClass = invocation.getThis() == null ? invocation.getMethod().getDeclaringClass() : invocation.getThis().getClass();
+        DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(invocation.getMethod(), targetClass, null);
         ensureSynchronous(resolved);
-        LockRequest request = resolveRequest(joinPoint, resolved.distributedLock());
-        return lockExecutor.withLock(request, lease -> proceed(joinPoint));
+        LockRequest request = resolveRequest(new MethodInvocationProceedingJoinPoint(invocation), resolved.distributedLock());
+        return lockExecutor.withLock(request, lease -> proceed(invocation));
     }
 
     private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) {
@@ -105,9 +107,9 @@ public final class DistributedLockAspect {
         return LeasePolicy.fixed(leaseDuration);
     }
 
-    private Object proceed(ProceedingJoinPoint joinPoint) throws Exception {
+    private Object proceed(MethodInvocation invocation) throws Exception {
         try {
-            return joinPoint.proceed();
+            return invocation.proceed();
         } catch (Exception exception) {
             throw exception;
         } catch (Error error) {
@@ -147,6 +149,132 @@ public final class DistributedLockAspect {
             return publisherType.isAssignableFrom(returnType);
         } catch (ClassNotFoundException exception) {
             return false;
+        }
+    }
+
+    private static final class MethodInvocationProceedingJoinPoint implements ProceedingJoinPoint {
+
+        private final MethodInvocation invocation;
+
+        private MethodInvocationProceedingJoinPoint(MethodInvocation invocation) {
+            this.invocation = invocation;
+        }
+
+        @Override
+        public Object proceed() throws Throwable {
+            return invocation.proceed();
+        }
+
+        @Override
+        public Object proceed(Object[] args) {
+            throw new UnsupportedOperationException("Proceeding with replacement arguments is not supported");
+        }
+
+        @Override
+        public Object getThis() {
+            return invocation.getThis();
+        }
+
+        @Override
+        public Object getTarget() {
+            return invocation.getThis();
+        }
+
+        @Override
+        public Object[] getArgs() {
+            return invocation.getArguments();
+        }
+
+        @Override
+        public Signature getSignature() {
+            return new InvocationMethodSignature(invocation.getMethod());
+        }
+
+        @Override
+        public String toShortString() {
+            return getSignature().toShortString();
+        }
+
+        @Override
+        public String toLongString() {
+            return getSignature().toLongString();
+        }
+
+        @Override
+        public void set$AroundClosure(AroundClosure arc) {
+        }
+
+        @Override
+        public SourceLocation getSourceLocation() {
+            return null;
+        }
+
+        @Override
+        public String getKind() {
+            return ProceedingJoinPoint.METHOD_EXECUTION;
+        }
+
+        @Override
+        public StaticPart getStaticPart() {
+            return null;
+        }
+    }
+
+    private record InvocationMethodSignature(Method method) implements MethodSignature {
+
+        @Override
+        public Method getMethod() {
+            return method;
+        }
+
+        @Override
+        public Class<?> getReturnType() {
+            return method.getReturnType();
+        }
+
+        @Override
+        public Class<?>[] getParameterTypes() {
+            return method.getParameterTypes();
+        }
+
+        @Override
+        public String[] getParameterNames() {
+            return null;
+        }
+
+        @Override
+        public Class<?>[] getExceptionTypes() {
+            return method.getExceptionTypes();
+        }
+
+        @Override
+        public String toShortString() {
+            return method.toGenericString();
+        }
+
+        @Override
+        public String toLongString() {
+            return method.toGenericString();
+        }
+
+        @Override
+        public String getName() {
+            return method.getName();
+        }
+
+        @Override
+        public int getModifiers() {
+            return method.getModifiers();
+        }
+
+        @Override
+        public Class<?> getDeclaringType() {
+            return method.getDeclaringClass();
+        }
+
+        @Override
+        public String getDeclaringTypeName() {
+            return method.getDeclaringClass().getName();
         }
     }
 }

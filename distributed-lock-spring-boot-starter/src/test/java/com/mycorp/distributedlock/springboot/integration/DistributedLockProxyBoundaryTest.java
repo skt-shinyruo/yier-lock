@@ -53,6 +53,14 @@ public class DistributedLockProxyBoundaryTest {
         });
     }
 
+    @Test
+    void unannotatedFinalApplicationBeanShouldNotBecomeProxyCandidate() {
+        contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
+            UnannotatedFinalApplicationService service = context.getBean(UnannotatedFinalApplicationService.class);
+            assertThat(service.process("42")).isEqualTo("unlocked-42");
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
         @Bean BackendModule inMemoryBackendModule() { return new InMemoryBackendModule("in-memory"); }
@@ -60,6 +68,7 @@ public class DistributedLockProxyBoundaryTest {
         @Bean ImplementationLockedServiceImpl implementationLockedService() { return new ImplementationLockedServiceImpl(); }
         @Bean CglibLockedService cglibLockedService() { return new CglibLockedService(); }
         @Bean ApplicationBackendModule applicationBackendModule() { return new ApplicationBackendModule(); }
+        @Bean UnannotatedFinalApplicationService unannotatedFinalApplicationService() { return new UnannotatedFinalApplicationService(); }
     }
 
     public interface InterfaceLockedService {
@@ -93,6 +102,12 @@ public class DistributedLockProxyBoundaryTest {
         @DistributedLock(key = "application-backend-module:#{#p0}")
         public String process(String id) {
             return "application-backend-module-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        }
+    }
+
+    static final class UnannotatedFinalApplicationService {
+        public String process(String id) {
+            return "unlocked-" + id;
         }
     }
 }
