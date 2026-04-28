@@ -54,8 +54,8 @@ class RedisBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("distributed.lock.redis.uri")
-                    .hasStackTraceContaining("must not be blank");
+                    .hasStackTraceContaining("BindValidationException")
+                    .hasStackTraceContaining("distributed.lock.redis.uri");
             });
     }
 
@@ -70,8 +70,8 @@ class RedisBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("distributed.lock.redis.leaseTime")
-                    .hasStackTraceContaining("must not be null");
+                    .hasStackTraceContaining("BindValidationException")
+                    .hasStackTraceContaining("distributed.lock.redis.leaseTime");
             });
     }
 
@@ -110,9 +110,7 @@ class RedisBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserRedisBackendOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=redis",
-                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
-                "distributed.lock.redis.lease-time=45s"
+                "distributed.lock.backend=redis"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(BackendModule.class);
@@ -127,9 +125,7 @@ class RedisBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserLockRuntimeOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=redis",
-                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
-                "distributed.lock.redis.lease-time=45s"
+                "distributed.lock.backend=redis"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
