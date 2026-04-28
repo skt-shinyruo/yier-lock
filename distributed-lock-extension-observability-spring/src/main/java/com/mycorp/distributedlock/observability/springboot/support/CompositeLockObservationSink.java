@@ -21,14 +21,14 @@ public final class CompositeLockObservationSink implements LockObservationSink {
         delegates.forEach(delegate -> {
             try {
                 delegate.record(event);
-            } catch (RuntimeException exception) {
+            } catch (Throwable throwable) {
                 logger.warn(
                     "Lock observation delegate failed surface={} operation={} outcome={} delegate={}",
                     event.surface(),
                     event.operation(),
                     event.outcome(),
                     delegate.getClass().getSimpleName(),
-                    exception
+                    throwable
                 );
             }
         });
