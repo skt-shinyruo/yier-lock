@@ -39,7 +39,18 @@ public final class DistributedLockAspect {
         this.lockKeyResolver = Objects.requireNonNull(lockKeyResolver, "lockKeyResolver");
     }
 
-    @Around("@annotation(com.mycorp.distributedlock.springboot.annotation.DistributedLock) || @within(com.mycorp.distributedlock.springboot.annotation.DistributedLock)")
+    @Around("execution(* *(..))"
+        + " && !within(org.springframework..*)"
+        + " && !@within(org.springframework.context.annotation.Configuration)"
+        + " && !within(*..*Backend)"
+        + " && !within(*..*BackendModule)"
+        + " && !within(com.mycorp.distributedlock.springboot.aop..*)"
+        + " && !within(com.mycorp.distributedlock.springboot.config..*)"
+        + " && !within(com.mycorp.distributedlock.springboot.key..*)"
+        + " && !within(com.mycorp.distributedlock.api..*)"
+        + " && !within(com.mycorp.distributedlock.core..*)"
+        + " && !within(com.mycorp.distributedlock.runtime..*)"
+        + " && !within(com.mycorp.distributedlock.testkit..*)")
     public Object around(ProceedingJoinPoint joinPoint) throws Throwable {
         DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(joinPoint, null);
         if (resolved.distributedLock() == null) {
