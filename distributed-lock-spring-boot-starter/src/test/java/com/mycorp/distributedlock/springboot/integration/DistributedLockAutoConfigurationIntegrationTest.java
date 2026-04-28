@@ -53,8 +53,8 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("distributed.lock.backend")
-                    .hasStackTraceContaining("must not be blank");
+                    .hasStackTraceContaining("BindValidationException")
+                    .hasStackTraceContaining("distributed.lock.backend");
             });
     }
 
@@ -68,8 +68,8 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("distributed.lock.backend")
-                    .hasStackTraceContaining("must not be blank");
+                    .hasStackTraceContaining("BindValidationException")
+                    .hasStackTraceContaining("distributed.lock.backend");
             });
     }
 
@@ -134,6 +134,17 @@ class DistributedLockAutoConfigurationIntegrationTest {
             });
     }
 
+    @Test
+    void shouldBackOffForUserSuppliedLockRuntimeWithoutBackendProperty() {
+        emptyContextRunner
+            .withUserConfiguration(UserLockRuntimeConfiguration.class)
+            .withPropertyValues("distributed.lock.enabled=true")
+            .run(context -> {
+                assertThat(context).hasSingleBean(LockRuntime.class);
+                assertThat(context.getBean(LockRuntime.class)).isInstanceOf(StubLockRuntime.class);
+            });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestBackendConfiguration {
 
@@ -169,6 +180,32 @@ class DistributedLockAutoConfigurationIntegrationTest {
                     };
                 }
             };
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class UserLockRuntimeConfiguration {
+
+        @Bean
+        LockRuntime userLockRuntime() {
+            return new StubLockRuntime();
+        }
+    }
+
+    private static final class StubLockRuntime implements LockRuntime {
+
+        @Override
+        public LockClient lockClient() {
+            return null;
+        }
+
+        @Override
+        public SynchronousLockExecutor synchronousLockExecutor() {
+            return null;
+        }
+
+        @Override
+        public void close() {
         }
     }
 }
