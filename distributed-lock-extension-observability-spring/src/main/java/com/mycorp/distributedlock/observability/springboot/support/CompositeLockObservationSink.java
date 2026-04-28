@@ -22,6 +22,9 @@ public final class CompositeLockObservationSink implements LockObservationSink {
             try {
                 delegate.record(event);
             } catch (Throwable throwable) {
+                if (throwable instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
                 logger.warn(
                     "Lock observation delegate failed surface={} operation={} outcome={} delegate={}",
                     event.surface(),
