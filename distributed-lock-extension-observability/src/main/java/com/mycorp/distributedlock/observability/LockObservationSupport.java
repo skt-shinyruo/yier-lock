@@ -49,6 +49,9 @@ final class LockObservationSupport {
         try {
             sink.record(event);
         } catch (Throwable throwable) {
+            if (throwable instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
             logger.warn(
                 "Dropping lock observation event surface={} operation={} outcome={}",
                 event.surface(),

@@ -9,6 +9,7 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -19,6 +20,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ObservedLockThrowableTest {
+
+    @AfterEach
+    void clearInterruptedFlag() {
+        Thread.interrupted();
+    }
 
     @Test
     void executorShouldRecordAndRethrowAssertionError() {
@@ -81,7 +87,31 @@ class ObservedLockThrowableTest {
             .isSameAs(error);
     }
 
+    @Test
+    void executorShouldRestoreInterruptFlagWhenSinkSneakyThrowsInterruptedException() throws Exception {
+        Thread.interrupted();
+        SynchronousLockExecutor delegate = new SynchronousLockExecutor() {
+            @Override
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(null);
+            }
+        };
+        ObservedLockExecutor executor = new ObservedLockExecutor(delegate, event -> {
+            sneakyThrow(new InterruptedException("sink interrupted"));
+        }, "test", false);
+
+        String result = executor.withLock(request(), lease -> "ok");
+
+        assertThat(result).isEqualTo("ok");
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+    }
+
     private static LockRequest request() {
         return new LockRequest(new LockKey("observed:error"), LockMode.MUTEX, WaitPolicy.timed(Duration.ofMillis(10)));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <E extends Throwable> void sneakyThrow(Throwable throwable) throws E {
+        throw (E) throwable;
     }
 }
