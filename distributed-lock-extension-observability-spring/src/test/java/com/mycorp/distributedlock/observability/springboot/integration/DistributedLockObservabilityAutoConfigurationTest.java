@@ -21,6 +21,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
+import org.springframework.boot.test.context.FilteredClassLoader;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -96,6 +97,27 @@ class DistributedLockObservabilityAutoConfigurationTest {
     }
 
     @Test
+    void shouldLoadWithLoggingOnlyWhenMicrometerIsAbsent() {
+        new ApplicationContextRunner()
+            .withClassLoader(new FilteredClassLoader("io.micrometer"))
+            .withConfiguration(AutoConfigurations.of(
+                AopAutoConfiguration.class,
+                DistributedLockAutoConfiguration.class,
+                DistributedLockObservabilityAutoConfiguration.class
+            ))
+            .withUserConfiguration(LoggingOnlyTestConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=in-memory",
+                "distributed.lock.observability.enabled=true"
+            )
+            .run(context -> {
+                assertThat(context).hasNotFailed();
+                assertThat(context.getBean(LockRuntime.class)).isNotInstanceOf(DefaultLockRuntime.class);
+            });
+    }
+
+    @Test
     void shouldKeepMetricsLowCardinalityWhenLockKeyLoggingIsEnabled() {
         contextRunner
             .withPropertyValues("distributed.lock.observability.include-lock-key-in-logs=true")
@@ -124,6 +146,14 @@ class DistributedLockObservabilityAutoConfigurationTest {
         @Bean
         SimpleMeterRegistry meterRegistry() {
             return new SimpleMeterRegistry();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class LoggingOnlyTestConfiguration {
+        @Bean
+        BackendModule inMemoryBackendModule() {
+            return new InMemoryBackendModule("in-memory");
         }
     }
 
