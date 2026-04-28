@@ -74,6 +74,10 @@ mvn -pl distributed-lock-extension-observability-spring -am test \
 
 # 全仓回归
 mvn test
+
+# Spring Boot compatibility checks
+mvn test -Dspring-boot.version=3.3.13
+mvn test -Dspring-boot.version=3.4.5
 ```
 
 ## 说明
