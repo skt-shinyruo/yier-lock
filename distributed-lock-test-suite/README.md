@@ -28,10 +28,17 @@
 - `DistributedLockAutoConfigurationIntegrationTest`
 - `DistributedLockAspectIntegrationTest`
 - `DistributedLockAsyncGuardTest`
+- `DistributedLockProxyBoundaryTest`
+- `SpelLockKeyResolverTest`
 - `RedisBackendModuleAutoConfigurationTest`
 - `ZooKeeperBackendModuleAutoConfigurationTest`
 - `RedisStarterIntegrationTest`
 - `ZooKeeperStarterIntegrationTest`
+- `ObservedLockSessionTest`
+- `ObservedLockExecutorTest`
+- `ObservedLockThrowableTest`
+- `CompositeLockObservationSinkTest`
+- `DistributedLockObservabilityAutoConfigurationTest`
 
 ## 推荐命令
 
@@ -43,7 +50,7 @@ mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
 
 # runtime / starter / backend Spring 模块验证
 mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter,distributed-lock-redis-spring-boot-autoconfigure,distributed-lock-zookeeper-spring-boot-autoconfigure -am test \
-  -Dtest=LockRuntimeBuilderTest,DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,DistributedLockAsyncGuardTest,RedisBackendModuleAutoConfigurationTest,ZooKeeperBackendModuleAutoConfigurationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
+  -Dtest=LockRuntimeBuilderTest,DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,DistributedLockAsyncGuardTest,DistributedLockProxyBoundaryTest,SpelLockKeyResolverTest,RedisBackendModuleAutoConfigurationTest,ZooKeeperBackendModuleAutoConfigurationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # Redis adapter 验证
@@ -58,11 +65,11 @@ mvn -pl distributed-lock-zookeeper -am test \
 
 # observability extension 验证
 mvn -pl distributed-lock-extension-observability -am test \
-  -Dtest=ObservedLockSessionTest,ObservedLockExecutorTest \
+  -Dtest=ObservedLockSessionTest,ObservedLockExecutorTest,ObservedLockThrowableTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 mvn -pl distributed-lock-extension-observability-spring -am test \
-  -Dtest=DistributedLockObservabilityAutoConfigurationTest \
+  -Dtest=CompositeLockObservationSinkTest,DistributedLockObservabilityAutoConfigurationTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # 全仓回归
