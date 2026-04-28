@@ -35,18 +35,18 @@ public final class ObservedLockExecutor implements SynchronousLockExecutor {
                 null
             ));
             return result;
-        } catch (Exception exception) {
+        } catch (Throwable throwable) {
             LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "executor",
                 "scope",
-                LockObservationSupport.scopeOutcomeFor(exception),
+                LockObservationSupport.scopeOutcomeFor(throwable),
                 request.mode(),
                 LockObservationSupport.keyFor(request, includeKey),
                 LockObservationSupport.durationSince(startedNanos),
-                exception
+                throwable
             ));
-            throw exception;
+            throw throwable;
         }
     }
 }
