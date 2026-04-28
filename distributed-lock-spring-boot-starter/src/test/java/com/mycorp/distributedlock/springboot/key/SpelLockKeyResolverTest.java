@@ -4,7 +4,9 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.reflect.MethodSignature;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import org.springframework.core.ParameterNameDiscoverer;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,6 +57,25 @@ class SpelLockKeyResolverTest {
     }
 
     @Test
+    void shouldExposeParameterNameVariablesFromParameterNameDiscoverer() throws Exception {
+        SpelLockKeyResolver resolver = new SpelLockKeyResolver(new ParameterNameDiscoverer() {
+            @Override
+            public String[] getParameterNames(Method method) {
+                return new String[] {"orderId", "region"};
+            }
+
+            @Override
+            public String[] getParameterNames(Constructor<?> constructor) {
+                return null;
+            }
+        });
+        ProceedingJoinPoint joinPoint = joinPoint(null, "42", "cn");
+
+        assertThat(resolver.resolveKey(joinPoint, "#{#orderId}:#{#region}"))
+            .isEqualTo("42:cn");
+    }
+
+    @Test
     void shouldRejectNullTemplateResult() throws Exception {
         ProceedingJoinPoint joinPoint = joinPoint("42", "cn");
 
@@ -73,10 +94,14 @@ class SpelLockKeyResolverTest {
     }
 
     private ProceedingJoinPoint joinPoint(Object... args) throws Exception {
+        return joinPoint(new String[] {"orderId", "region"}, args);
+    }
+
+    private ProceedingJoinPoint joinPoint(String[] signatureParameterNames, Object... args) throws Exception {
         Method method = TestTarget.class.getDeclaredMethod("process", String.class, String.class);
         MethodSignature signature = Mockito.mock(MethodSignature.class);
         Mockito.when(signature.getMethod()).thenReturn(method);
-        Mockito.when(signature.getParameterNames()).thenReturn(new String[] {"orderId", "region"});
+        Mockito.when(signature.getParameterNames()).thenReturn(signatureParameterNames);
 
         TestTarget target = new TestTarget();
         ProceedingJoinPoint joinPoint = Mockito.mock(ProceedingJoinPoint.class);

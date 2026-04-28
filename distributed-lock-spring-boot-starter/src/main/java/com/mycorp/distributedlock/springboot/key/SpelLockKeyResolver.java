@@ -16,8 +16,16 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
     private static final ParserContext TEMPLATE_CONTEXT = ParserContext.TEMPLATE_EXPRESSION;
 
     private final ExpressionParser parser = new SpelExpressionParser();
-    private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
+    private final ParameterNameDiscoverer parameterNameDiscoverer;
     private final java.util.concurrent.ConcurrentMap<ExpressionKey, org.springframework.expression.Expression> expressionCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public SpelLockKeyResolver() {
+        this(new DefaultParameterNameDiscoverer());
+    }
+
+    SpelLockKeyResolver(ParameterNameDiscoverer parameterNameDiscoverer) {
+        this.parameterNameDiscoverer = parameterNameDiscoverer;
+    }
 
     private record ExpressionKey(Method method, String expression) {
     }
