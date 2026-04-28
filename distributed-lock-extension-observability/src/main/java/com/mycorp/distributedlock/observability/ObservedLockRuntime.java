@@ -51,7 +51,7 @@ public final class ObservedLockRuntime implements LockRuntime {
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         delegate.close();
     }
 }
