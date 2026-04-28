@@ -27,6 +27,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class LockRuntimeBuilderTest {
 
     @Test
+    void runtimeShouldExposeNarrowCloseOperation() throws Exception {
+        assertThat(LockRuntime.class.getMethod("close").getExceptionTypes()).isEmpty();
+    }
+
+    @Test
     void builderShouldFailWhenNoBackendIsConfiguredEvenIfOneModuleExists() {
         LockRuntimeBuilder builder = LockRuntimeBuilder.create()
             .backendModules(List.of(new StubBackendModule("redis")));
@@ -107,6 +112,54 @@ class LockRuntimeBuilderTest {
             .hasMessageContaining("redis")
             .hasMessageContaining("mutexSupported");
         assertThat(module.createBackendAttempted()).isFalse();
+    }
+
+    @Test
+    void builderShouldRejectNullBackendModuleEntries() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(java.util.Arrays.asList(new StubBackendModule("redis"), null));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Backend module must not be null");
+    }
+
+    @Test
+    void builderShouldRejectNullBackendModuleId() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule(null)));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Backend module id must not be blank");
+    }
+
+    @Test
+    void builderShouldRejectBlankBackendModuleId() {
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendModules(List.of(new StubBackendModule("   ")));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Backend module id must not be blank");
+    }
+
+    @Test
+    void builderShouldRejectNullBackendFromSelectedModule() {
+        BackendModule module = new StubBackendModule("redis") {
+            @Override
+            public LockBackend createBackend() {
+                return null;
+            }
+        };
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create().backend("redis").backendModules(List.of(module));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("Backend module returned null backend");
     }
 
     @Test
@@ -222,7 +275,7 @@ class LockRuntimeBuilderTest {
         );
     }
 
-    private static final class StubBackendModule implements BackendModule {
+    private static class StubBackendModule implements BackendModule {
         private final String id;
         private final BackendCapabilities capabilities;
 
