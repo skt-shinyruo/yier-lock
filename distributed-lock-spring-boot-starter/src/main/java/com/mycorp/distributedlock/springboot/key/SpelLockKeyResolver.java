@@ -17,6 +17,10 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
 
     private final ExpressionParser parser = new SpelExpressionParser();
     private final ParameterNameDiscoverer parameterNameDiscoverer = new DefaultParameterNameDiscoverer();
+    private final java.util.concurrent.ConcurrentMap<ExpressionKey, org.springframework.expression.Expression> expressionCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record ExpressionKey(Method method, String expression) {
+    }
 
     @Override
     public String resolveKey(ProceedingJoinPoint joinPoint, String expression) {
@@ -34,6 +38,9 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
 
         StandardEvaluationContext context = new StandardEvaluationContext();
         context.setVariable("args", args);
+        context.setVariable("method", method);
+        context.setVariable("target", joinPoint.getTarget());
+        context.setVariable("targetClass", joinPoint.getTarget() == null ? method.getDeclaringClass() : joinPoint.getTarget().getClass());
         for (int index = 0; index < args.length; index++) {
             context.setVariable("p" + index, args[index]);
             context.setVariable("a" + index, args[index]);
@@ -42,7 +49,16 @@ public final class SpelLockKeyResolver implements LockKeyResolver {
             }
         }
 
-        Object value = parser.parseExpression(expression, TEMPLATE_CONTEXT).getValue(context);
-        return value == null ? "null" : value.toString();
+        Object value = expressionCache.computeIfAbsent(new ExpressionKey(method, expression), key ->
+            parser.parseExpression(key.expression(), TEMPLATE_CONTEXT)
+        ).getValue(context);
+        if (value == null) {
+            throw new IllegalArgumentException("Lock key expression resolved to null: " + expression + " on " + method);
+        }
+        String key = value.toString();
+        if (key.isBlank()) {
+            throw new IllegalArgumentException("Lock key expression resolved to blank: " + expression + " on " + method);
+        }
+        return key;
     }
 }
