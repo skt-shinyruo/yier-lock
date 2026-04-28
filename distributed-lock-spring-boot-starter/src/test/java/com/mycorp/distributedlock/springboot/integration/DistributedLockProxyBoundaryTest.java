@@ -30,6 +30,14 @@ public class DistributedLockProxyBoundaryTest {
     }
 
     @Test
+    void cglibProxyShouldHonorInterfaceAnnotation() {
+        contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
+            InterfaceLockedServiceImpl service = context.getBean(InterfaceLockedServiceImpl.class);
+            assertThat(service.process("42")).startsWith("interface-42-token-");
+        });
+    }
+
+    @Test
     void jdkProxyShouldHonorImplementationAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=false").run(context -> {
             ImplementationLockedService service = context.getBean(ImplementationLockedService.class);
