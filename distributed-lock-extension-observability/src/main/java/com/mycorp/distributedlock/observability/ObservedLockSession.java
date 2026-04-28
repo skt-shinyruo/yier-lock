@@ -48,18 +48,18 @@ public final class ObservedLockSession implements LockSession {
                 exception
             ));
             throw exception;
-        } catch (RuntimeException exception) {
+        } catch (Throwable throwable) {
             LockObservationSupport.publishSafely(sink, new LockObservationEvent(
                 backendId,
                 "client",
                 "acquire",
-                LockObservationSupport.acquireOutcomeFor(exception),
+                LockObservationSupport.acquireOutcomeFor(throwable),
                 request.mode(),
                 LockObservationSupport.keyFor(request, includeKey),
                 LockObservationSupport.durationSince(startedNanos),
-                exception
+                throwable
             ));
-            throw exception;
+            throw throwable;
         }
     }
 
