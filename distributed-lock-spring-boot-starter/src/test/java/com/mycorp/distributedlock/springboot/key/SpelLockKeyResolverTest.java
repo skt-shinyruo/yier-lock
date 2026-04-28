@@ -47,6 +47,14 @@ class SpelLockKeyResolverTest {
     }
 
     @Test
+    void shouldExposeArgumentAliasAndParameterNameVariables() throws Exception {
+        ProceedingJoinPoint joinPoint = joinPoint("42", "cn");
+
+        assertThat(resolver.resolveKey(joinPoint, "#{#args[0]}:#{#a0}:#{#a1}:#{#orderId}:#{#region}"))
+            .isEqualTo("42:42:cn:42:cn");
+    }
+
+    @Test
     void shouldRejectNullTemplateResult() throws Exception {
         ProceedingJoinPoint joinPoint = joinPoint("42", "cn");
 
@@ -68,6 +76,7 @@ class SpelLockKeyResolverTest {
         Method method = TestTarget.class.getDeclaredMethod("process", String.class, String.class);
         MethodSignature signature = Mockito.mock(MethodSignature.class);
         Mockito.when(signature.getMethod()).thenReturn(method);
+        Mockito.when(signature.getParameterNames()).thenReturn(new String[] {"orderId", "region"});
 
         TestTarget target = new TestTarget();
         ProceedingJoinPoint joinPoint = Mockito.mock(ProceedingJoinPoint.class);
