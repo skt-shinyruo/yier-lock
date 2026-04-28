@@ -54,7 +54,8 @@ class RedisBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("distributed.lock.redis.uri must be configured");
+                    .hasStackTraceContaining("distributed.lock.redis.uri")
+                    .hasStackTraceContaining("must not be blank");
             });
     }
 
@@ -69,7 +70,8 @@ class RedisBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("distributed.lock.redis.lease-time must be configured");
+                    .hasStackTraceContaining("distributed.lock.redis.leaseTime")
+                    .hasStackTraceContaining("must not be null");
             });
     }
 
@@ -108,7 +110,9 @@ class RedisBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserRedisBackendOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=redis"
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
+                "distributed.lock.redis.lease-time=45s"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(BackendModule.class);
@@ -123,7 +127,9 @@ class RedisBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserLockRuntimeOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=redis"
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
+                "distributed.lock.redis.lease-time=45s"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
