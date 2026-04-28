@@ -48,13 +48,13 @@ final class LockObservationSupport {
     static void publishSafely(LockObservationSink sink, LockObservationEvent event) {
         try {
             sink.record(event);
-        } catch (RuntimeException exception) {
+        } catch (Throwable throwable) {
             logger.warn(
                 "Dropping lock observation event surface={} operation={} outcome={}",
                 event.surface(),
                 event.operation(),
                 event.outcome(),
-                exception
+                throwable
             );
         }
     }
