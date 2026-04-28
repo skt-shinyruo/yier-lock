@@ -10,6 +10,7 @@ import java.time.Duration;
 public class DistributedLockProperties {
 
     private boolean enabled = true;
+    @jakarta.validation.constraints.NotBlank
     private String backend;
     private final Spring spring = new Spring();
 

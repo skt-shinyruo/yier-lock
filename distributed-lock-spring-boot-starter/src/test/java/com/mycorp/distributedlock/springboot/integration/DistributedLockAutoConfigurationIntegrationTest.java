@@ -53,7 +53,8 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("backend id must be configured");
+                    .hasStackTraceContaining("distributed.lock.backend")
+                    .hasStackTraceContaining("must not be blank");
             });
     }
 
@@ -67,7 +68,8 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("backend id must be configured");
+                    .hasStackTraceContaining("distributed.lock.backend")
+                    .hasStackTraceContaining("must not be blank");
             });
     }
 

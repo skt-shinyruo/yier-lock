@@ -9,7 +9,9 @@ import java.time.Duration;
 @ConfigurationProperties(prefix = "distributed.lock.redis")
 public class RedisDistributedLockProperties {
 
+    @jakarta.validation.constraints.NotBlank
     private String uri;
+    @jakarta.validation.constraints.NotNull
     private Duration leaseTime;
 
     public String getUri() {

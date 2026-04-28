@@ -52,7 +52,8 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("distributed.lock.zookeeper.connect-string must be configured");
+                    .hasStackTraceContaining("distributed.lock.zookeeper.connectString")
+                    .hasStackTraceContaining("must not be blank");
             });
     }
 
@@ -67,7 +68,8 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("distributed.lock.zookeeper.base-path must be configured");
+                    .hasStackTraceContaining("distributed.lock.zookeeper.basePath")
+                    .hasStackTraceContaining("must not be blank");
             });
     }
 
@@ -90,7 +92,9 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserZooKeeperBackendOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=zookeeper"
+                "distributed.lock.backend=zookeeper",
+                "distributed.lock.zookeeper.connect-string=127.0.0.1:2281",
+                "distributed.lock.zookeeper.base-path=/test-locks"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(BackendModule.class);
@@ -105,7 +109,9 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             .withUserConfiguration(UserLockRuntimeOverrideConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
-                "distributed.lock.backend=zookeeper"
+                "distributed.lock.backend=zookeeper",
+                "distributed.lock.zookeeper.connect-string=127.0.0.1:2281",
+                "distributed.lock.zookeeper.base-path=/test-locks"
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);

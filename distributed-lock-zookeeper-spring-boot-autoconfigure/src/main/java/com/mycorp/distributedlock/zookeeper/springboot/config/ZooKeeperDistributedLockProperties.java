@@ -7,7 +7,9 @@ import org.springframework.validation.annotation.Validated;
 @ConfigurationProperties(prefix = "distributed.lock.zookeeper")
 public class ZooKeeperDistributedLockProperties {
 
+    @jakarta.validation.constraints.NotBlank
     private String connectString;
+    @jakarta.validation.constraints.NotBlank
     private String basePath;
 
     public String getConnectString() {
