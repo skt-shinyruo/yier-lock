@@ -60,7 +60,8 @@ Raw lock keys stay out of metrics by default; `distributed.lock.observability.in
 ## Requirements
 
 - Java 17+
-- Spring Boot 3.x
+- Spring Boot 3.2.x is the primary tested line
+- Spring Boot 3.3.x and 3.4.x are compatibility targets verified by overriding `spring-boot.version` during regression
 - one backend Spring auto-config module on the classpath, or an explicit backend module bean
 - explicit `distributed.lock.backend` selection whenever `distributed.lock.enabled=true`
 
