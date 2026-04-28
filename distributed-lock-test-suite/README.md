@@ -8,15 +8,23 @@
 - `LockBackendSurfaceTest`
 - `DefaultLockClientTest`
 - `DefaultSynchronousLockExecutorTest`
+- `SessionBoundLockLeaseConcurrencyTest`
 - `LockRuntimeBuilderTest`
 - `InMemoryLockClientContractTest`
+- `InMemoryLockBackendThreadOwnershipTest`
+- `FencedResourceConcurrencyTest`
 - `RedisBackendModuleTest`
 - `RedisLockBackendContractTest`
 - `RedisLeaseRenewalTest`
 - `RedisOwnershipLossTest`
+- `RedisReadWriteWriterPreferenceTest`
+- `RedisKeyStrategyTest`
 - `ZooKeeperBackendModuleTest`
 - `ZooKeeperLockBackendContractTest`
 - `ZooKeeperSessionLossTest`
+- `ZooKeeperAcquireWaitLifecycleTest`
+- `ZooKeeperPathAndQueueValidationTest`
+- `ZooKeeperFencingOwnershipRecheckTest`
 - `DistributedLockAutoConfigurationIntegrationTest`
 - `DistributedLockAspectIntegrationTest`
 - `DistributedLockAsyncGuardTest`
@@ -30,7 +38,7 @@
 ```bash
 # core / testkit 主线验证
 mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
-  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultSynchronousLockExecutorTest,InMemoryLockClientContractTest \
+  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultSynchronousLockExecutorTest,SessionBoundLockLeaseConcurrencyTest,InMemoryLockClientContractTest,InMemoryLockBackendThreadOwnershipTest,FencedResourceConcurrencyTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # runtime / starter / backend Spring 模块验证
@@ -40,12 +48,12 @@ mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter,distribute
 
 # Redis adapter 验证
 mvn -pl distributed-lock-redis -am test \
-  -Dtest=RedisBackendModuleTest,RedisLockBackendContractTest,RedisLeaseRenewalTest,RedisOwnershipLossTest \
+  -Dtest=RedisBackendModuleTest,RedisLockBackendContractTest,RedisLeaseRenewalTest,RedisOwnershipLossTest,RedisReadWriteWriterPreferenceTest,RedisKeyStrategyTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # ZooKeeper adapter 验证
 mvn -pl distributed-lock-zookeeper -am test \
-  -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest \
+  -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest,ZooKeeperAcquireWaitLifecycleTest,ZooKeeperPathAndQueueValidationTest,ZooKeeperFencingOwnershipRecheckTest \
   -Dsurefire.failIfNoSpecifiedTests=false
 
 # observability extension 验证

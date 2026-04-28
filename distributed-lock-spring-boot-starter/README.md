@@ -126,7 +126,7 @@ Lock keys follow Spring template-expression semantics. Literal keys such as `ord
 
 Lock modes protect the same resource identity for a given key. `MUTEX` and `WRITE` are exclusive and block all `MUTEX`, `READ`, and `WRITE` acquisitions for the same key. `READ` can coexist only with other `READ` leases for the same key. Use distinct lock keys when you intentionally need independent lock families.
 
-Backend progress semantics are backend-specific. Redis read/write locks are writer-preferred once a writer has registered pending intent, but they are not FIFO fair: later readers wait while existing readers drain, and multiple waiting writers are resolved by Redis polling and script execution order rather than a strict queue.
+Backend progress semantics are backend-specific. Redis read/write locks are exclusive-preferred once a `WRITE` or `MUTEX` acquisition has registered pending intent, but they are not FIFO fair: later readers wait while existing readers drain, and multiple waiting exclusive acquisitions are resolved by Redis polling and script execution order rather than a strict queue. ZooKeeper uses fail-safe session semantics: `SUSPENDED` and `LOST` Curator states both make the lock session terminally lost because ownership cannot be proven while disconnected.
 
 `@DistributedLock` is intentionally synchronous-only. Methods returning `CompletionStage`, reactive publishers, or other async boundaries fail fast with `LockConfigurationException`.
 
