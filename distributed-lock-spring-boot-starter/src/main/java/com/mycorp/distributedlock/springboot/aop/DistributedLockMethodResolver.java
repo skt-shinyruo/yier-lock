@@ -9,8 +9,9 @@ import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.scheduling.annotation.Async;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Optional;
+import java.util.List;
 
 final class DistributedLockMethodResolver {
 
@@ -27,9 +28,9 @@ final class DistributedLockMethodResolver {
         if (annotation == null) {
             annotation = AnnotatedElementUtils.findMergedAnnotation(proxiedMethod, DistributedLock.class);
         }
-        Optional<Method> interfaceMethod = findInterfaceMethod(targetClass, specificMethod);
-        if (annotation == null && interfaceMethod.isPresent()) {
-            annotation = AnnotatedElementUtils.findMergedAnnotation(interfaceMethod.get(), DistributedLock.class);
+        List<Method> interfaceMethods = findInterfaceMethods(targetClass, specificMethod);
+        if (annotation == null) {
+            annotation = findInterfaceAnnotation(interfaceMethods);
         }
         if (annotation == null) {
             annotation = pointcutAnnotation;
@@ -39,41 +40,80 @@ final class DistributedLockMethodResolver {
             specificMethod,
             targetClass,
             annotation,
-            hasAsync(proxiedMethod, specificMethod, targetClass, interfaceMethod.orElse(null))
+            hasAsync(proxiedMethod, specificMethod, targetClass, interfaceMethods)
         );
     }
 
-    private Optional<Method> findInterfaceMethod(Class<?> targetClass, Method specificMethod) {
-        for (Class<?> interfaceType : targetClass.getInterfaces()) {
-            Optional<Method> method = findMethodOnInterface(interfaceType, specificMethod);
-            if (method.isPresent()) {
-                return method;
+    private DistributedLock findInterfaceAnnotation(List<Method> interfaceMethods) {
+        for (Method interfaceMethod : interfaceMethods) {
+            DistributedLock annotation = AnnotatedElementUtils.findMergedAnnotation(interfaceMethod, DistributedLock.class);
+            if (annotation != null) {
+                return annotation;
             }
+        }
+        return null;
+    }
+
+    private List<Method> findInterfaceMethods(Class<?> targetClass, Method specificMethod) {
+        List<Method> methods = new ArrayList<>();
+        collectInterfaceMethods(targetClass, specificMethod, methods);
+        return methods;
+    }
+
+    private void collectInterfaceMethods(Class<?> targetClass, Method specificMethod, List<Method> methods) {
+        for (Class<?> interfaceType : targetClass.getInterfaces()) {
+            collectMethodsOnInterface(interfaceType, specificMethod, methods);
         }
         Class<?> superclass = targetClass.getSuperclass();
-        if (superclass == null || Object.class.equals(superclass)) {
-            return Optional.empty();
+        if (superclass != null && !Object.class.equals(superclass)) {
+            collectInterfaceMethods(superclass, specificMethod, methods);
         }
-        return findInterfaceMethod(superclass, specificMethod);
     }
 
-    private Optional<Method> findMethodOnInterface(Class<?> interfaceType, Method specificMethod) {
+    private void collectMethodsOnInterface(Class<?> interfaceType, Method specificMethod, List<Method> methods) {
         for (Method candidate : interfaceType.getMethods()) {
-            if (candidate.getName().equals(specificMethod.getName())
-                && Arrays.equals(candidate.getParameterTypes(), specificMethod.getParameterTypes())) {
-                return Optional.of(candidate);
+            if (matches(candidate, specificMethod)) {
+                methods.add(candidate);
             }
         }
-        return Optional.empty();
     }
 
-    private boolean hasAsync(Method proxiedMethod, Method specificMethod, Class<?> targetClass, Method interfaceMethod) {
+    private boolean matches(Method candidate, Method specificMethod) {
+        if (!candidate.getName().equals(specificMethod.getName())) {
+            return false;
+        }
+        Class<?>[] candidateTypes = candidate.getParameterTypes();
+        Class<?>[] specificTypes = specificMethod.getParameterTypes();
+        if (candidateTypes.length != specificTypes.length) {
+            return false;
+        }
+        if (Arrays.equals(candidateTypes, specificTypes)) {
+            return true;
+        }
+        for (int index = 0; index < candidateTypes.length; index++) {
+            if (!candidateTypes[index].isAssignableFrom(specificTypes[index])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean hasAsync(Method proxiedMethod, Method specificMethod, Class<?> targetClass, List<Method> interfaceMethods) {
         return AnnotatedElementUtils.hasAnnotation(proxiedMethod, Async.class)
             || AnnotatedElementUtils.hasAnnotation(proxiedMethod.getDeclaringClass(), Async.class)
             || AnnotatedElementUtils.hasAnnotation(specificMethod, Async.class)
             || AnnotatedElementUtils.hasAnnotation(targetClass, Async.class)
-            || (interfaceMethod != null && (AnnotatedElementUtils.hasAnnotation(interfaceMethod, Async.class)
-                || AnnotatedElementUtils.hasAnnotation(interfaceMethod.getDeclaringClass(), Async.class)));
+            || hasInterfaceAsync(interfaceMethods);
+    }
+
+    private boolean hasInterfaceAsync(List<Method> interfaceMethods) {
+        for (Method interfaceMethod : interfaceMethods) {
+            if (AnnotatedElementUtils.hasAnnotation(interfaceMethod, Async.class)
+                || AnnotatedElementUtils.hasAnnotation(interfaceMethod.getDeclaringClass(), Async.class)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     record ResolvedLockMethod(
