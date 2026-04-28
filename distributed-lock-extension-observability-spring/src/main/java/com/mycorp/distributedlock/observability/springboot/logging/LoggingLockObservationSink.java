@@ -11,15 +11,17 @@ public final class LoggingLockObservationSink implements LockObservationSink {
     @Override
     public void record(LockObservationEvent event) {
         if ("success".equals(event.outcome())) {
-            logger.debug(
-                "distributed-lock {} {} outcome={} backend={} mode={} durationMicros={}",
-                event.surface(),
-                event.operation(),
-                event.outcome(),
-                event.backendId(),
-                event.mode(),
-                event.duration().toNanos() / 1_000L
-            );
+            if (logger.isDebugEnabled()) {
+                logger.debug(
+                    "distributed-lock {} {} outcome={} backend={} mode={} durationMicros={}",
+                    event.surface(),
+                    event.operation(),
+                    event.outcome(),
+                    event.backendId(),
+                    event.mode(),
+                    event.duration().toNanos() / 1_000L
+                );
+            }
             return;
         }
         if ("timeout".equals(event.outcome()) || "interrupted".equals(event.outcome())) {
