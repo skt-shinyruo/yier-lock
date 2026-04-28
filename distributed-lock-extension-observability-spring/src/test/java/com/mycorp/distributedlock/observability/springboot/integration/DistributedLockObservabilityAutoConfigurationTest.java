@@ -107,6 +107,7 @@ class DistributedLockObservabilityAutoConfigurationTest {
                     lease -> "ok"
                 );
 
+                assertThat(registry.find("distributed.lock.acquire").tags("outcome", "success").timer().count()).isEqualTo(1);
                 assertThat(registry.getMeters()).allSatisfy(meter ->
                     assertThat(meter.getId().getTags()).noneMatch(tag -> tag.getValue().equals("secret-key"))
                 );
