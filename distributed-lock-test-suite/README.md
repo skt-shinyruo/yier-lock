@@ -80,6 +80,7 @@ mvn test
 
 - `distributed-lock-benchmarks` 不在默认 reactor 中，不作为 2.0 主线回归入口。
 - benchmarks 依赖安装到本地仓库的 snapshot；修改 runtime/backend/starter 后需要先重新执行 `mvn -q install -DskipTests`。
+- Benchmark sources can be compile-checked from the root with `mvn -Pbenchmarks -DskipTests compile`; full JMH execution remains opt-in and requires local Redis/ZooKeeper when a benchmark uses those backends.
 - 顶层旧 `examples/` 已废弃；当前示例资产位于 `distributed-lock-examples`。
 - 当前回归覆盖非重入语义、`LockReentryException`、`WaitPolicy.tryOnce()` 和 `LeasePolicy.fixed(...)` 能力检查。
 - 1.x 的 provider、factory、batch、async、health 相关测试已不再适用。

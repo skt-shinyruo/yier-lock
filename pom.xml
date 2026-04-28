@@ -43,6 +43,15 @@
         <module>distributed-lock-examples</module>
     </modules>
 
+    <profiles>
+        <profile>
+            <id>benchmarks</id>
+            <modules>
+                <module>distributed-lock-benchmarks</module>
+            </modules>
+        </profile>
+    </profiles>
+
     <dependencyManagement>
         <dependencies>
             <dependency>

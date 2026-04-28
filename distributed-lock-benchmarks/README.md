@@ -36,6 +36,14 @@ mvn -q install -DskipTests
 mvn -q -f distributed-lock-benchmarks/pom.xml -DskipTests compile
 ```
 
+### Compile through the root benchmark profile
+
+```bash
+mvn -Pbenchmarks -DskipTests compile
+```
+
+The profile keeps benchmarks outside the default reactor while giving CI a single root-level compile command.
+
 ### Run the smoke test
 
 ```bash
