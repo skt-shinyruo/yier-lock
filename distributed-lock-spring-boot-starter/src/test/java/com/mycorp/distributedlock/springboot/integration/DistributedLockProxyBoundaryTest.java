@@ -45,12 +45,21 @@ public class DistributedLockProxyBoundaryTest {
         });
     }
 
+    @Test
+    void applicationClassNamedBackendModuleShouldStillBeAdvised() {
+        contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
+            ApplicationBackendModule service = context.getBean(ApplicationBackendModule.class);
+            assertThat(service.process("42")).startsWith("application-backend-module-42-token-");
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
         @Bean BackendModule inMemoryBackendModule() { return new InMemoryBackendModule("in-memory"); }
         @Bean InterfaceLockedServiceImpl interfaceLockedService() { return new InterfaceLockedServiceImpl(); }
         @Bean ImplementationLockedServiceImpl implementationLockedService() { return new ImplementationLockedServiceImpl(); }
         @Bean CglibLockedService cglibLockedService() { return new CglibLockedService(); }
+        @Bean ApplicationBackendModule applicationBackendModule() { return new ApplicationBackendModule(); }
     }
 
     public interface InterfaceLockedService {
@@ -77,6 +86,13 @@ public class DistributedLockProxyBoundaryTest {
         @DistributedLock(key = "cglib:#{#p0}")
         public String process(String id) {
             return "cglib-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        }
+    }
+
+    static class ApplicationBackendModule {
+        @DistributedLock(key = "application-backend-module:#{#p0}")
+        public String process(String id) {
+            return "application-backend-module-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
         }
     }
 }
