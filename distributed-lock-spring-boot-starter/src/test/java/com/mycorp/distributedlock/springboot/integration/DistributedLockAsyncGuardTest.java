@@ -80,6 +80,18 @@ class DistributedLockAsyncGuardTest {
         });
     }
 
+    @Test
+    void shouldRejectInterfaceAsyncAnnotationBeforeInvocation() {
+        contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
+            InterfaceAsyncServiceImpl service = context.getBean(InterfaceAsyncServiceImpl.class);
+
+            assertThatThrownBy(() -> service.processInterfaceAsync("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("@Async");
+            assertThat(service.wasInvoked()).isFalse();
+        });
+    }
+
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
 
@@ -91,6 +103,30 @@ class DistributedLockAsyncGuardTest {
         @Bean
         AsyncService asyncService() {
             return new AsyncService();
+        }
+
+        @Bean
+        InterfaceAsyncServiceImpl interfaceAsyncService() {
+            return new InterfaceAsyncServiceImpl();
+        }
+    }
+
+    interface InterfaceAsyncService {
+        @DistributedLock(key = "job:#{#p0}")
+        @org.springframework.scheduling.annotation.Async
+        void processInterfaceAsync(String jobId);
+    }
+
+    static class InterfaceAsyncServiceImpl implements InterfaceAsyncService {
+
+        private final AtomicBoolean invoked = new AtomicBoolean();
+
+        public void processInterfaceAsync(String jobId) {
+            invoked.set(true);
+        }
+
+        boolean wasInvoked() {
+            return invoked.get();
         }
     }
 
