@@ -53,6 +53,10 @@ This extension decorates the standard `LockRuntimeBuilder` runtime composition w
 It records low-cardinality timers such as `distributed.lock.acquire` and `distributed.lock.scope`.
 Raw lock keys stay out of metrics by default; `distributed.lock.observability.include-lock-key-in-logs=true` only affects diagnostic logs.
 
+### Observability toggles
+
+`distributed.lock.observability.enabled=false` disables runtime decoration. When observability is enabled, `distributed.lock.observability.logging.enabled=false` disables diagnostic log events and `distributed.lock.observability.metrics.enabled=false` disables Micrometer timers. `distributed.lock.observability.include-lock-key-in-logs=true` may include raw lock keys in diagnostic logs only; metrics never include raw lock keys as tags.
+
 ## Requirements
 
 - Java 17+
@@ -129,6 +133,10 @@ Lock modes protect the same resource identity for a given key. `MUTEX` and `WRIT
 Backend progress semantics are backend-specific. Redis read/write locks are exclusive-preferred once a `WRITE` or `MUTEX` acquisition has registered pending intent, but they are not FIFO fair: later readers wait while existing readers drain, and multiple waiting exclusive acquisitions are resolved by Redis polling and script execution order rather than a strict queue. ZooKeeper uses fail-safe session semantics: `SUSPENDED` and `LOST` Curator states both make the lock session terminally lost because ownership cannot be proven while disconnected.
 
 `@DistributedLock` is intentionally synchronous-only. Methods returning `CompletionStage`, reactive publishers, or other async boundaries fail fast with `LockConfigurationException`.
+
+### AOP boundaries
+
+`@DistributedLock` is a Spring AOP interceptor and follows normal proxy rules. Interface-method and implementation-method annotations are supported for JDK and CGLIB proxies. Self-invocation inside the same bean is not intercepted. The interceptor is synchronous-only and rejects methods annotated with `@Async`, class-level `@Async`, `CompletionStage`, `Future`, and reactive `Publisher` return types before invoking user code when those boundaries are visible from the method signature or annotations.
 
 ## Programmatic usage
 
