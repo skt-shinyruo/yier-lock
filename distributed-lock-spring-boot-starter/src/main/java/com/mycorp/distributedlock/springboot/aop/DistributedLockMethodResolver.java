@@ -16,6 +16,10 @@ final class DistributedLockMethodResolver {
         MethodSignature signature = (MethodSignature) joinPoint.getSignature();
         Method proxiedMethod = signature.getMethod();
         Class<?> targetClass = joinPoint.getTarget() == null ? proxiedMethod.getDeclaringClass() : joinPoint.getTarget().getClass();
+        return resolve(proxiedMethod, targetClass, pointcutAnnotation);
+    }
+
+    ResolvedLockMethod resolve(Method proxiedMethod, Class<?> targetClass, DistributedLock pointcutAnnotation) {
         Method specificMethod = BridgeMethodResolver.findBridgedMethod(AopUtils.getMostSpecificMethod(proxiedMethod, targetClass));
         DistributedLock annotation = AnnotatedElementUtils.findMergedAnnotation(specificMethod, DistributedLock.class);
         if (annotation == null) {
