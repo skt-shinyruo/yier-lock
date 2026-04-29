@@ -91,7 +91,12 @@ distributed:
     redis:
       uri: redis://127.0.0.1:6379
       lease-time: 30s
+      key-strategy: legacy
+      fixed-lease-renewal-enabled: false
+      renewal-pool-size: 0
 ```
+
+`key-strategy` defaults to `legacy`. Redis Cluster deployments should set `key-strategy: hash-tagged` so the owner, reader, pending-writer, and fencing keys used by a single Lua script share one cluster slot. `renewal-pool-size: 0` uses the backend computed default. `lease-time` is the backend-default watchdog lease duration.
 
 For ZooKeeper:
 
@@ -125,7 +130,7 @@ Supported annotation fields:
 - `leaseFor`
 
 Blank `waitFor` waits indefinitely, `waitFor = "0s"` tries once, and a positive value waits up to that duration.
-Blank `leaseFor` uses the backend default lease duration, while a positive value requests a fixed lease duration.
+Blank `leaseFor` uses the backend default watchdog lease duration. On Redis, a positive `leaseFor` requests a fixed Redis TTL that does not auto-renew by default; set `distributed.lock.redis.fixed-lease-renewal-enabled=true` only when migrating code that intentionally relied on renewable fixed leases. ZooKeeper does not support fixed-duration leases because ownership is session-bound.
 
 Lock keys follow Spring template-expression semantics. Literal keys such as `order:42` pass through unchanged, while templates such as `order:#{#p0}` are evaluated against the intercepted method arguments.
 
@@ -138,6 +143,8 @@ Backend progress semantics are backend-specific. Redis read/write locks are excl
 ### AOP boundaries
 
 `@DistributedLock` is a Spring AOP interceptor and follows normal proxy rules. Interface-method and implementation-method annotations are supported for JDK and CGLIB proxies. Self-invocation inside the same bean is not intercepted. The interceptor is synchronous-only and rejects methods annotated with `@Async`, class-level `@Async`, `CompletionStage`, `Future`, and reactive `Publisher` return types before invoking user code when those boundaries are visible from the method signature or annotations.
+
+Methods declared with return type `Object` are rejected by default because dynamic async return values cannot be detected until after user code has run. During migration, `distributed.lock.spring.annotation.allow-dynamic-return-type=true` restores the older defense-in-depth behavior, where the executor rejects returned `CompletionStage`, `Future`, or `Publisher` instances after invocation.
 
 ## Programmatic usage
 

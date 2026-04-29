@@ -4,9 +4,8 @@ This module is the canonical regression matrix entry point for the distributed l
 
 ## Backend Prerequisites
 
-- Core, runtime, testkit, and Spring starter checks do not require external services.
-- Redis checks require a reachable local Redis instance when running Redis integration tests.
-- ZooKeeper checks require a reachable local ZooKeeper instance when running ZooKeeper integration tests.
+- Core, runtime, testkit, Spring starter, observability, and ZooKeeper adapter checks do not require Docker.
+- Redis integration checks use Testcontainers and require a working local Docker environment.
 - Benchmark compilation is part of the matrix; full JMH execution is opt-in because it may require local backend services and dedicated runtime settings.
 
 ## Commands
@@ -15,8 +14,9 @@ This module is the canonical regression matrix entry point for the distributed l
 mvn test
 mvn -pl distributed-lock-core,distributed-lock-testkit -am test
 mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter -am test
-mvn -pl distributed-lock-redis -am test
 mvn -pl distributed-lock-zookeeper -am test
+mvn -pl distributed-lock-redis,distributed-lock-redis-spring-boot-autoconfigure -am test
+mvn -Predis-integration -pl distributed-lock-redis,distributed-lock-redis-spring-boot-autoconfigure -am test
 mvn -pl distributed-lock-test-suite -am test
 mvn -Pbenchmarks -DskipTests compile
 ```
