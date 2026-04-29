@@ -1,6 +1,7 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.LeaseMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitMode;
@@ -58,7 +59,9 @@ final class RedisBackendSession implements BackendSession {
                 if (lease != null) {
                     acquired = true;
                     activeLeases.put(lease.ownerValue(), lease);
-                    lease.startRenewal();
+                    if (lease.renewable()) {
+                        lease.startRenewal();
+                    }
                     return lease;
                 }
                 if (request.waitPolicy().mode() == WaitMode.TRY_ONCE || System.nanoTime() >= deadlineNanos) {
@@ -153,7 +156,8 @@ final class RedisBackendSession implements BackendSession {
             new FencingToken(fence),
             RedisLockBackend.ownerValue(sessionId, fence),
             this,
-            leaseMillis
+            leaseMillis,
+            renewable(request)
         );
     }
 
@@ -363,10 +367,15 @@ final class RedisBackendSession implements BackendSession {
     }
 
     private long effectiveLeaseMillis(LockRequest request) {
-        if (request.leasePolicy().mode() == com.mycorp.distributedlock.api.LeaseMode.BACKEND_DEFAULT) {
+        if (request.leasePolicy().mode() == LeaseMode.BACKEND_DEFAULT) {
             return TimeUnit.SECONDS.toMillis(backend.configuration().leaseSeconds());
         }
         return Math.max(1L, request.leasePolicy().duration().toMillis());
+    }
+
+    private boolean renewable(LockRequest request) {
+        return request.leasePolicy().mode() == LeaseMode.BACKEND_DEFAULT
+            || backend.configuration().fixedLeaseRenewalEnabled();
     }
 
     private long pendingWriterIntentMillis() {

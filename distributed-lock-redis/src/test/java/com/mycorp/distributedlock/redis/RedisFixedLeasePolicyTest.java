@@ -136,53 +136,84 @@ class RedisFixedLeasePolicyTest {
     }
 
     @Test
-    void renewalShouldUseFixedLeaseDurationInsteadOfBackendDefault() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(30L);
-             BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(mutexRequest(
-                 "redis:fixed:renewal",
-                 LeasePolicy.fixed(Duration.ofMillis(1_500))
-             ))) {
+    void fixedMutexLeaseShouldExpireWithoutRenewalByDefault() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L)) {
+            BackendSession holderSession = backend.openSession();
+            BackendLockLease lease = holderSession.acquire(mutexRequest(
+                "redis:fixed:mutex-expiry",
+                LeasePolicy.fixed(Duration.ofMillis(240))
+            ));
+            BackendSession contenderSession = backend.openSession();
+            try {
+                Thread.sleep(500L);
 
-            Thread.sleep(1_800L);
-
-            assertThat(lease.isValid()).isTrue();
-            assertThat(redis.commands().pttl(ownerKey("redis:fixed:renewal", LockMode.MUTEX)))
-                .isBetween(1L, 1_500L);
+                assertThat(lease.isValid()).isFalse();
+                try (BackendLockLease contenderLease = contenderSession.acquire(new LockRequest(
+                    new LockKey("redis:fixed:mutex-expiry"),
+                    LockMode.MUTEX,
+                    WaitPolicy.tryOnce(),
+                    LeasePolicy.backendDefault()
+                ))) {
+                    assertThat(contenderLease.isValid()).isTrue();
+                }
+            } finally {
+                closeQuietly(lease);
+                closeQuietly(contenderSession);
+                closeQuietly(holderSession);
+            }
         }
     }
 
     @Test
-    void renewalShouldRefreshBeforeShortFixedLeaseCanExpire() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(30L);
+    void fixedWriteLeaseShouldExpireWithoutRenewalByDefault() throws Exception {
+        try (RedisLockBackend backend = redis.newBackend(30L)) {
+            BackendSession holderSession = backend.openSession();
+            BackendLockLease lease = holderSession.acquire(writeRequest(
+                "redis:fixed:write-expiry",
+                LeasePolicy.fixed(Duration.ofMillis(240))
+            ));
+            BackendSession contenderSession = backend.openSession();
+            try {
+                Thread.sleep(500L);
+
+                assertThat(lease.isValid()).isFalse();
+                try (BackendLockLease contenderLease = contenderSession.acquire(new LockRequest(
+                    new LockKey("redis:fixed:write-expiry"),
+                    LockMode.WRITE,
+                    WaitPolicy.tryOnce(),
+                    LeasePolicy.backendDefault()
+                ))) {
+                    assertThat(contenderLease.isValid()).isTrue();
+                }
+            } finally {
+                closeQuietly(lease);
+                closeQuietly(contenderSession);
+                closeQuietly(holderSession);
+            }
+        }
+    }
+
+    @Test
+    void fixedLeaseRenewalCompatibilityModeShouldKeepMutexLeaseAlive() throws Exception {
+        RedisBackendConfiguration configuration = new RedisBackendConfiguration(
+            redis.redisUri(),
+            30L,
+            RedisKeyStrategy.LEGACY,
+            true,
+            0
+        );
+        try (RedisLockBackend backend = new RedisLockBackend(configuration);
              BackendSession session = backend.openSession();
              BackendLockLease lease = session.acquire(mutexRequest(
-                 "redis:fixed:short-renewal",
+                 "redis:fixed:compat-renewal",
                  LeasePolicy.fixed(Duration.ofMillis(240))
              ))) {
 
-            Thread.sleep(350L);
+            Thread.sleep(500L);
 
             assertThat(lease.isValid()).isTrue();
-            assertThat(redis.commands().pttl(ownerKey("redis:fixed:short-renewal", LockMode.MUTEX)))
+            assertThat(redis.commands().pttl(ownerKey("redis:fixed:compat-renewal", LockMode.MUTEX)))
                 .isBetween(1L, 240L);
-        }
-    }
-
-    @Test
-    void writeRenewalShouldUseFixedLeaseDurationInsteadOfBackendDefault() throws Exception {
-        try (RedisLockBackend backend = redis.newBackend(30L);
-             BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(writeRequest(
-                 "redis:fixed:write-renewal",
-                 LeasePolicy.fixed(Duration.ofMillis(1_500))
-             ))) {
-
-            Thread.sleep(1_800L);
-
-            assertThat(lease.isValid()).isTrue();
-            assertThat(redis.commands().pttl(ownerKey("redis:fixed:write-renewal", LockMode.WRITE)))
-                .isBetween(1L, 1_500L);
         }
     }
 
@@ -219,5 +250,12 @@ class RedisFixedLeasePolicyTest {
 
     private static String readersKey(String key) {
         return "lock:%s:read:owners".formatted(key);
+    }
+
+    private static void closeQuietly(AutoCloseable closeable) {
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+        }
     }
 }
