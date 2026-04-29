@@ -9,4 +9,8 @@ public class LockReentryException extends DistributedLockException {
     public LockReentryException(String message, Throwable cause) {
         super(message, cause);
     }
+
+    public LockReentryException(String message, Throwable cause, LockFailureContext context) {
+        super(message, cause, context);
+    }
 }

@@ -1,76 +1,125 @@
 package com.mycorp.distributedlock.redis;
 
-import com.mycorp.distributedlock.api.LockMode;
-import com.mycorp.distributedlock.api.LockLease;
-import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
-import com.mycorp.distributedlock.testkit.LockClientContract;
+import com.mycorp.distributedlock.testkit.FencingContract;
+import com.mycorp.distributedlock.testkit.FixedLeasePolicyContract;
+import com.mycorp.distributedlock.testkit.LeasePolicyContract;
+import com.mycorp.distributedlock.testkit.MutexLockContract;
+import com.mycorp.distributedlock.testkit.ReadWriteLockContract;
+import com.mycorp.distributedlock.testkit.ReentryContract;
+import com.mycorp.distributedlock.testkit.SessionLifecycleContract;
+import com.mycorp.distributedlock.testkit.WaitPolicyContract;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
+class RedisMutexLockContractTest extends MutexLockContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
 
-class RedisLockBackendContractTest extends LockClientContract {
+class RedisWaitPolicyContractTest extends WaitPolicyContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
 
-    private static RedisTestSupport.RunningRedis redis;
+class RedisFencingContractTest extends FencingContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
 
+class RedisReadWriteLockContractTest extends ReadWriteLockContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
+
+class RedisLeasePolicyContractTest extends LeasePolicyContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
+
+class RedisFixedLeasePolicyContractTest extends FixedLeasePolicyContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
+
+class RedisReentryContractTest extends ReentryContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
+
+class RedisSessionLifecycleContractTest extends SessionLifecycleContract implements RedisContractRuntime {
+    @Override
+    public LockRuntime createRuntime() {
+        return RedisContractRuntime.super.createRuntime();
+    }
+}
+
+interface RedisContractRuntime {
     @BeforeAll
     static void startRedis() throws Exception {
-        redis = RedisTestSupport.startRedis();
+        RedisContractRuntimes.start();
     }
 
     @AfterAll
     static void stopRedis() throws Exception {
-        if (redis != null) {
-            redis.close();
-        }
+        RedisContractRuntimes.stop();
     }
 
     @BeforeEach
-    void resetRedis() {
+    default void resetRedis() {
+        RedisContractRuntimes.reset();
+    }
+
+    default LockRuntime createRuntime() {
+        return RedisContractRuntimes.createRuntime();
+    }
+}
+
+final class RedisContractRuntimes {
+    private static RedisTestSupport.RunningRedis redis;
+
+    private RedisContractRuntimes() {
+    }
+
+    static void start() throws Exception {
+        if (redis == null) {
+            redis = RedisTestSupport.startRedis();
+        }
+    }
+
+    static void stop() throws Exception {
+        if (redis != null) {
+            redis.close();
+            redis = null;
+        }
+    }
+
+    static void reset() {
         redis.flushAll();
     }
 
-    @Override
-    protected LockRuntime createRuntime() {
+    static LockRuntime createRuntime() {
         return LockRuntimeBuilder.create()
             .backend("redis")
             .backendModules(List.of(new RedisBackendModule(redis.configuration(30L))))
             .build();
-    }
-
-    @Test
-    void redisShouldIssueMonotonicFencingTokens() throws Exception {
-        try (LockRuntime runtime = createRuntime()) {
-            long first;
-            try (LockSession session = runtime.lockClient().openSession();
-                 LockLease lease = session.acquire(request("redis:fence", LockMode.MUTEX, Duration.ofSeconds(1)))) {
-                first = lease.fencingToken().value();
-            }
-            try (LockSession session = runtime.lockClient().openSession();
-                 LockLease lease = session.acquire(request("redis:fence", LockMode.MUTEX, Duration.ofSeconds(1)))) {
-                assertThat(lease.fencingToken().value()).isGreaterThan(first);
-            }
-        }
-    }
-
-    @Test
-    void redisShouldIssueMonotonicFencingTokensAcrossModes() throws Exception {
-        try (LockRuntime runtime = createRuntime();
-             LockSession session = runtime.lockClient().openSession()) {
-            long first;
-            try (LockLease lease = session.acquire(request("redis:fence:mode", LockMode.READ, Duration.ofSeconds(1)))) {
-                first = lease.fencingToken().value();
-            }
-            try (LockLease lease = session.acquire(request("redis:fence:mode", LockMode.WRITE, Duration.ofSeconds(1)))) {
-                assertThat(lease.fencingToken().value()).isGreaterThan(first);
-            }
-        }
     }
 }

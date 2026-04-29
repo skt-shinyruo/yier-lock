@@ -1,8 +1,8 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 
 import java.util.Objects;
 

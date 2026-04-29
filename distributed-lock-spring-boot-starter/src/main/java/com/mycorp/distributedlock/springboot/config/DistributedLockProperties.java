@@ -1,16 +1,13 @@
 package com.mycorp.distributedlock.springboot.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.validation.annotation.Validated;
 
 import java.time.Duration;
 
-@Validated
 @ConfigurationProperties(prefix = "distributed.lock")
 public class DistributedLockProperties {
 
     private boolean enabled = true;
-    @jakarta.validation.constraints.NotBlank
     private String backend;
     private final Spring spring = new Spring();
 

@@ -12,4 +12,8 @@ public class LockBackendException extends DistributedLockException {
     public LockBackendException(String message, Throwable cause) {
         super(message, cause);
     }
+
+    public LockBackendException(String message, Throwable cause, LockFailureContext context) {
+        super(message, cause, context);
+    }
 }

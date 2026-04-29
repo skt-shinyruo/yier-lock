@@ -2,14 +2,11 @@ package com.mycorp.distributedlock.observability.springboot.config;
 
 import com.mycorp.distributedlock.observability.LockObservationSink;
 import com.mycorp.distributedlock.observability.ObservedLockRuntime;
-import com.mycorp.distributedlock.runtime.DefaultLockRuntime;
 import com.mycorp.distributedlock.observability.springboot.logging.LoggingLockObservationSink;
 import com.mycorp.distributedlock.observability.springboot.support.CompositeLockObservationSink;
 import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
-import org.springframework.beans.BeansException;
+import com.mycorp.distributedlock.springboot.config.LockRuntimeCustomizer;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -17,6 +14,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -44,31 +42,44 @@ public class DistributedLockObservabilityAutoConfiguration {
     }
 
     @Bean
-    public static BeanPostProcessor observedLockRuntimeBeanPostProcessor(
+    public LockRuntimeCustomizer observedLockRuntimeCustomizer(
         ObjectProvider<LockObservationSink> sinkProvider,
-        ObjectProvider<DistributedLockProperties> lockPropertiesProvider,
         ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider
     ) {
-        return new BeanPostProcessor() {
-            @Override
-            public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
-                if (!(bean instanceof DefaultLockRuntime runtime) || bean instanceof ObservedLockRuntime) {
-                    return bean;
-                }
-                LockObservationSink sink = sinkProvider.getIfAvailable(() -> LockObservationSink.NOOP);
-                if (sink == LockObservationSink.NOOP) {
-                    return bean;
-                }
-                DistributedLockProperties lockProperties = lockPropertiesProvider.getIfAvailable();
-                DistributedLockObservabilityProperties observabilityProperties = observabilityPropertiesProvider.getIfAvailable();
-                return ObservedLockRuntime.decorate(
-                    runtime,
-                    sink,
-                    lockProperties == null ? null : lockProperties.getBackend(),
-                    observabilityProperties != null && observabilityProperties.isIncludeLockKeyInLogs()
-                );
+        return new ObservedLockRuntimeCustomizer(sinkProvider, observabilityPropertiesProvider);
+    }
+
+    private static final class ObservedLockRuntimeCustomizer implements LockRuntimeCustomizer, Ordered {
+        private final ObjectProvider<LockObservationSink> sinkProvider;
+        private final ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider;
+
+        private ObservedLockRuntimeCustomizer(
+            ObjectProvider<LockObservationSink> sinkProvider,
+            ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider
+        ) {
+            this.sinkProvider = sinkProvider;
+            this.observabilityPropertiesProvider = observabilityPropertiesProvider;
+        }
+
+        @Override
+        public LockRuntime customize(LockRuntime runtime) {
+            LockObservationSink sink = sinkProvider.getIfAvailable(() -> LockObservationSink.NOOP);
+            if (sink == LockObservationSink.NOOP || runtime instanceof ObservedLockRuntime) {
+                return runtime;
             }
-        };
+            DistributedLockObservabilityProperties observabilityProperties = observabilityPropertiesProvider.getIfAvailable();
+            return ObservedLockRuntime.decorate(
+                runtime,
+                sink,
+                runtime.backendId(),
+                observabilityProperties != null && observabilityProperties.isIncludeLockKeyInLogs()
+            );
+        }
+
+        @Override
+        public int getOrder() {
+            return Ordered.HIGHEST_PRECEDENCE;
+        }
     }
 
     interface MicrometerLockObservationSinkProvider {

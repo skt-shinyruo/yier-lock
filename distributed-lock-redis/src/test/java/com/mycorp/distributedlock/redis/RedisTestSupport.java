@@ -3,37 +3,37 @@ package com.mycorp.distributedlock.redis;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.util.concurrent.TimeUnit;
 
 final class RedisTestSupport {
 
+    private static final DockerImageName REDIS_IMAGE = DockerImageName.parse("redis:7-alpine");
+
     private RedisTestSupport() {
     }
 
     static RunningRedis startRedis() throws Exception {
-        String containerId = run("docker", "run", "-d", "-P", "redis:7-alpine").trim();
-        String portOutput = run("docker", "port", containerId, "6379/tcp").trim();
-        int redisPort = Integer.parseInt(portOutput.substring(portOutput.lastIndexOf(':') + 1));
-        awaitReady("redis://127.0.0.1:%d".formatted(redisPort));
-        RunningRedis redis = new RunningRedis(containerId, redisPort);
+        GenericContainer<?> container = new GenericContainer<>(REDIS_IMAGE)
+            .withExposedPorts(6379);
+        container.start();
+        awaitReady(redisUri(container));
+        RunningRedis redis = new RunningRedis(container);
         redis.flushAll();
         return redis;
     }
 
     static final class RunningRedis implements AutoCloseable {
-        private final String containerId;
-        private final int redisPort;
-        private final RedisClient redisClient;
-        private final StatefulRedisConnection<String, String> connection;
-        private final RedisCommands<String, String> commands;
+        private final GenericContainer<?> container;
+        private RedisClient redisClient;
+        private StatefulRedisConnection<String, String> connection;
+        private RedisCommands<String, String> commands;
 
-        private RunningRedis(String containerId, int redisPort) {
-            this.containerId = containerId;
-            this.redisPort = redisPort;
-            this.redisClient = RedisClient.create(redisUri());
-            this.connection = redisClient.connect();
-            this.commands = connection.sync();
+        private RunningRedis(GenericContainer<?> container) {
+            this.container = container;
+            connectClient();
         }
 
         RedisBackendConfiguration configuration(long leaseSeconds) {
@@ -52,29 +52,31 @@ final class RedisTestSupport {
             commands.flushall();
         }
 
-        void stopContainer() throws Exception {
-            run("docker", "stop", containerId);
+        void stopContainer() {
+            container.stop();
         }
 
-        void startContainer() throws Exception {
-            run("docker", "start", containerId);
+        void startContainer() throws InterruptedException {
+            closeClient();
+            container.start();
             awaitReady(redisUri());
+            connectClient();
         }
 
         String redisUri() {
-            return "redis://127.0.0.1:%d".formatted(redisPort);
+            return RedisTestSupport.redisUri(container);
         }
 
         @Override
         public void close() throws Exception {
             RuntimeException closeFailure = null;
             try {
-                connection.close();
+                closeClient();
             } catch (RuntimeException exception) {
                 closeFailure = exception;
             }
             try {
-                redisClient.shutdown();
+                container.close();
             } catch (RuntimeException exception) {
                 if (closeFailure == null) {
                     closeFailure = exception;
@@ -82,18 +84,32 @@ final class RedisTestSupport {
                     closeFailure.addSuppressed(exception);
                 }
             }
-            try {
-                run("docker", "rm", "-f", containerId);
-            } catch (Exception exception) {
-                if (closeFailure == null) {
-                    throw exception;
-                }
-                closeFailure.addSuppressed(exception);
-            }
             if (closeFailure != null) {
                 throw closeFailure;
             }
         }
+
+        private void connectClient() {
+            this.redisClient = RedisClient.create(redisUri());
+            this.connection = redisClient.connect();
+            this.commands = connection.sync();
+        }
+
+        private void closeClient() {
+            if (connection != null) {
+                connection.close();
+                connection = null;
+                commands = null;
+            }
+            if (redisClient != null) {
+                redisClient.shutdown();
+                redisClient = null;
+            }
+        }
+    }
+
+    private static String redisUri(GenericContainer<?> container) {
+        return "redis://%s:%d".formatted(container.getHost(), container.getMappedPort(6379));
     }
 
     private static void awaitReady(String redisUri) throws InterruptedException {
@@ -121,15 +137,5 @@ final class RedisTestSupport {
             Thread.sleep(100L);
         }
         throw new IllegalStateException("Redis container did not become ready", lastFailure);
-    }
-
-    private static String run(String... command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes()).trim();
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new IllegalStateException("Command failed: " + String.join(" ", command) + "\n" + output);
-        }
-        return output;
     }
 }

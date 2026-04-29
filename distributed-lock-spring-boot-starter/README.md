@@ -45,7 +45,7 @@ If you want lock metrics and diagnostic logs, add the optional Spring observabil
 ~~~xml
 <dependency>
   <groupId>com.mycorp</groupId>
-  <artifactId>distributed-lock-extension-observability-spring</artifactId>
+  <artifactId>distributed-lock-extension-observability-spring-boot</artifactId>
 </dependency>
 ~~~
 
@@ -153,11 +153,7 @@ class UserService {
 
     int updateUser(String userId) throws Exception {
         return lockExecutor.withLock(
-            new LockRequest(
-                new LockKey("user:" + userId),
-                LockMode.MUTEX,
-                WaitPolicy.timed(Duration.ofSeconds(2))
-            ),
+            LockRequest.mutex("user:" + userId, WaitPolicy.timed(Duration.ofSeconds(2))),
             lease -> userId.hashCode()
         );
     }
@@ -168,11 +164,9 @@ If you need manual lease control or fencing tokens, inject `LockClient` instead:
 
 ```java
 try (LockSession session = lockClient.openSession();
-     LockLease lease = session.acquire(new LockRequest(
-         new LockKey("user:" + userId),
-         LockMode.MUTEX,
-         WaitPolicy.timed(Duration.ofSeconds(2))
-     ))) {
+     LockLease lease = session.acquire(
+         LockRequest.mutex("user:" + userId, WaitPolicy.timed(Duration.ofSeconds(2)))
+     )) {
     System.out.println(lease.fencingToken().value());
 }
 ```

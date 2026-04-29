@@ -9,7 +9,6 @@ import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -21,10 +20,8 @@ class ZooKeeperSessionIsolationTest {
 
     @Test
     void sessionsShouldOwnIndependentCuratorClients() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             );
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession first = backend.openSession();
              BackendSession second = backend.openSession()) {
             CuratorFramework firstClient = ((CuratorBackedSession) first).curatorFramework();
@@ -36,10 +33,8 @@ class ZooKeeperSessionIsolationTest {
 
     @Test
     void killingOneSessionShouldNotInvalidateSiblingSession() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession first = backend.openSession();
             BackendSession second = backend.openSession();
             BackendLockLease secondLease = second.acquire(new LockRequest(
@@ -49,7 +44,7 @@ class ZooKeeperSessionIsolationTest {
             ));
             try {
                 CuratorFramework firstClient = ((CuratorBackedSession) first).curatorFramework();
-                KillSession.kill(firstClient.getZookeeperClient().getZooKeeper(), server.getConnectString());
+                KillSession.kill(firstClient.getZookeeperClient().getZooKeeper(), support.server().getConnectString());
 
                 waitUntilState(first, SessionState.LOST);
                 assertThat(second.state()).isEqualTo(SessionState.ACTIVE);

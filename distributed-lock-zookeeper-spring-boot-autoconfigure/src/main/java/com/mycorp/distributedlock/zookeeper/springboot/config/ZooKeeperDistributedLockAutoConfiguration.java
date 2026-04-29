@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.zookeeper.springboot.config;
 
 import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
@@ -20,10 +20,11 @@ public class ZooKeeperDistributedLockAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(ZooKeeperDistributedLockProperties.class)
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean({ BackendModule.class, LockRuntime.class })
+    @ConditionalOnMissingBean(value = LockRuntime.class, name = "zooKeeperDistributedLockBackendModule")
     static class DefaultZooKeeperBackendConfiguration {
 
-        @Bean
+        @Bean("zooKeeperDistributedLockBackendModule")
+        @ConditionalOnMissingBean(name = "zooKeeperDistributedLockBackendModule")
         BackendModule zooKeeperBackendModule(ZooKeeperDistributedLockProperties properties) {
             ZooKeeperBackendConfiguration configuration = new ZooKeeperBackendConfiguration(
                 requireConnectString(properties.getConnectString()),

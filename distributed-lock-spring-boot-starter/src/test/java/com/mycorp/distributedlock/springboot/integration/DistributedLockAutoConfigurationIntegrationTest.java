@@ -5,10 +5,11 @@ import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.aop.DistributedLockAspect;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
+import com.mycorp.distributedlock.springboot.config.LockRuntimeCustomizer;
 import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
@@ -53,8 +54,7 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("BindValidationException")
-                    .hasStackTraceContaining("distributed.lock.backend");
+                    .hasMessageContaining("A backend id must be configured before building the lock runtime");
             });
     }
 
@@ -68,8 +68,7 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasStackTraceContaining("BindValidationException")
-                    .hasStackTraceContaining("distributed.lock.backend");
+                    .hasMessageContaining("A backend id must be configured before building the lock runtime");
             });
     }
 
@@ -121,6 +120,21 @@ class DistributedLockAutoConfigurationIntegrationTest {
     }
 
     @Test
+    void shouldFailWhenUserBackendModulesHaveDuplicateIds() {
+        emptyContextRunner
+            .withUserConfiguration(DuplicateBackendModuleConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("Duplicate backend modules registered for id: redis");
+            });
+    }
+
+    @Test
     void shouldBackOffWhenDisabled() {
         contextRunner
             .withPropertyValues("distributed.lock.enabled=false")
@@ -142,6 +156,20 @@ class DistributedLockAutoConfigurationIntegrationTest {
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
                 assertThat(context.getBean(LockRuntime.class)).isInstanceOf(StubLockRuntime.class);
+            });
+    }
+
+    @Test
+    void shouldApplyLockRuntimeCustomizersToDefaultRuntime() {
+        contextRunner
+            .withUserConfiguration(CustomizerConfiguration.class)
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=in-memory"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(LockRuntime.class);
+                assertThat(context.getBean(LockRuntime.class).backendId()).isEqualTo("customized");
             });
     }
 
@@ -192,6 +220,62 @@ class DistributedLockAutoConfigurationIntegrationTest {
         }
     }
 
+    @Configuration(proxyBeanMethods = false)
+    static class DuplicateBackendModuleConfiguration {
+
+        @Bean
+        BackendModule firstRedisBackendModule() {
+            return new InMemoryBackendModule("redis");
+        }
+
+        @Bean
+        BackendModule secondRedisBackendModule() {
+            return new InMemoryBackendModule("redis");
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
+    static class CustomizerConfiguration {
+
+        @Bean
+        LockRuntimeCustomizer backendIdCustomizer() {
+            return runtime -> new BackendIdOverrideLockRuntime(runtime);
+        }
+    }
+
+    private static final class BackendIdOverrideLockRuntime implements LockRuntime {
+        private final LockRuntime delegate;
+
+        private BackendIdOverrideLockRuntime(LockRuntime delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public LockClient lockClient() {
+            return delegate.lockClient();
+        }
+
+        @Override
+        public SynchronousLockExecutor synchronousLockExecutor() {
+            return delegate.synchronousLockExecutor();
+        }
+
+        @Override
+        public String backendId() {
+            return "customized";
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return delegate.capabilities();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+    }
+
     private static final class StubLockRuntime implements LockRuntime {
 
         @Override
@@ -202,6 +286,16 @@ class DistributedLockAutoConfigurationIntegrationTest {
         @Override
         public SynchronousLockExecutor synchronousLockExecutor() {
             return null;
+        }
+
+        @Override
+        public String backendId() {
+            return "test";
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return BackendCapabilities.standard();
         }
 
         @Override

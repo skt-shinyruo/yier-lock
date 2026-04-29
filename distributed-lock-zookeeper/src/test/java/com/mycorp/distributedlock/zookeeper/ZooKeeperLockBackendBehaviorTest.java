@@ -9,10 +9,8 @@ import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
-import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,15 +18,16 @@ import java.util.concurrent.Executors;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class ZooKeeperLockBackendBehaviorTest {
 
     @Test
     void distinctKeysMustNotCollideAfterPathEncoding() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 try (BackendSession firstSession = backend.openSession();
@@ -48,10 +47,8 @@ class ZooKeeperLockBackendBehaviorTest {
 
     @Test
     void closingSessionShouldReleaseActiveLeases() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession ownerSession = backend.openSession();
             BackendLockLease ownerLease = ownerSession.acquire(request("zk:session-close:release", Duration.ofSeconds(1)));
 
@@ -70,17 +67,19 @@ class ZooKeeperLockBackendBehaviorTest {
     }
 
     @Test
-    void constructorShouldFailWhenInitialZooKeeperConnectionCannotBeEstablished() throws Exception {
-        int unavailablePort;
-        try (ServerSocket socket = new ServerSocket(0)) {
-            unavailablePort = socket.getLocalPort();
-        }
+    void openSessionShouldReportConnectionFailureFromClientFactory() {
+        ZooKeeperClientFactory clientFactory = mock(ZooKeeperClientFactory.class);
+        LockBackendException failure = new LockBackendException("Failed to connect to ZooKeeper");
+        when(clientFactory.connect()).thenThrow(failure);
+        ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
+            new ZooKeeperBackendConfiguration("127.0.0.1:1", "/distributed-locks"),
+            clientFactory
+        );
 
-        assertThatThrownBy(() -> new ZooKeeperLockBackend(
-            new ZooKeeperBackendConfiguration("127.0.0.1:" + unavailablePort, "/distributed-locks")
-        ))
-            .isInstanceOf(LockBackendException.class)
-            .hasMessageContaining("connect");
+        assertThatThrownBy(backend::openSession)
+            .isSameAs(failure);
+
+        verify(clientFactory).connect();
     }
 
     private static LockRequest request(String key, Duration waitTime) {

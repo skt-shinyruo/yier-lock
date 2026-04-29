@@ -31,11 +31,7 @@ LockRuntime runtime = LockRuntimeBuilder.create()
     .build();
 
 String result = runtime.synchronousLockExecutor().withLock(
-    new LockRequest(
-        new LockKey("example:redis:order-42"),
-        LockMode.MUTEX,
-        WaitPolicy.timed(Duration.ofSeconds(2))
-    ),
+    LockRequest.mutex("example:redis:order-42", WaitPolicy.timed(Duration.ofSeconds(2))),
     lease -> "Redis lease acquired with fencing token " + lease.fencingToken().value()
 );
 ```
@@ -53,6 +49,20 @@ distributed:
 ```
 
 Backend-specific settings stay under `distributed.lock.redis.*` or `distributed.lock.zookeeper.*`, but the generic starter only owns generic `distributed.lock.*` runtime and annotation settings.
+
+Lock failures expose backend and key context for diagnostics:
+
+```java
+void process(String orderId, SynchronousLockExecutor lockExecutor) throws Exception {
+    try {
+        lockExecutor.withLock(LockRequest.mutex("order:" + orderId, WaitPolicy.tryOnce()), lease -> null);
+    } catch (DistributedLockException exception) {
+        LockFailureContext context = exception.context();
+        System.err.println("Lock failure for backend=" + context.backendId()
+            + ", keyPresent=" + (context.key() != null));
+    }
+}
+```
 
 ## Notes
 

@@ -1,8 +1,8 @@
 package com.mycorp.distributedlock.zookeeper;
 
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 
 import java.util.Objects;
 
@@ -21,7 +21,7 @@ public final class ZooKeeperBackendModule implements BackendModule {
 
     @Override
     public BackendCapabilities capabilities() {
-        return new BackendCapabilities(true, true, true, true, false);
+        return BackendCapabilities.withoutFixedLeaseDuration();
     }
 
     @Override

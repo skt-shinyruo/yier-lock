@@ -41,7 +41,11 @@ class RedisSessionLossTest {
                     new LockKey("redis:session-loss"),
                     LockMode.MUTEX,
                     WaitPolicy.timed(Duration.ofMillis(50))
-                ))).isInstanceOf(LockSessionLostException.class);
+                ))).isInstanceOfSatisfying(LockSessionLostException.class, exception -> {
+                    assertThat(exception.context().backendId()).isEqualTo("redis");
+                    assertThat(exception.context().key()).isEqualTo(new LockKey("redis:session-loss"));
+                    assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                });
             } finally {
                 try {
                     lease.close();

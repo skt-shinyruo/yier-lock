@@ -14,8 +14,8 @@ import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityExcepti
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -29,6 +29,18 @@ class LockRuntimeBuilderTest {
     @Test
     void runtimeShouldExposeNarrowCloseOperation() throws Exception {
         assertThat(LockRuntime.class.getMethod("close").getExceptionTypes()).isEmpty();
+    }
+
+    @Test
+    void runtimeShouldExposeSelectedBackendMetadata() {
+        BackendCapabilities capabilities = BackendCapabilities.withoutFixedLeaseDuration();
+        LockRuntime runtime = LockRuntimeBuilder.create()
+            .backend("test")
+            .backendModules(List.of(new StubBackendModule("test", capabilities)))
+            .build();
+
+        assertThat(runtime.backendId()).isEqualTo("test");
+        assertThat(runtime.capabilities()).isEqualTo(capabilities);
     }
 
     @Test

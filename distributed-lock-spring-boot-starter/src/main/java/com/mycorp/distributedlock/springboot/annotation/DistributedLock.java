@@ -1,5 +1,7 @@
 package com.mycorp.distributedlock.springboot.annotation;
 
+import com.mycorp.distributedlock.api.LockMode;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -11,7 +13,7 @@ public @interface DistributedLock {
 
     String key();
 
-    DistributedLockMode mode() default DistributedLockMode.MUTEX;
+    LockMode mode() default LockMode.MUTEX;
 
     String waitFor() default "";
 

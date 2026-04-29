@@ -11,11 +11,14 @@ import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.observability.ObservedLockRuntime;
 import com.mycorp.distributedlock.observability.springboot.config.DistributedLockObservabilityAutoConfiguration;
 import com.mycorp.distributedlock.runtime.DefaultLockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
+import com.mycorp.distributedlock.springboot.config.LockRuntimeCustomizer;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -69,6 +72,35 @@ class DistributedLockObservabilityAutoConfigurationTest {
             assertThat(registry.find("distributed.lock.scope").timer()).isNotNull();
             assertThat(registry.find("distributed.lock.acquire").tags("outcome", "success").timer().count()).isEqualTo(1);
         });
+    }
+
+    @Test
+    void shouldDecorateStandardRuntimeWithCustomizerOnce() {
+        contextRunner.run(context -> {
+            assertThat(context).hasSingleBean(LockRuntimeCustomizer.class);
+            assertThat(context.getBean(LockRuntime.class)).isInstanceOf(ObservedLockRuntime.class);
+
+            LockRuntimeCustomizer customizer = context.getBean(LockRuntimeCustomizer.class);
+            LockRuntime runtime = context.getBean(LockRuntime.class);
+
+            assertThat(customizer.customize(runtime)).isSameAs(runtime);
+        });
+    }
+
+    @Test
+    void shouldPreserveUserCustomizerExecutorBehaviorAfterObservabilityDecoration() {
+        contextRunner
+            .withUserConfiguration(CustomExecutorCustomizerConfiguration.class)
+            .run(context -> {
+                LockRuntime runtime = context.getBean(LockRuntime.class);
+
+                String value = runtime.synchronousLockExecutor().withLock(
+                    new LockRequest(new LockKey("orders:42"), LockMode.MUTEX, WaitPolicy.tryOnce()),
+                    lease -> "delegate"
+                );
+
+                assertThat(value).isEqualTo("customized");
+            });
     }
 
     @Test
@@ -158,6 +190,53 @@ class DistributedLockObservabilityAutoConfigurationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
+    static class CustomExecutorCustomizerConfiguration {
+        @Bean
+        LockRuntimeCustomizer executorReplacingCustomizer() {
+            return runtime -> new ExecutorReplacingRuntime(runtime);
+        }
+    }
+
+    static class ExecutorReplacingRuntime implements LockRuntime {
+        private final LockRuntime delegate;
+
+        ExecutorReplacingRuntime(LockRuntime delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public LockClient lockClient() {
+            return delegate.lockClient();
+        }
+
+        @Override
+        public SynchronousLockExecutor synchronousLockExecutor() {
+            return new SynchronousLockExecutor() {
+                @Override
+                @SuppressWarnings("unchecked")
+                public <T> T withLock(LockRequest request, com.mycorp.distributedlock.api.LockedAction<T> action) {
+                    return (T) "customized";
+                }
+            };
+        }
+
+        @Override
+        public String backendId() {
+            return delegate.backendId();
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return delegate.capabilities();
+        }
+
+        @Override
+        public void close() {
+            delegate.close();
+        }
+    }
+
+    @Configuration(proxyBeanMethods = false)
     static class CustomRuntimeConfiguration {
         @Bean(destroyMethod = "close")
         LockRuntime customRuntime() {
@@ -234,6 +313,16 @@ class DistributedLockObservabilityAutoConfigurationTest {
                     }
                 }
             };
+        }
+
+        @Override
+        public String backendId() {
+            return "custom";
+        }
+
+        @Override
+        public BackendCapabilities capabilities() {
+            return BackendCapabilities.standard();
         }
 
         @Override

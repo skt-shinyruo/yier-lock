@@ -2,13 +2,12 @@ package com.mycorp.distributedlock.springboot.aop;
 
 import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
-import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
-import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
+import com.mycorp.distributedlock.springboot.config.DistributedLockProperties;
 import com.mycorp.distributedlock.springboot.key.LockKeyResolver;
 import org.aopalliance.intercept.MethodInterceptor;
 import org.aopalliance.intercept.MethodInvocation;
@@ -34,14 +33,17 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
 
     private final ObjectProvider<SynchronousLockExecutor> lockExecutorProvider;
     private final ObjectProvider<LockKeyResolver> lockKeyResolverProvider;
+    private final DistributedLockProperties properties;
     private final DistributedLockMethodResolver methodResolver = new DistributedLockMethodResolver();
 
     public DistributedLockAspect(
         ObjectProvider<SynchronousLockExecutor> lockExecutorProvider,
-        ObjectProvider<LockKeyResolver> lockKeyResolverProvider
+        ObjectProvider<LockKeyResolver> lockKeyResolverProvider,
+        DistributedLockProperties properties
     ) {
         this.lockExecutorProvider = Objects.requireNonNull(lockExecutorProvider, "lockExecutorProvider");
         this.lockKeyResolverProvider = Objects.requireNonNull(lockKeyResolverProvider, "lockKeyResolverProvider");
+        this.properties = Objects.requireNonNull(properties, "properties");
         setAdvice(this);
     }
 
@@ -60,30 +62,22 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
         Class<?> targetClass = invocation.getThis() == null ? invocation.getMethod().getDeclaringClass() : invocation.getThis().getClass();
         DistributedLockMethodResolver.ResolvedLockMethod resolved = methodResolver.resolve(invocation.getMethod(), targetClass, null);
         ensureSynchronous(resolved);
-        LockRequest request = resolveRequest(new MethodInvocationProceedingJoinPoint(invocation), resolved.distributedLock());
+        LockRequest request = resolveRequest(new MethodInvocationProceedingJoinPoint(invocation), resolved.specificMethod(), resolved.distributedLock());
         return lockExecutorProvider.getObject().withLock(request, lease -> proceed(invocation));
     }
 
-    private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, DistributedLock distributedLock) {
+    private LockRequest resolveRequest(ProceedingJoinPoint joinPoint, Method method, DistributedLock distributedLock) {
         String key = lockKeyResolverProvider.getObject().resolveKey(joinPoint, distributedLock.key());
         return new LockRequest(
             new LockKey(key),
-            resolveMode(distributedLock.mode()),
-            resolveWaitPolicy(distributedLock),
-            resolveLeasePolicy(distributedLock)
+            distributedLock.mode(),
+            resolveWaitPolicy(method, distributedLock),
+            resolveLeasePolicy(method, distributedLock)
         );
     }
 
-    private LockMode resolveMode(DistributedLockMode mode) {
-        return switch (mode) {
-            case MUTEX -> LockMode.MUTEX;
-            case READ -> LockMode.READ;
-            case WRITE -> LockMode.WRITE;
-        };
-    }
-
-    private WaitPolicy resolveWaitPolicy(DistributedLock distributedLock) {
-        Duration waitTimeout = resolveWaitTimeout(distributedLock);
+    private WaitPolicy resolveWaitPolicy(Method method, DistributedLock distributedLock) {
+        Duration waitTimeout = resolveWaitTimeout(method, distributedLock);
         if (waitTimeout == null) {
             return WaitPolicy.indefinite();
         }
@@ -93,19 +87,30 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
         return WaitPolicy.timed(waitTimeout);
     }
 
-    private Duration resolveWaitTimeout(DistributedLock distributedLock) {
+    private Duration resolveWaitTimeout(Method method, DistributedLock distributedLock) {
         if (distributedLock.waitFor() != null && !distributedLock.waitFor().isBlank()) {
-            return DurationStyle.detectAndParse(distributedLock.waitFor());
+            return parseDuration(method, "waitFor", distributedLock.waitFor());
         }
-        return null;
+        return properties.getSpring().getAnnotation().getDefaultTimeout();
     }
 
-    private LeasePolicy resolveLeasePolicy(DistributedLock distributedLock) {
+    private LeasePolicy resolveLeasePolicy(Method method, DistributedLock distributedLock) {
         if (distributedLock.leaseFor() == null || distributedLock.leaseFor().isBlank()) {
             return LeasePolicy.backendDefault();
         }
-        Duration leaseDuration = DurationStyle.detectAndParse(distributedLock.leaseFor());
+        Duration leaseDuration = parseDuration(method, "leaseFor", distributedLock.leaseFor());
         return LeasePolicy.fixed(leaseDuration);
+    }
+
+    private Duration parseDuration(Method method, String attributeName, String value) {
+        try {
+            return DurationStyle.detectAndParse(value);
+        } catch (RuntimeException exception) {
+            throw new LockConfigurationException(
+                "Invalid @DistributedLock " + attributeName + " value '" + value + "' on " + method,
+                exception
+            );
+        }
     }
 
     private Object proceed(MethodInvocation invocation) throws Exception {

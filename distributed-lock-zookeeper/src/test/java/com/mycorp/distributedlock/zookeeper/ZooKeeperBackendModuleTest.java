@@ -1,8 +1,8 @@
 package com.mycorp.distributedlock.zookeeper;
 
-import com.mycorp.distributedlock.api.exception.LockConfigurationException;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
@@ -10,7 +10,6 @@ import java.util.List;
 import java.util.ServiceLoader;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ZooKeeperBackendModuleTest {
 
@@ -21,7 +20,7 @@ class ZooKeeperBackendModuleTest {
         );
 
         assertThat(module.id()).isEqualTo("zookeeper");
-        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true, false));
+        assertThat(module.capabilities()).isEqualTo(BackendCapabilities.withoutFixedLeaseDuration());
     }
 
     @Test
@@ -32,28 +31,20 @@ class ZooKeeperBackendModuleTest {
     }
 
     @Test
-    void shouldAllowServiceLoaderToDiscoverZooKeeperProvider() {
-        BackendModule module = discoverZooKeeperProvider();
-
-        assertThat(module.id()).isEqualTo("zookeeper");
-        assertThat(module.capabilities()).isEqualTo(new BackendCapabilities(true, true, true, true, false));
+    void shouldNotExposeZooKeeperProviderThroughServiceLoader() {
+        assertThat(ServiceLoader.load(BackendModule.class).stream()
+            .map(ServiceLoader.Provider::get)
+            .map(BackendModule::id))
+            .doesNotContain("zookeeper");
     }
 
     @Test
-    void serviceLoadedZooKeeperProviderShouldRequireExplicitTypedConfiguration() {
-        BackendModule module = discoverZooKeeperProvider();
-
-        assertThatThrownBy(module::createBackend)
-            .isInstanceOf(LockConfigurationException.class)
-            .hasMessageContaining("ZooKeeper requires explicit typed configuration")
-            .hasMessageContaining("new ZooKeeperBackendModule(new ZooKeeperBackendConfiguration(");
-    }
-
-    private BackendModule discoverZooKeeperProvider() {
-        return ServiceLoader.load(BackendModule.class).stream()
-            .map(ServiceLoader.Provider::get)
-            .filter(module -> module.id().equals("zookeeper"))
-            .findFirst()
-            .orElseThrow(() -> new AssertionError("ZooKeeper BackendModule was not discovered"));
+    void testSupportShouldProvideIsolatedConfigurationAndRuntime() throws Exception {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             LockRuntime runtime = support.runtime()) {
+            assertThat(support.configuration().connectString()).isEqualTo(support.server().getConnectString());
+            assertThat(support.configuration().basePath()).startsWith("/locks-");
+            assertThat(runtime.lockClient()).isNotNull();
+        }
     }
 }

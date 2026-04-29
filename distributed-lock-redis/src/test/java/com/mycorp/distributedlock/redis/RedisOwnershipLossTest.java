@@ -4,6 +4,7 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
@@ -50,7 +51,11 @@ class RedisOwnershipLossTest {
 
                 assertThat(lease.isValid()).isFalse();
                 assertThatThrownBy(lease::release)
-                    .isInstanceOf(LockOwnershipLostException.class);
+                    .isInstanceOfSatisfying(LockOwnershipLostException.class, exception -> {
+                        assertThat(exception.context().backendId()).isEqualTo("redis");
+                        assertThat(exception.context().key()).isEqualTo(new LockKey("lost:1"));
+                        assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                    });
             } finally {
                 try {
                     lease.close();
@@ -60,6 +65,40 @@ class RedisOwnershipLossTest {
                     session.close();
                 } catch (RuntimeException ignored) {
                 }
+            }
+        }
+    }
+
+    @Test
+    void redisBackendExceptionShouldIncludeLeaseContext() throws Exception {
+        RedisLockBackend backend = redis.newBackend(30L);
+        BackendSession session = backend.openSession();
+        BackendLockLease lease = session.acquire(new LockRequest(
+            new LockKey("redis:backend:context"),
+            LockMode.MUTEX,
+            WaitPolicy.indefinite()
+        ));
+        try {
+            backend.close();
+
+            assertThatThrownBy(lease::isValid)
+                .isInstanceOfSatisfying(LockBackendException.class, exception -> {
+                    assertThat(exception.context().backendId()).isEqualTo("redis");
+                    assertThat(exception.context().key()).isEqualTo(new LockKey("redis:backend:context"));
+                    assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                });
+        } finally {
+            try {
+                lease.close();
+            } catch (RuntimeException ignored) {
+            }
+            try {
+                session.close();
+            } catch (RuntimeException ignored) {
+            }
+            try {
+                backend.close();
+            } catch (RuntimeException ignored) {
             }
         }
     }
