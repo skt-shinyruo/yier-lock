@@ -14,6 +14,7 @@ import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
@@ -27,6 +28,7 @@ import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Tag("redis-integration")
 class RedisStarterIntegrationTest {
 
     private static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))

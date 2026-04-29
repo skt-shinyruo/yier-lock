@@ -10,6 +10,7 @@ import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -18,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Tag("redis-integration")
 class RedisSessionLossTest {
 
     @Test

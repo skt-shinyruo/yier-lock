@@ -9,12 +9,14 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Tag("redis-integration")
 class RedisLeaseRenewalTest {
 
     private static RedisTestSupport.RunningRedis redis;
