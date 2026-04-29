@@ -2,7 +2,9 @@ package com.mycorp.distributedlock.redis.springboot.integration;
 
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
 import com.mycorp.distributedlock.redis.RedisBackendModule;
+import com.mycorp.distributedlock.redis.RedisKeyStrategy;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockProperties;
 import com.mycorp.distributedlock.runtime.LockRuntime;
@@ -15,6 +17,7 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -48,6 +51,52 @@ class RedisBackendModuleAutoConfigurationTest {
                 RedisDistributedLockProperties properties = context.getBean(RedisDistributedLockProperties.class);
                 assertThat(properties.getUri()).isEqualTo("redis://127.0.0.1:6380");
                 assertThat(properties.getLeaseTime()).isEqualTo(Duration.ofSeconds(45));
+            });
+    }
+
+    @Test
+    void shouldBindAdvancedRedisPropertiesIntoBackendConfiguration() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
+                "distributed.lock.redis.lease-time=45s",
+                "distributed.lock.redis.key-strategy=hash-tagged",
+                "distributed.lock.redis.fixed-lease-renewal-enabled=true",
+                "distributed.lock.redis.renewal-pool-size=4"
+            )
+            .run(context -> {
+                assertThat(context).hasSingleBean(RedisDistributedLockProperties.class);
+                assertThat(context).hasSingleBean(BackendModule.class);
+                assertThat(context.getBean(BackendModule.class)).isInstanceOf(RedisBackendModule.class);
+
+                RedisDistributedLockProperties properties = context.getBean(RedisDistributedLockProperties.class);
+                assertThat(properties.getKeyStrategy()).isEqualTo(RedisKeyStrategy.HASH_TAGGED);
+                assertThat(properties.isFixedLeaseRenewalEnabled()).isTrue();
+                assertThat(properties.getRenewalPoolSize()).isEqualTo(4);
+
+                RedisBackendConfiguration configuration = redisConfiguration(context.getBean(BackendModule.class));
+                assertThat(configuration.keyStrategy()).isEqualTo(RedisKeyStrategy.HASH_TAGGED);
+                assertThat(configuration.fixedLeaseRenewalEnabled()).isTrue();
+                assertThat(configuration.renewalPoolSize()).isEqualTo(4);
+            });
+    }
+
+    @Test
+    void shouldRejectNegativeRenewalPoolSize() {
+        contextRunner
+            .withPropertyValues(
+                "distributed.lock.enabled=true",
+                "distributed.lock.backend=redis",
+                "distributed.lock.redis.uri=redis://127.0.0.1:6380",
+                "distributed.lock.redis.lease-time=45s",
+                "distributed.lock.redis.renewal-pool-size=-1"
+            )
+            .run(context -> {
+                assertThat(context).hasFailed();
+                assertThat(context.getStartupFailure())
+                    .hasMessageContaining("distributed.lock.redis.renewal-pool-size");
             });
     }
 
@@ -239,6 +288,16 @@ class RedisBackendModuleAutoConfigurationTest {
         @Bean
         LockRuntime userLockRuntime() {
             return new StubLockRuntime();
+        }
+    }
+
+    private static RedisBackendConfiguration redisConfiguration(BackendModule module) {
+        try {
+            Field field = RedisBackendModule.class.getDeclaredField("configuration");
+            field.setAccessible(true);
+            return (RedisBackendConfiguration) field.get(module);
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError("Could not read RedisBackendModule configuration", ex);
         }
     }
 
