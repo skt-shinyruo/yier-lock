@@ -140,6 +140,17 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
 
     private void ensureSynchronousReturnType(Method method) {
         Class<?> returnType = method.getReturnType();
+        if (isKotlinCoroutineMethod(method)) {
+            throw new LockConfigurationException(
+                "@DistributedLock does not support Kotlin coroutine methods: " + method
+            );
+        }
+        if (Object.class.equals(returnType) && !properties.getSpring().getAnnotation().isAllowDynamicReturnType()) {
+            throw new LockConfigurationException(
+                "@DistributedLock does not support Object return type by default because async results cannot be rejected before invocation: "
+                    + method
+            );
+        }
         if (CompletionStage.class.isAssignableFrom(returnType)
             || Future.class.isAssignableFrom(returnType)
             || isReactivePublisherType(returnType)) {
@@ -147,6 +158,12 @@ public final class DistributedLockAspect extends StaticMethodMatcherPointcutAdvi
                 "@DistributedLock does not support async return types such as " + returnType.getSimpleName() + ": " + method
             );
         }
+    }
+
+    private boolean isKotlinCoroutineMethod(Method method) {
+        Class<?>[] parameterTypes = method.getParameterTypes();
+        return parameterTypes.length > 0
+            && "kotlin.coroutines.Continuation".equals(parameterTypes[parameterTypes.length - 1].getName());
     }
 
     private boolean isReactivePublisherType(Class<?> returnType) {
