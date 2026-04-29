@@ -11,6 +11,7 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -21,6 +22,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+@Tag("redis-integration")
 class RedisReadWriteWriterPreferenceTest {
 
     private static final String WRITER_PROGRESS_KEY = "redis:rw:writer-progress";

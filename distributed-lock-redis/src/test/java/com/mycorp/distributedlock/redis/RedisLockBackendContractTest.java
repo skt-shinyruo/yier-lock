@@ -13,9 +13,11 @@ import com.mycorp.distributedlock.testkit.WaitPolicyContract;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 
 import java.util.List;
 
+@Tag("redis-integration")
 class RedisMutexLockContractTest extends MutexLockContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -23,6 +25,7 @@ class RedisMutexLockContractTest extends MutexLockContract implements RedisContr
     }
 }
 
+@Tag("redis-integration")
 class RedisWaitPolicyContractTest extends WaitPolicyContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -30,6 +33,7 @@ class RedisWaitPolicyContractTest extends WaitPolicyContract implements RedisCon
     }
 }
 
+@Tag("redis-integration")
 class RedisFencingContractTest extends FencingContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -37,6 +41,7 @@ class RedisFencingContractTest extends FencingContract implements RedisContractR
     }
 }
 
+@Tag("redis-integration")
 class RedisReadWriteLockContractTest extends ReadWriteLockContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -44,6 +49,7 @@ class RedisReadWriteLockContractTest extends ReadWriteLockContract implements Re
     }
 }
 
+@Tag("redis-integration")
 class RedisLeasePolicyContractTest extends LeasePolicyContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -51,6 +57,7 @@ class RedisLeasePolicyContractTest extends LeasePolicyContract implements RedisC
     }
 }
 
+@Tag("redis-integration")
 class RedisFixedLeasePolicyContractTest extends FixedLeasePolicyContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -58,6 +65,7 @@ class RedisFixedLeasePolicyContractTest extends FixedLeasePolicyContract impleme
     }
 }
 
+@Tag("redis-integration")
 class RedisReentryContractTest extends ReentryContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {
@@ -65,6 +73,7 @@ class RedisReentryContractTest extends ReentryContract implements RedisContractR
     }
 }
 
+@Tag("redis-integration")
 class RedisSessionLifecycleContractTest extends SessionLifecycleContract implements RedisContractRuntime {
     @Override
     public LockRuntime createRuntime() {

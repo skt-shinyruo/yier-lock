@@ -11,11 +11,13 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Tag("redis-integration")
 class RedisOwnershipLossTest {
 
     private static RedisTestSupport.RunningRedis redis;

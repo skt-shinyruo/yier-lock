@@ -11,12 +11,14 @@ import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.client.DefaultLockClient;
 import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
 import com.mycorp.distributedlock.core.client.SupportedLockModes;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Tag("redis-integration")
 class RedisExecutorOwnershipLossTest {
 
     @Test
