@@ -16,6 +16,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -82,6 +83,35 @@ class ZooKeeperAcquireWaitLifecycleTest {
                 try (BackendLockLease waiterLease = result.get(3, TimeUnit.SECONDS)) {
                     assertThat(waiterLease.isValid()).isTrue();
                 }
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    void predecessorDeletionShouldWakeWaitingAcquirePromptly() throws Exception {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
+             BackendSession holder = backend.openSession();
+             BackendLockLease holderLease = holder.acquire(request("zk:wait:prompt"));
+             BackendSession waiter = backend.openSession()) {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            AtomicLong releasedNanos = new AtomicLong();
+            try {
+                Future<Duration> result = executor.submit(() -> {
+                    try (BackendLockLease waiterLease = waiter.acquire(timedRequest("zk:wait:prompt"))) {
+                        assertThat(waiterLease.isValid()).isTrue();
+                        return Duration.ofNanos(System.nanoTime() - releasedNanos.get());
+                    }
+                });
+
+                Thread.sleep(150L);
+                releasedNanos.set(System.nanoTime());
+                holderLease.release();
+
+                Duration elapsedAfterRelease = result.get(2, TimeUnit.SECONDS);
+                assertThat(elapsedAfterRelease).isLessThan(Duration.ofMillis(80));
             } finally {
                 executor.shutdownNow();
             }

@@ -25,8 +25,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class ZooKeeperBackendSession implements BackendSession, CuratorBackedSession {
@@ -262,8 +262,11 @@ final class ZooKeeperBackendSession implements BackendSession, CuratorBackedSess
     }
 
     private boolean awaitNodeDeletion(String path, long remainingNanos, LockRequest request) throws Exception {
-        CountDownLatch latch = new CountDownLatch(1);
-        CuratorWatcher watcher = event -> latch.countDown();
+        AtomicBoolean predecessorDeleted = new AtomicBoolean(false);
+        CuratorWatcher watcher = event -> {
+            predecessorDeleted.set(true);
+            signalTerminalWaiters();
+        };
         Stat stat = curatorFramework.checkExists().usingWatcher(watcher).forPath(path);
         if (stat == null) {
             return true;
@@ -275,10 +278,12 @@ final class ZooKeeperBackendSession implements BackendSession, CuratorBackedSess
             if (state.get() != SessionState.ACTIVE) {
                 ensureActive(request);
             }
-            terminalMonitor.wait(TimeUnit.NANOSECONDS.toMillis(waitNanos), (int) (waitNanos % 1_000_000L));
+            if (!predecessorDeleted.get()) {
+                terminalMonitor.wait(TimeUnit.NANOSECONDS.toMillis(waitNanos), (int) (waitNanos % 1_000_000L));
+            }
         }
         ensureActive(request);
-        return latch.getCount() == 0L || curatorFramework.checkExists().forPath(path) == null;
+        return predecessorDeleted.get() || curatorFramework.checkExists().forPath(path) == null;
     }
 
     void forgetLease(ZooKeeperLease lease) {
