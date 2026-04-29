@@ -69,14 +69,40 @@ class DistributedLockAsyncGuardTest {
     }
 
     @Test
-    void objectReturningAsyncValueShouldBeRejectedByExecutorDefenseInDepth() {
+    void objectReturnTypeShouldBeRejectedBeforeInvocationByDefault() {
         contextRunner.run(context -> {
             AsyncService service = context.getBean(AsyncService.class);
 
             assertThatThrownBy(() -> service.processObjectAsync("42"))
                 .isInstanceOf(LockConfigurationException.class)
-                .hasMessageContaining("CompletionStage");
-            assertThat(service.wasInvoked()).isTrue();
+                .hasMessageContaining("Object");
+            assertThat(service.wasInvoked()).isFalse();
+        });
+    }
+
+    @Test
+    void objectReturnTypeCompatibilityModeShouldKeepExecutorDefenseInDepth() {
+        contextRunner
+            .withPropertyValues("distributed.lock.spring.annotation.allow-dynamic-return-type=true")
+            .run(context -> {
+                AsyncService service = context.getBean(AsyncService.class);
+
+                assertThatThrownBy(() -> service.processObjectAsync("42"))
+                    .isInstanceOf(LockConfigurationException.class)
+                    .hasMessageContaining("CompletionStage");
+                assertThat(service.wasInvoked()).isTrue();
+            });
+    }
+
+    @Test
+    void kotlinCoroutineSignatureShouldBeRejectedBeforeInvocation() {
+        contextRunner.run(context -> {
+            AsyncService service = context.getBean(AsyncService.class);
+
+            assertThatThrownBy(() -> service.processCoroutine("42", null))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("Kotlin coroutine");
+            assertThat(service.wasInvoked()).isFalse();
         });
     }
 
@@ -156,6 +182,12 @@ class DistributedLockAsyncGuardTest {
         public Object processObjectAsync(String jobId) {
             invoked.set(true);
             return CompletableFuture.completedFuture("processed-" + jobId);
+        }
+
+        @DistributedLock(key = "job:#{#p0}")
+        public Object processCoroutine(String jobId, kotlin.coroutines.Continuation<String> continuation) {
+            invoked.set(true);
+            return "processed-" + jobId;
         }
 
         boolean wasInvoked() {

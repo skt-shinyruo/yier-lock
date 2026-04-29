@@ -42,6 +42,7 @@ public class DistributedLockProperties {
     public static final class Annotation {
         private boolean enabled = true;
         private Duration defaultTimeout;
+        private boolean allowDynamicReturnType;
 
         public boolean isEnabled() {
             return enabled;
@@ -57,6 +58,14 @@ public class DistributedLockProperties {
 
         public void setDefaultTimeout(Duration defaultTimeout) {
             this.defaultTimeout = defaultTimeout;
+        }
+
+        public boolean isAllowDynamicReturnType() {
+            return allowDynamicReturnType;
+        }
+
+        public void setAllowDynamicReturnType(boolean allowDynamicReturnType) {
+            this.allowDynamicReturnType = allowDynamicReturnType;
         }
     }
 }
