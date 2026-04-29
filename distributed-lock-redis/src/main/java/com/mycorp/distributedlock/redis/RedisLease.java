@@ -24,6 +24,7 @@ final class RedisLease implements BackendLockLease {
     private final String ownerValue;
     private final RedisBackendSession session;
     private final long leaseMillis;
+    private final boolean renewable;
     private final AtomicReference<LeaseState> state = new AtomicReference<>(LeaseState.ACTIVE);
     private final AtomicReference<ScheduledFuture<?>> renewalTask = new AtomicReference<>();
 
@@ -34,7 +35,8 @@ final class RedisLease implements BackendLockLease {
         FencingToken fencingToken,
         String ownerValue,
         RedisBackendSession session,
-        long leaseMillis
+        long leaseMillis,
+        boolean renewable
     ) {
         this.backend = backend;
         this.key = key;
@@ -43,6 +45,7 @@ final class RedisLease implements BackendLockLease {
         this.ownerValue = ownerValue;
         this.session = session;
         this.leaseMillis = leaseMillis;
+        this.renewable = renewable;
     }
 
     @Override
@@ -251,5 +254,9 @@ final class RedisLease implements BackendLockLease {
 
     String ownerValue() {
         return ownerValue;
+    }
+
+    boolean renewable() {
+        return renewable;
     }
 }
