@@ -7,7 +7,6 @@ import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -25,10 +24,8 @@ class ZooKeeperReadWriteConcurrencyTest {
 
     @Test
     void writerShouldTimeOutWhileReaderIsHeld() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             );
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession readerSession = backend.openSession();
              BackendLockLease ignored = readerSession.acquire(new LockRequest(
                  new LockKey("zk:rw"),
@@ -46,10 +43,8 @@ class ZooKeeperReadWriteConcurrencyTest {
 
     @Test
     void readerAndWriterShouldNeverOverlapUnderContention() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             ExecutorService executor = Executors.newFixedThreadPool(2);
             try {
                 for (int round = 0; round < 25; round++) {

@@ -4,6 +4,7 @@ import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
 import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
 
 import java.util.Objects;
 
@@ -48,6 +49,16 @@ public final class ObservedLockRuntime implements LockRuntime {
     @Override
     public SynchronousLockExecutor synchronousLockExecutor() {
         return synchronousLockExecutor;
+    }
+
+    @Override
+    public String backendId() {
+        return delegate.backendId();
+    }
+
+    @Override
+    public BackendCapabilities capabilities() {
+        return delegate.capabilities();
     }
 
     @Override

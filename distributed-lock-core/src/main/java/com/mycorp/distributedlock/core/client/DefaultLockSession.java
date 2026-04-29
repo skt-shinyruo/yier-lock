@@ -6,6 +6,7 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
+import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
@@ -41,7 +42,7 @@ public final class DefaultLockSession implements LockSession {
             throw new IllegalStateException("Lock session is already closed");
         }
         validator.validate(supportedLockModes, request);
-        registerKey(request.key());
+        registerKey(request);
         boolean leaseCreated = false;
         try {
             BackendLockLease backendLease = backendSession.acquire(request);
@@ -93,9 +94,13 @@ public final class DefaultLockSession implements LockSession {
         return true;
     }
 
-    private void registerKey(LockKey key) {
-        if (!activeLeaseKeys.add(key)) {
-            throw new LockReentryException("Lock key is already held by this session: " + key.value());
+    private void registerKey(LockRequest request) {
+        if (!activeLeaseKeys.add(request.key())) {
+            throw new LockReentryException(
+                "Lock key is already held by this session: " + request.key().value(),
+                null,
+                LockFailureContext.fromRequest(request, null, null)
+            );
         }
     }
 

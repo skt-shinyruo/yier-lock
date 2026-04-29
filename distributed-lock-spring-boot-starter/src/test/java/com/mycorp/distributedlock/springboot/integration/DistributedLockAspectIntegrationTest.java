@@ -10,13 +10,13 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitMode;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
+import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
-import com.mycorp.distributedlock.springboot.annotation.DistributedLockMode;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
@@ -49,6 +49,11 @@ class DistributedLockAspectIntegrationTest {
             "distributed.lock.enabled=true",
             "distributed.lock.backend=in-memory"
         );
+
+    @Test
+    void annotationModeUsesApiLockMode() throws NoSuchMethodException {
+        assertThat(DistributedLock.class.getMethod("mode").getReturnType()).isEqualTo(LockMode.class);
+    }
 
     @Test
     void shouldSerializeAnnotatedMethodCallsByKey() {
@@ -100,9 +105,25 @@ class DistributedLockAspectIntegrationTest {
     }
 
     @Test
-    void shouldMapBlankWaitAndLeaseToIndefiniteAndBackendDefault() {
+    void shouldMapBlankWaitWithoutDefaultTimeoutToIndefinite() {
+        capturingContextRunner().run(context -> {
+            PolicyService service = context.getBean(PolicyService.class);
+            CapturingBackend backend = context.getBean(CapturingBackend.class);
+
+            assertThat(service.defaultPolicies("42")).isEqualTo("ok");
+
+            LockRequest request = backend.lastRequest();
+            assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.INDEFINITE);
+            assertThat(request.waitPolicy().timeout()).isEqualTo(Duration.ZERO);
+            assertThat(request.leasePolicy().mode()).isEqualTo(LeaseMode.BACKEND_DEFAULT);
+            assertThat(request.leasePolicy().duration()).isEqualTo(Duration.ZERO);
+        });
+    }
+
+    @Test
+    void shouldMapBlankWaitWithZeroDefaultTimeoutToTryOnce() {
         capturingContextRunner()
-            .withPropertyValues("distributed.lock.spring.annotation.default-timeout=1s")
+            .withPropertyValues("distributed.lock.spring.annotation.default-timeout=0s")
             .run(context -> {
                 PolicyService service = context.getBean(PolicyService.class);
                 CapturingBackend backend = context.getBean(CapturingBackend.class);
@@ -110,10 +131,40 @@ class DistributedLockAspectIntegrationTest {
                 assertThat(service.defaultPolicies("42")).isEqualTo("ok");
 
                 LockRequest request = backend.lastRequest();
-                assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.INDEFINITE);
+                assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TRY_ONCE);
                 assertThat(request.waitPolicy().timeout()).isEqualTo(Duration.ZERO);
-                assertThat(request.leasePolicy().mode()).isEqualTo(LeaseMode.BACKEND_DEFAULT);
-                assertThat(request.leasePolicy().duration()).isEqualTo(Duration.ZERO);
+            });
+    }
+
+    @Test
+    void shouldMapBlankWaitWithPositiveDefaultTimeoutToTimed() {
+        capturingContextRunner()
+            .withPropertyValues("distributed.lock.spring.annotation.default-timeout=250ms")
+            .run(context -> {
+                PolicyService service = context.getBean(PolicyService.class);
+                CapturingBackend backend = context.getBean(CapturingBackend.class);
+
+                assertThat(service.defaultPolicies("42")).isEqualTo("ok");
+
+                LockRequest request = backend.lastRequest();
+                assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TIMED);
+                assertThat(request.waitPolicy().timeout()).isEqualTo(Duration.ofMillis(250));
+            });
+    }
+
+    @Test
+    void shouldPreferExplicitWaitOverDefaultTimeout() {
+        capturingContextRunner()
+            .withPropertyValues("distributed.lock.spring.annotation.default-timeout=250ms")
+            .run(context -> {
+                PolicyService service = context.getBean(PolicyService.class);
+                CapturingBackend backend = context.getBean(CapturingBackend.class);
+
+                assertThat(service.updateWithLease("42")).isEqualTo("ok");
+
+                LockRequest request = backend.lastRequest();
+                assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TRY_ONCE);
+                assertThat(request.waitPolicy().timeout()).isEqualTo(Duration.ZERO);
             });
     }
 
@@ -126,6 +177,32 @@ class DistributedLockAspectIntegrationTest {
                 .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> service.negativeLease("42"))
                 .isInstanceOf(IllegalArgumentException.class);
+        });
+    }
+
+    @Test
+    void shouldWrapInvalidWaitDurationDiagnostics() {
+        capturingContextRunner().run(context -> {
+            PolicyService service = context.getBean(PolicyService.class);
+
+            assertThatThrownBy(() -> service.invalidWaitFor("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("waitFor")
+                .hasMessageContaining("invalidWaitFor")
+                .hasMessageContaining("abc");
+        });
+    }
+
+    @Test
+    void shouldWrapInvalidLeaseDurationDiagnostics() {
+        capturingContextRunner().run(context -> {
+            PolicyService service = context.getBean(PolicyService.class);
+
+            assertThatThrownBy(() -> service.invalidLeaseFor("42"))
+                .isInstanceOf(LockConfigurationException.class)
+                .hasMessageContaining("leaseFor")
+                .hasMessageContaining("invalidLeaseFor")
+                .hasMessageContaining("abc");
         });
     }
 
@@ -168,7 +245,7 @@ class DistributedLockAspectIntegrationTest {
             this.guardedResource = guardedResource;
         }
 
-        @DistributedLock(key = "order:#{#p0}", mode = DistributedLockMode.MUTEX, waitFor = "50ms")
+        @DistributedLock(key = "order:#{#p0}", mode = LockMode.MUTEX, waitFor = "50ms")
         public String process(String jobId, CountDownLatch entered, CountDownLatch release) throws InterruptedException {
             int concurrent = concurrentInvocations.incrementAndGet();
             maxConcurrentInvocations.updateAndGet(previous -> Math.max(previous, concurrent));
@@ -238,6 +315,14 @@ class DistributedLockAspectIntegrationTest {
 
         @DistributedLock(key = "order:#{#p0}", leaseFor = "-1s")
         public void negativeLease(String id) {
+        }
+
+        @DistributedLock(key = "order:#{#p0}", waitFor = "abc")
+        public void invalidWaitFor(String id) {
+        }
+
+        @DistributedLock(key = "order:#{#p0}", leaseFor = "abc")
+        public void invalidLeaseFor(String id) {
         }
     }
 

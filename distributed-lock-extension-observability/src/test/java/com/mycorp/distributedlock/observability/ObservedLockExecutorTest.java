@@ -11,6 +11,7 @@ import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -147,6 +148,21 @@ class ObservedLockExecutorTest {
         verify(client).openSession();
         verify(session).acquire(sampleRequest());
         verify(delegate, never()).synchronousLockExecutor();
+    }
+
+    @Test
+    void observedRuntimeShouldPreserveDelegateMetadata() {
+        BackendCapabilities capabilities = BackendCapabilities.withoutFixedLeaseDuration();
+        LockClient client = mock(LockClient.class);
+        LockRuntime delegate = mock(LockRuntime.class);
+        when(delegate.lockClient()).thenReturn(client);
+        when(delegate.backendId()).thenReturn("redis-primary");
+        when(delegate.capabilities()).thenReturn(capabilities);
+
+        LockRuntime observedRuntime = ObservedLockRuntime.decorate(delegate, event -> { }, "observed", false);
+
+        assertThat(observedRuntime.backendId()).isEqualTo("redis-primary");
+        assertThat(observedRuntime.capabilities()).isSameAs(capabilities);
     }
 
     private static LockRequest sampleRequest() {

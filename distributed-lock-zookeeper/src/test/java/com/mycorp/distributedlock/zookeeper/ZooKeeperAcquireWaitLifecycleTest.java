@@ -9,7 +9,6 @@ import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -24,8 +23,8 @@ class ZooKeeperAcquireWaitLifecycleTest {
 
     @Test
     void indefiniteAcquireShouldWakeWhenWaitingSessionIsLost() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
              BackendLockLease ignored = holder.acquire(request("zk:wait:lost"))) {
             BackendSession waiter = backend.openSession();
@@ -34,7 +33,7 @@ class ZooKeeperAcquireWaitLifecycleTest {
                 Future<Throwable> result = executor.submit(() -> acquireAndReturnFailure(waiter, "zk:wait:lost"));
                 Thread.sleep(250L);
                 CuratorFramework curator = ((CuratorBackedSession) waiter).curatorFramework();
-                KillSession.kill(curator.getZookeeperClient().getZooKeeper(), server.getConnectString());
+                KillSession.kill(curator.getZookeeperClient().getZooKeeper(), support.server().getConnectString());
 
                 Throwable failure = result.get(3, TimeUnit.SECONDS);
                 assertThat(failure).isInstanceOf(LockSessionLostException.class);
@@ -47,8 +46,8 @@ class ZooKeeperAcquireWaitLifecycleTest {
 
     @Test
     void indefiniteAcquireShouldWakeWhenWaitingSessionIsClosed() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
              BackendLockLease ignored = holder.acquire(request("zk:wait:closed"));
              BackendSession waiter = backend.openSession()) {
@@ -69,8 +68,8 @@ class ZooKeeperAcquireWaitLifecycleTest {
 
     @Test
     void timedAcquireShouldContinueWaitingAcrossBoundedSlices() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
              BackendLockLease holderLease = holder.acquire(request("zk:wait:timed"));
              BackendSession waiter = backend.openSession()) {

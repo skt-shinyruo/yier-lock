@@ -12,7 +12,6 @@ import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -24,14 +23,12 @@ class ZooKeeperSessionLossTest {
 
     @Test
     void lostSessionShouldRemainLostAndRejectNewAcquires() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession session = backend.openSession();
             try {
                 CuratorFramework curatorFramework = ((CuratorBackedSession) session).curatorFramework();
-                KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), server.getConnectString());
+                KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), support.server().getConnectString());
 
                 waitUntilState(session, SessionState.LOST);
                 assertThat(session.state()).isEqualTo(SessionState.LOST);
@@ -41,7 +38,11 @@ class ZooKeeperSessionLossTest {
                     new LockKey("zk:lost:acquire"),
                     LockMode.MUTEX,
                     WaitPolicy.indefinite()
-                ))).isInstanceOf(LockSessionLostException.class);
+                ))).isInstanceOfSatisfying(LockSessionLostException.class, exception -> {
+                    assertThat(exception.context().backendId()).isEqualTo("zookeeper");
+                    assertThat(exception.context().key()).isEqualTo(new LockKey("zk:lost:acquire"));
+                    assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                });
             } finally {
                 try {
                     session.close();
@@ -53,13 +54,11 @@ class ZooKeeperSessionLossTest {
 
     @Test
     void directCloseAfterSessionLossShouldReportSessionLost() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession session = backend.openSession();
             CuratorFramework curatorFramework = ((CuratorBackedSession) session).curatorFramework();
-            KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), server.getConnectString());
+            KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), support.server().getConnectString());
 
             waitUntilState(session, SessionState.LOST);
             assertThatThrownBy(session::close).isInstanceOf(LockSessionLostException.class);
@@ -68,10 +67,8 @@ class ZooKeeperSessionLossTest {
 
     @Test
     void lostLeaseShouldExposeLostStateAndRejectRelease() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
-             )) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession session = backend.openSession();
             BackendLockLease lease = session.acquire(new LockRequest(
                 new LockKey("zk:lost:lease"),
@@ -80,14 +77,19 @@ class ZooKeeperSessionLossTest {
             ));
             try {
                 CuratorFramework curatorFramework = ((CuratorBackedSession) session).curatorFramework();
-                KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), server.getConnectString());
+                KillSession.kill(curatorFramework.getZookeeperClient().getZooKeeper(), support.server().getConnectString());
 
                 waitUntilState(session, SessionState.LOST);
                 assertThat(lease.isValid()).isFalse();
                 assertThat(lease.state()).isEqualTo(LeaseState.LOST);
                 assertThatThrownBy(lease::release)
                     .isInstanceOf(LockOwnershipLostException.class)
-                    .hasMessageContaining("zk:lost:lease");
+                    .hasMessageContaining("zk:lost:lease")
+                    .isInstanceOfSatisfying(LockOwnershipLostException.class, exception -> {
+                        assertThat(exception.context().backendId()).isEqualTo("zookeeper");
+                        assertThat(exception.context().key()).isEqualTo(new LockKey("zk:lost:lease"));
+                        assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                    });
             } finally {
                 try {
                     lease.close();

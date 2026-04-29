@@ -1,90 +1,22 @@
-# 分布式锁 2.0 测试套件
+# Distributed Lock Regression Matrix
 
-本文档记录 2.0 当前维护的主线回归入口。
+This module is the canonical regression matrix entry point for the distributed lock reactor. It keeps suite-level smoke tests executable while backend-specific coverage remains in each module.
 
-## 当前维护的测试
+## Backend Prerequisites
 
-- `ApiSurfaceTest`
-- `LockBackendSurfaceTest`
-- `DefaultLockClientTest`
-- `DefaultSynchronousLockExecutorTest`
-- `SessionBoundLockLeaseConcurrencyTest`
-- `LockRuntimeBuilderTest`
-- `InMemoryLockClientContractTest`
-- `InMemoryLockBackendThreadOwnershipTest`
-- `FencedResourceConcurrencyTest`
-- `RedisBackendModuleTest`
-- `RedisLockBackendContractTest`
-- `RedisLeaseRenewalTest`
-- `RedisOwnershipLossTest`
-- `RedisReadWriteWriterPreferenceTest`
-- `RedisKeyStrategyTest`
-- `ZooKeeperBackendModuleTest`
-- `ZooKeeperLockBackendContractTest`
-- `ZooKeeperSessionLossTest`
-- `ZooKeeperAcquireWaitLifecycleTest`
-- `ZooKeeperPathAndQueueValidationTest`
-- `ZooKeeperFencingOwnershipRecheckTest`
-- `DistributedLockAutoConfigurationIntegrationTest`
-- `DistributedLockAspectIntegrationTest`
-- `DistributedLockAsyncGuardTest`
-- `DistributedLockProxyBoundaryTest`
-- `SpelLockKeyResolverTest`
-- `RedisBackendModuleAutoConfigurationTest`
-- `ZooKeeperBackendModuleAutoConfigurationTest`
-- `RedisStarterIntegrationTest`
-- `ZooKeeperStarterIntegrationTest`
-- `ObservedLockSessionTest`
-- `ObservedLockExecutorTest`
-- `ObservedLockThrowableTest`
-- `CompositeLockObservationSinkTest`
-- `DistributedLockObservabilityAutoConfigurationTest`
+- Core, runtime, testkit, and Spring starter checks do not require external services.
+- Redis checks require a reachable local Redis instance when running Redis integration tests.
+- ZooKeeper checks require a reachable local ZooKeeper instance when running ZooKeeper integration tests.
+- Benchmark compilation is part of the matrix; full JMH execution is opt-in because it may require local backend services and dedicated runtime settings.
 
-## 推荐命令
+## Commands
 
 ```bash
-# core / testkit 主线验证
-mvn -pl distributed-lock-core,distributed-lock-testkit -am test \
-  -Dtest=LockBackendSurfaceTest,DefaultLockClientTest,DefaultSynchronousLockExecutorTest,SessionBoundLockLeaseConcurrencyTest,InMemoryLockClientContractTest,InMemoryLockBackendThreadOwnershipTest,FencedResourceConcurrencyTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-# runtime / starter / backend Spring 模块验证
-mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter,distributed-lock-redis-spring-boot-autoconfigure,distributed-lock-zookeeper-spring-boot-autoconfigure -am test \
-  -Dtest=LockRuntimeBuilderTest,DistributedLockAutoConfigurationIntegrationTest,DistributedLockAspectIntegrationTest,DistributedLockAsyncGuardTest,DistributedLockProxyBoundaryTest,SpelLockKeyResolverTest,RedisBackendModuleAutoConfigurationTest,ZooKeeperBackendModuleAutoConfigurationTest,RedisStarterIntegrationTest,ZooKeeperStarterIntegrationTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-# Redis adapter 验证
-mvn -pl distributed-lock-redis -am test \
-  -Dtest=RedisBackendModuleTest,RedisLockBackendContractTest,RedisLeaseRenewalTest,RedisOwnershipLossTest,RedisReadWriteWriterPreferenceTest,RedisKeyStrategyTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-# ZooKeeper adapter 验证
-mvn -pl distributed-lock-zookeeper -am test \
-  -Dtest=ZooKeeperBackendModuleTest,ZooKeeperLockBackendContractTest,ZooKeeperSessionLossTest,ZooKeeperAcquireWaitLifecycleTest,ZooKeeperPathAndQueueValidationTest,ZooKeeperFencingOwnershipRecheckTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-# observability extension 验证
-mvn -pl distributed-lock-extension-observability -am test \
-  -Dtest=ObservedLockSessionTest,ObservedLockExecutorTest,ObservedLockThrowableTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-mvn -pl distributed-lock-extension-observability-spring -am test \
-  -Dtest=CompositeLockObservationSinkTest,DistributedLockObservabilityAutoConfigurationTest \
-  -Dsurefire.failIfNoSpecifiedTests=false
-
-# 全仓回归
 mvn test
-
-# Spring Boot compatibility checks
-mvn test -Dspring-boot.version=3.3.13
-mvn test -Dspring-boot.version=3.4.5
+mvn -pl distributed-lock-core,distributed-lock-testkit -am test
+mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter -am test
+mvn -pl distributed-lock-redis -am test
+mvn -pl distributed-lock-zookeeper -am test
+mvn -pl distributed-lock-test-suite -am test
+mvn -Pbenchmarks -DskipTests compile
 ```
-
-## 说明
-
-- `distributed-lock-benchmarks` 不在默认 reactor 中，不作为 2.0 主线回归入口。
-- benchmarks 依赖安装到本地仓库的 snapshot；修改 runtime/backend/starter 后需要先重新执行 `mvn -q install -DskipTests`。
-- Benchmark sources can be compile-checked from the root with `mvn -Pbenchmarks -DskipTests compile`; full JMH execution remains opt-in and requires local Redis/ZooKeeper when a benchmark uses those backends.
-- 顶层旧 `examples/` 已废弃；当前示例资产位于 `distributed-lock-examples`。
-- 当前回归覆盖非重入语义、`LockReentryException`、`WaitPolicy.tryOnce()` 和 `LeasePolicy.fixed(...)` 能力检查。
-- 1.x 的 provider、factory、batch、async、health 相关测试已不再适用。

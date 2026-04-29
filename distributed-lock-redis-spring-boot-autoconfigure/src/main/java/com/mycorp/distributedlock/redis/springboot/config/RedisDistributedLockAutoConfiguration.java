@@ -3,7 +3,7 @@ package com.mycorp.distributedlock.redis.springboot.config;
 import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
 import com.mycorp.distributedlock.redis.RedisBackendModule;
 import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendModule;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -23,10 +23,11 @@ public class RedisDistributedLockAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(RedisDistributedLockProperties.class)
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean({ BackendModule.class, LockRuntime.class })
+    @ConditionalOnMissingBean(value = LockRuntime.class, name = "redisDistributedLockBackendModule")
     static class DefaultRedisBackendConfiguration {
 
-        @Bean
+        @Bean("redisDistributedLockBackendModule")
+        @ConditionalOnMissingBean(name = "redisDistributedLockBackendModule")
         BackendModule redisBackendModule(RedisDistributedLockProperties properties) {
             RedisBackendConfiguration configuration = new RedisBackendConfiguration(
                 requireUri(properties.getUri()),

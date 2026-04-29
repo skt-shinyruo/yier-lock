@@ -1,8 +1,6 @@
 package com.mycorp.distributedlock.examples;
 
-import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
-import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.WaitPolicy;
@@ -37,10 +35,6 @@ public final class ProgrammaticZooKeeperExample {
     }
 
     private static LockRequest sampleRequest(String key) {
-        return new LockRequest(
-            new LockKey(key),
-            LockMode.MUTEX,
-            WaitPolicy.timed(Duration.ofSeconds(2))
-        );
+        return LockRequest.mutex(key, WaitPolicy.timed(Duration.ofSeconds(2)));
     }
 }

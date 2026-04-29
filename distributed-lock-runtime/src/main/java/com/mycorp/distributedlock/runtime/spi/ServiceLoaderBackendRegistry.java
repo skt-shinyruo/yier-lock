@@ -1,5 +1,7 @@
 package com.mycorp.distributedlock.runtime.spi;
 
+import com.mycorp.distributedlock.spi.BackendModule;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.ServiceLoader;

@@ -9,8 +9,8 @@ import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.core.backend.BackendSession;
 import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -20,6 +20,8 @@ import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.time.Duration;
 
@@ -27,8 +29,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RedisStarterIntegrationTest {
 
-    private static String containerId;
-    private static int redisPort;
+    private static final GenericContainer<?> REDIS = new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
+        .withExposedPorts(6379);
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(
@@ -38,17 +40,13 @@ class RedisStarterIntegrationTest {
         ));
 
     @BeforeAll
-    static void startRedis() throws Exception {
-        containerId = run("docker", "run", "-d", "-P", "redis:7-alpine").trim();
-        String portOutput = run("docker", "port", containerId, "6379/tcp").trim();
-        redisPort = Integer.parseInt(portOutput.substring(portOutput.lastIndexOf(':') + 1));
+    static void startRedis() {
+        REDIS.start();
     }
 
     @AfterAll
-    static void stopRedis() throws Exception {
-        if (containerId != null && !containerId.isBlank()) {
-            run("docker", "rm", "-f", containerId);
-        }
+    static void stopRedis() {
+        REDIS.stop();
     }
 
     @Test
@@ -57,7 +55,7 @@ class RedisStarterIntegrationTest {
             .withPropertyValues(
                 "distributed.lock.enabled=true",
                 "distributed.lock.backend=redis",
-                "distributed.lock.redis.uri=redis://127.0.0.1:" + redisPort,
+                "distributed.lock.redis.uri=" + redisUri(),
                 "distributed.lock.redis.lease-time=30s"
             )
             .run(context -> {
@@ -72,7 +70,7 @@ class RedisStarterIntegrationTest {
     }
 
     @Test
-    void shouldFailWhenUserOwnedBackendRegistryDoesNotContainSelectedBackend() {
+    void shouldFailRedisPropertyValidationWhenUnrelatedBackendModuleExistsWithoutRedisProperties() {
         contextRunner
             .withUserConfiguration(UserBackendModuleConfiguration.class)
             .withPropertyValues(
@@ -82,7 +80,9 @@ class RedisStarterIntegrationTest {
             .run(context -> {
                 assertThat(context).hasFailed();
                 assertThat(context.getStartupFailure())
-                    .hasMessageContaining("Requested backend not found: redis");
+                    .hasStackTraceContaining("BindValidationException")
+                    .hasStackTraceContaining("distributed.lock.redis.uri")
+                    .hasStackTraceContaining("distributed.lock.redis.leaseTime");
             });
     }
 
@@ -92,6 +92,10 @@ class RedisStarterIntegrationTest {
             LockMode.MUTEX,
             WaitPolicy.timed(Duration.ofSeconds(1))
         );
+    }
+
+    private static String redisUri() {
+        return "redis://%s:%d".formatted(REDIS.getHost(), REDIS.getMappedPort(6379));
     }
 
     @Configuration(proxyBeanMethods = false)
@@ -132,13 +136,4 @@ class RedisStarterIntegrationTest {
         }
     }
 
-    private static String run(String... command) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes()).trim();
-        int exitCode = process.waitFor();
-        if (exitCode != 0) {
-            throw new IllegalStateException("Command failed: " + String.join(" ", command) + "\n" + output);
-        }
-        return output;
-    }
 }

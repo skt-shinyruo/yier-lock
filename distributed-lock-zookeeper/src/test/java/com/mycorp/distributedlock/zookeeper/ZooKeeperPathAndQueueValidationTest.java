@@ -9,7 +9,6 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -37,12 +36,12 @@ class ZooKeeperPathAndQueueValidationTest {
 
     @Test
     void malformedQueueNodeShouldFailWithBackendException() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
-             CuratorFramework client = CuratorFrameworkFactory.newClient(server.getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
+             CuratorFramework client = CuratorFrameworkFactory.newClient(support.server().getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
             client.start();
             assertThat(client.blockUntilConnected(10, TimeUnit.SECONDS)).isTrue();
-            String queueRoot = "/distributed-locks/rw/" + encode("zk:bad-node") + "/locks";
+            String queueRoot = support.configuration().basePath() + "/rw/" + encode("zk:bad-node") + "/locks";
             client.create().creatingParentsIfNeeded().forPath(queueRoot + "/read-bad");
 
             try (BackendSession session = backend.openSession()) {
@@ -51,21 +50,25 @@ class ZooKeeperPathAndQueueValidationTest {
                     LockMode.READ,
                     WaitPolicy.tryOnce()
                 )))
-                    .isInstanceOf(LockBackendException.class)
-                    .hasMessageContaining("read-bad");
+                    .isInstanceOfSatisfying(LockBackendException.class, exception -> {
+                        assertThat(exception).hasMessageContaining("read-bad");
+                        assertThat(exception.context().backendId()).isEqualTo("zookeeper");
+                        assertThat(exception.context().key()).isEqualTo(new LockKey("zk:bad-node"));
+                        assertThat(exception.context().mode()).isEqualTo(LockMode.READ);
+                    });
             }
         }
     }
 
     @Test
     void overflowingQueueNodeSequenceShouldFailWithBackendException() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
-             CuratorFramework client = CuratorFrameworkFactory.newClient(server.getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
+             CuratorFramework client = CuratorFrameworkFactory.newClient(support.server().getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
             client.start();
             assertThat(client.blockUntilConnected(10, TimeUnit.SECONDS)).isTrue();
             String childName = "read-999999999999999999999999999999999999";
-            String queueRoot = "/distributed-locks/rw/" + encode("zk:overflow-node") + "/locks";
+            String queueRoot = support.configuration().basePath() + "/rw/" + encode("zk:overflow-node") + "/locks";
             client.create().creatingParentsIfNeeded().forPath(queueRoot + "/" + childName);
 
             try (BackendSession session = backend.openSession()) {
@@ -74,21 +77,25 @@ class ZooKeeperPathAndQueueValidationTest {
                     LockMode.READ,
                     WaitPolicy.tryOnce()
                 )))
-                    .isInstanceOf(LockBackendException.class)
-                    .hasMessageContaining(childName);
+                    .isInstanceOfSatisfying(LockBackendException.class, exception -> {
+                        assertThat(exception).hasMessageContaining(childName);
+                        assertThat(exception.context().backendId()).isEqualTo("zookeeper");
+                        assertThat(exception.context().key()).isEqualTo(new LockKey("zk:overflow-node"));
+                        assertThat(exception.context().mode()).isEqualTo(LockMode.READ);
+                    });
             }
         }
     }
 
     @Test
     void negativeQueueNodeSequenceShouldFailWithBackendException() throws Exception {
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
-             CuratorFramework client = CuratorFrameworkFactory.newClient(server.getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
+             CuratorFramework client = CuratorFrameworkFactory.newClient(support.server().getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
             client.start();
             assertThat(client.blockUntilConnected(10, TimeUnit.SECONDS)).isTrue();
             String childName = "read--2147483648";
-            String queueRoot = "/distributed-locks/rw/" + encode("zk:negative-node") + "/locks";
+            String queueRoot = support.configuration().basePath() + "/rw/" + encode("zk:negative-node") + "/locks";
             client.create().creatingParentsIfNeeded().forPath(queueRoot + "/" + childName);
 
             try (BackendSession session = backend.openSession()) {

@@ -176,15 +176,31 @@ class DefaultLockSessionTest {
     void acquireShouldRejectSameKeyAlreadyHeldBySession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
         DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        LockRequest request = new LockRequest(new LockKey("orders:42"), LockMode.MUTEX, WaitPolicy.tryOnce());
 
         try (LockSession session = client.openSession();
-             LockLease ignored = session.acquire(sampleRequest("orders:reentry"))) {
-            assertThatThrownBy(() -> session.acquire(sampleRequest("orders:reentry")))
-                .isInstanceOf(LockReentryException.class)
-                .hasMessageContaining("orders:reentry");
+             LockLease ignored = session.acquire(request)) {
+            assertThatThrownBy(() -> session.acquire(request))
+                .isInstanceOfSatisfying(LockReentryException.class, exception -> {
+                    assertThat(exception.context().key()).isEqualTo(new LockKey("orders:42"));
+                    assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                    assertThat(exception.context().waitPolicy()).isEqualTo(WaitPolicy.tryOnce());
+                });
         }
 
         assertThat(backend.leaseCount()).isEqualTo(1);
+    }
+
+    @Test
+    void validatorShouldIncludeRequestContextWhenReadModeUnsupported() {
+        LockRequest request = LockRequest.read("orders:read", WaitPolicy.tryOnce());
+        LockRequestValidator validator = new LockRequestValidator();
+
+        assertThatThrownBy(() -> validator.validate(new SupportedLockModes(true, false, true), request))
+            .isInstanceOfSatisfying(UnsupportedLockCapabilityException.class, exception -> {
+                assertThat(exception.context().key()).isEqualTo(new LockKey("orders:read"));
+                assertThat(exception.context().mode()).isEqualTo(LockMode.READ);
+            });
     }
 
     @Test

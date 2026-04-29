@@ -3,6 +3,7 @@ package com.mycorp.distributedlock.api;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
+import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.api.exception.DistributedLockException;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
@@ -10,6 +11,10 @@ import com.mycorp.distributedlock.api.exception.LockSessionLostException;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -78,6 +83,93 @@ class ApiSurfaceTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new LeasePolicy(LeaseMode.BACKEND_DEFAULT, Duration.ofSeconds(1)))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void lockRequestShouldExposeErgonomicFactoriesAndCopyMethods() {
+        LockRequest mutex = LockRequest.mutex("orders:42", WaitPolicy.timed(Duration.ofSeconds(2)));
+        assertThat(mutex).isEqualTo(new LockRequest(
+                new LockKey("orders:42"),
+                LockMode.MUTEX,
+                WaitPolicy.timed(Duration.ofSeconds(2)),
+                LeasePolicy.backendDefault()
+        ));
+
+        LockRequest read = LockRequest.read("orders:42", WaitPolicy.tryOnce());
+        assertThat(read.mode()).isEqualTo(LockMode.READ);
+
+        LockRequest write = LockRequest.write("orders:42", WaitPolicy.indefinite());
+        assertThat(write.mode()).isEqualTo(LockMode.WRITE);
+
+        LockRequest fixedLease = mutex.withLeasePolicy(LeasePolicy.fixed(Duration.ofSeconds(5)));
+        assertThat(fixedLease.leasePolicy()).isEqualTo(LeasePolicy.fixed(Duration.ofSeconds(5)));
+        assertThat(fixedLease.key()).isEqualTo(mutex.key());
+        assertThat(fixedLease.mode()).isEqualTo(mutex.mode());
+        assertThat(fixedLease.waitPolicy()).isEqualTo(mutex.waitPolicy());
+
+        LockRequest tryOnce = mutex.withWaitPolicy(WaitPolicy.tryOnce());
+        assertThat(tryOnce.waitPolicy()).isEqualTo(WaitPolicy.tryOnce());
+        assertThat(tryOnce.leasePolicy()).isEqualTo(mutex.leasePolicy());
+    }
+
+    @Test
+    void distributedLockExceptionsShouldExposeStructuredContext() {
+        LockFailureContext context = new LockFailureContext(
+                new LockKey("orders:42"),
+                LockMode.MUTEX,
+                WaitPolicy.timed(Duration.ofSeconds(2)),
+                LeasePolicy.backendDefault(),
+                "redis",
+                "session-1"
+        );
+
+        LockAcquisitionTimeoutException contextual = new LockAcquisitionTimeoutException("timed out", null, context);
+        assertThat(contextual.context()).isEqualTo(context);
+
+        LockAcquisitionTimeoutException legacy = new LockAcquisitionTimeoutException("timed out");
+        assertThat(legacy.context()).isEqualTo(LockFailureContext.empty());
+        assertThat(legacy.context()).isNotNull();
+
+        LockAcquisitionTimeoutException lateCause = new LockAcquisitionTimeoutException("timed out");
+        IllegalStateException late = new IllegalStateException("late cause");
+        lateCause.initCause(late);
+        assertThat(lateCause.getCause()).isSameAs(late);
+
+        IllegalStateException cause = new IllegalStateException("cause");
+        LockAcquisitionTimeoutException withCause = new LockAcquisitionTimeoutException("timed out", cause, context);
+        assertThat(withCause.getCause()).isSameAs(cause);
+        assertThat(withCause.context()).isEqualTo(context);
+        assertThat(new LockAcquisitionTimeoutException("timed out", null, null).context())
+                .isEqualTo(LockFailureContext.empty());
+    }
+
+    @Test
+    void distributedLockExceptionSerializationShouldNotRequireSerializableContextGraph() throws Exception {
+        LockAcquisitionTimeoutException exception = new LockAcquisitionTimeoutException(
+                "timed out",
+                null,
+                new LockFailureContext(
+                        new LockKey("orders:42"),
+                        LockMode.MUTEX,
+                        WaitPolicy.tryOnce(),
+                        LeasePolicy.backendDefault(),
+                        "redis",
+                        "session-1"
+                )
+        );
+
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ObjectOutputStream output = new ObjectOutputStream(bytes)) {
+            output.writeObject(exception);
+        }
+
+        LockAcquisitionTimeoutException restored;
+        try (ObjectInputStream input = new ObjectInputStream(new ByteArrayInputStream(bytes.toByteArray()))) {
+            restored = (LockAcquisitionTimeoutException) input.readObject();
+        }
+
+        assertThat(restored.getMessage()).isEqualTo("timed out");
+        assertThat(restored.context()).isEqualTo(LockFailureContext.empty());
     }
 
     @Test

@@ -2,11 +2,13 @@ package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockContext;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
@@ -98,8 +100,12 @@ class DefaultSynchronousLockExecutorTest {
         assertThatThrownBy(() -> executor.withLock(sampleRequest(), outerLease ->
             executor.withLock(sampleRequest(), innerLease -> "nested")
         ))
-            .isInstanceOf(LockReentryException.class)
-            .hasMessageContaining("inventory");
+            .isInstanceOfSatisfying(LockReentryException.class, exception -> {
+                assertThat(exception).hasMessageContaining("inventory");
+                assertThat(exception.context().key()).isEqualTo(new LockKey("inventory"));
+                assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                assertThat(exception.context().waitPolicy()).isEqualTo(WaitPolicy.timed(Duration.ofSeconds(1)));
+            });
 
         assertThat(backend.openSessionCount()).hasValue(1);
         assertThat(backend.releaseCount()).hasValue(1);
@@ -125,6 +131,38 @@ class DefaultSynchronousLockExecutorTest {
         assertThat(backend.openSessionCount()).hasValue(2);
         assertThat(backend.releaseCount()).hasValue(2);
         assertThat(backend.sessionCloseCount()).hasValue(2);
+    }
+
+    @Test
+    void withLockShouldPropagateAcquireInterruptedException() {
+        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new LockClient() {
+            @Override
+            public LockSession openSession() {
+                return new LockSession() {
+                    @Override
+                    public LockLease acquire(LockRequest request) throws InterruptedException {
+                        throw new InterruptedException("interrupted acquire");
+                    }
+
+                    @Override
+                    public SessionState state() {
+                        return SessionState.ACTIVE;
+                    }
+
+                    @Override
+                    public void close() {
+                    }
+                };
+            }
+
+            @Override
+            public void close() {
+            }
+        });
+
+        assertThatThrownBy(() -> executor.withLock(LockRequest.mutex("orders:42", WaitPolicy.tryOnce()), lease -> null))
+            .isInstanceOf(InterruptedException.class)
+            .hasMessage("interrupted acquire");
     }
 
     @Test

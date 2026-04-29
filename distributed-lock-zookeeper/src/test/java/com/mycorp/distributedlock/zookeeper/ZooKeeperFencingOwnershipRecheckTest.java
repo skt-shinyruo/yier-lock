@@ -10,7 +10,6 @@ import com.mycorp.distributedlock.core.backend.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
-import org.apache.curator.test.TestingServer;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Method;
@@ -26,8 +25,8 @@ class ZooKeeperFencingOwnershipRecheckTest {
 
     @Test
     void contenderDeletionBeforeFenceShouldNotReturnLease() throws Exception {
-        try (TestingServer server = new TestingServer();
-             DeletingBackend backend = new DeletingBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             DeletingBackend backend = new DeletingBackend(support.configuration())) {
             try (BackendSession session = backend.openSession()) {
                 assertThatThrownBy(() -> session.acquire(new LockRequest(
                     new LockKey("zk:fence:deleted"),
@@ -42,12 +41,12 @@ class ZooKeeperFencingOwnershipRecheckTest {
     @Test
     void fenceCounterOverflowShouldFailWithoutPoisoningCounter() throws Exception {
         String key = "zk:fence:overflow";
-        try (TestingServer server = new TestingServer();
-             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"));
-             CuratorFramework client = CuratorFrameworkFactory.newClient(server.getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
+             CuratorFramework client = CuratorFrameworkFactory.newClient(support.server().getConnectString(), new ExponentialBackoffRetry(1_000, 3))) {
             client.start();
             assertThat(client.blockUntilConnected(10, TimeUnit.SECONDS)).isTrue();
-            String counterPath = "/distributed-locks/fence/" + encode(key);
+            String counterPath = support.configuration().basePath() + "/fence/" + encode(key);
             client.create().creatingParentsIfNeeded().forPath(counterPath, longToBytes(Long.MAX_VALUE));
 
             try (BackendSession session = backend.openSession()) {
@@ -56,8 +55,12 @@ class ZooKeeperFencingOwnershipRecheckTest {
                     LockMode.MUTEX,
                     WaitPolicy.tryOnce()
                 )))
-                    .isInstanceOf(LockBackendException.class)
-                    .hasMessageContaining("ZooKeeper fencing counter overflow");
+                    .isInstanceOfSatisfying(LockBackendException.class, exception -> {
+                        assertThat(exception).hasMessageContaining("ZooKeeper fencing counter overflow");
+                        assertThat(exception.context().backendId()).isEqualTo("zookeeper");
+                        assertThat(exception.context().key()).isEqualTo(new LockKey(key));
+                        assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                    });
             }
 
             assertThat(bytesToLong(client.getData().forPath(counterPath))).isEqualTo(Long.MAX_VALUE);
@@ -66,8 +69,8 @@ class ZooKeeperFencingOwnershipRecheckTest {
 
     @Test
     void sessionLossBeforeFenceShouldNotReturnLease() throws Exception {
-        try (TestingServer server = new TestingServer();
-             LosingBackend backend = new LosingBackend(new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks"))) {
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
+             LosingBackend backend = new LosingBackend(support.configuration())) {
             BackendSession session = backend.openSession();
             backend.session = session;
             try {
@@ -88,9 +91,9 @@ class ZooKeeperFencingOwnershipRecheckTest {
 
     @Test
     void sessionLossImmediatelyBeforeLeaseRegistrationShouldNotReturnLease() throws Exception {
-        try (TestingServer server = new TestingServer();
+        try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              LosingBeforeRegistrationBackend backend = new LosingBeforeRegistrationBackend(
-                 new ZooKeeperBackendConfiguration(server.getConnectString(), "/distributed-locks")
+                 support.configuration()
              )) {
             BackendSession session = backend.openSession();
             backend.session = session;

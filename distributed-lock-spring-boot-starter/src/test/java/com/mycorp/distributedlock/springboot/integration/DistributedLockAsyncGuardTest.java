@@ -1,7 +1,7 @@
 package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendModule;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;

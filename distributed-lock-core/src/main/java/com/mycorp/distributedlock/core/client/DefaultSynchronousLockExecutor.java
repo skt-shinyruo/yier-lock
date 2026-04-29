@@ -8,6 +8,7 @@ import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.LockedAction;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
+import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
 
 import java.util.Objects;
@@ -39,7 +40,9 @@ public final class DefaultSynchronousLockExecutor implements SynchronousLockExec
     private static void rejectReentry(LockRequest request) {
         if (LockContext.containsLease(request.key())) {
             throw new LockReentryException(
-                "Lock key is already held in the current synchronous scope: " + request.key().value()
+                "Lock key is already held in the current synchronous scope: " + request.key().value(),
+                null,
+                LockFailureContext.fromRequest(request, null, null)
             );
         }
     }

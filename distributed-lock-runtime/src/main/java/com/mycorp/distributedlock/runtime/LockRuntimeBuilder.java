@@ -7,9 +7,9 @@ import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.core.client.DefaultLockClient;
 import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
 import com.mycorp.distributedlock.core.client.SupportedLockModes;
-import com.mycorp.distributedlock.runtime.spi.BackendCapabilities;
-import com.mycorp.distributedlock.runtime.spi.BackendModule;
 import com.mycorp.distributedlock.runtime.spi.ServiceLoaderBackendRegistry;
+import com.mycorp.distributedlock.spi.BackendCapabilities;
+import com.mycorp.distributedlock.spi.BackendModule;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -62,7 +62,12 @@ public final class LockRuntimeBuilder {
         );
         LockClient lockClient = new DefaultLockClient(backend, supportedLockModes);
         SynchronousLockExecutor synchronousLockExecutor = new DefaultSynchronousLockExecutor(lockClient);
-        return new DefaultLockRuntime(lockClient, synchronousLockExecutor);
+        return new DefaultLockRuntime(
+            selectedModule.id(),
+            selectedModule.capabilities(),
+            lockClient,
+            synchronousLockExecutor
+        );
     }
 
     private ModuleMetadata selectBackendModule(List<ModuleMetadata> availableModules) {

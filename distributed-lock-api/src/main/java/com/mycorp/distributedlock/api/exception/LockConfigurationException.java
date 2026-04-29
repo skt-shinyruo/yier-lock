@@ -12,4 +12,8 @@ public class LockConfigurationException extends DistributedLockException {
     public LockConfigurationException(String message, Throwable cause) {
         super(message, cause);
     }
+
+    public LockConfigurationException(String message, Throwable cause, LockFailureContext context) {
+        super(message, cause, context);
+    }
 }
