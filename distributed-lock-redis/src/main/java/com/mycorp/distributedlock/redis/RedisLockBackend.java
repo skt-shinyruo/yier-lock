@@ -12,6 +12,8 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class RedisLockBackend implements LockBackend {
 
@@ -19,14 +21,14 @@ public final class RedisLockBackend implements LockBackend {
     private final RedisClient redisClient;
     private final StatefulRedisConnection<String, String> connection;
     private final RedisCommands<String, String> commands;
-    private final ScheduledExecutorService renewalExecutor = Executors.newSingleThreadScheduledExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "redis-lock-renewal");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ScheduledExecutorService renewalExecutor;
 
     public RedisLockBackend(RedisBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
+        this.renewalExecutor = Executors.newScheduledThreadPool(
+            this.configuration.effectiveRenewalPoolSize(),
+            renewalThreadFactory()
+        );
         this.redisClient = RedisClient.create(configuration.redisUri());
         this.redisClient.setOptions(ClientOptions.builder()
             .autoReconnect(false)
@@ -110,6 +112,15 @@ public final class RedisLockBackend implements LockBackend {
 
     ScheduledExecutorService renewalExecutor() {
         return renewalExecutor;
+    }
+
+    private static ThreadFactory renewalThreadFactory() {
+        AtomicInteger threadNumber = new AtomicInteger();
+        return runnable -> {
+            Thread thread = new Thread(runnable, "redis-lock-renewal-" + threadNumber.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
     }
 
     static String nextSessionId() {
