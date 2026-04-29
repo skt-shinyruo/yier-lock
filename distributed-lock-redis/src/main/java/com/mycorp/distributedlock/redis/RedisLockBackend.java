@@ -25,17 +25,28 @@ public final class RedisLockBackend implements LockBackend {
 
     public RedisLockBackend(RedisBackendConfiguration configuration) {
         this.configuration = Objects.requireNonNull(configuration, "configuration");
-        this.renewalExecutor = Executors.newScheduledThreadPool(
-            this.configuration.effectiveRenewalPoolSize(),
-            renewalThreadFactory()
-        );
-        this.redisClient = RedisClient.create(configuration.redisUri());
-        this.redisClient.setOptions(ClientOptions.builder()
-            .autoReconnect(false)
-            .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
-            .build());
-        this.connection = redisClient.connect();
-        this.commands = connection.sync();
+        RedisClient createdClient = RedisClient.create(this.configuration.redisUri());
+        StatefulRedisConnection<String, String> createdConnection = null;
+        ScheduledExecutorService createdRenewalExecutor = null;
+        try {
+            createdClient.setOptions(ClientOptions.builder()
+                .autoReconnect(false)
+                .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                .build());
+            createdConnection = createdClient.connect();
+            RedisCommands<String, String> createdCommands = createdConnection.sync();
+            createdRenewalExecutor = Executors.newScheduledThreadPool(
+                this.configuration.effectiveRenewalPoolSize(),
+                renewalThreadFactory()
+            );
+
+            this.redisClient = createdClient;
+            this.connection = createdConnection;
+            this.commands = createdCommands;
+            this.renewalExecutor = createdRenewalExecutor;
+        } catch (RuntimeException exception) {
+            throw cleanupConstructionFailure(createdRenewalExecutor, createdConnection, createdClient, exception);
+        }
     }
 
     @Override
@@ -45,9 +56,25 @@ public final class RedisLockBackend implements LockBackend {
 
     @Override
     public void close() {
-        renewalExecutor.shutdownNow();
-        connection.close();
-        redisClient.shutdown();
+        RuntimeException failure = null;
+        try {
+            renewalExecutor.shutdownNow();
+        } catch (RuntimeException exception) {
+            failure = exception;
+        }
+        try {
+            connection.close();
+        } catch (RuntimeException exception) {
+            failure = recordFailure(failure, exception);
+        }
+        try {
+            redisClient.shutdown();
+        } catch (RuntimeException exception) {
+            failure = recordFailure(failure, exception);
+        }
+        if (failure != null) {
+            throw failure;
+        }
     }
 
     static String ownerKey(String key, LockMode mode) {
@@ -112,6 +139,45 @@ public final class RedisLockBackend implements LockBackend {
 
     ScheduledExecutorService renewalExecutor() {
         return renewalExecutor;
+    }
+
+    private static RuntimeException cleanupConstructionFailure(
+        ScheduledExecutorService renewalExecutor,
+        StatefulRedisConnection<String, String> connection,
+        RedisClient redisClient,
+        RuntimeException failure
+    ) {
+        RuntimeException recorded = failure;
+        if (renewalExecutor != null) {
+            try {
+                renewalExecutor.shutdownNow();
+            } catch (RuntimeException exception) {
+                recorded = recordFailure(recorded, exception);
+            }
+        }
+        if (connection != null) {
+            try {
+                connection.close();
+            } catch (RuntimeException exception) {
+                recorded = recordFailure(recorded, exception);
+            }
+        }
+        if (redisClient != null) {
+            try {
+                redisClient.shutdown();
+            } catch (RuntimeException exception) {
+                recorded = recordFailure(recorded, exception);
+            }
+        }
+        return recorded;
+    }
+
+    private static RuntimeException recordFailure(RuntimeException current, RuntimeException next) {
+        if (current == null) {
+            return next;
+        }
+        current.addSuppressed(next);
+        return current;
     }
 
     private static ThreadFactory renewalThreadFactory() {
