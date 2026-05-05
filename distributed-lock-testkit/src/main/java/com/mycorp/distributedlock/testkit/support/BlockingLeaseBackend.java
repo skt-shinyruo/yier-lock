@@ -7,9 +7,9 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class BlockingLeaseBackend implements LockBackend {
+public final class BlockingLeaseBackend implements BackendClient {
 
     private final CountDownLatch acquireAttempted = new CountDownLatch(1);
     private final CountDownLatch releaseObserved = new CountDownLatch(1);
@@ -28,7 +28,7 @@ public final class BlockingLeaseBackend implements LockBackend {
     public BackendSession openSession() {
         return new BackendSession() {
             @Override
-            public BackendLockLease acquire(LockRequest lockRequest) throws InterruptedException {
+            public BackendLease acquire(LockRequest lockRequest) throws InterruptedException {
                 if (firstLeaseHeld.compareAndSet(false, true)) {
                     return new TestLease(
                         lockRequest.key(),
@@ -57,6 +57,10 @@ public final class BlockingLeaseBackend implements LockBackend {
         };
     }
 
+    @Override
+    public void close() {
+    }
+
     public boolean awaitAcquireAttempt() throws InterruptedException {
         return acquireAttempted.await(1, TimeUnit.SECONDS);
     }
@@ -65,7 +69,7 @@ public final class BlockingLeaseBackend implements LockBackend {
         return releaseObserved.await(duration.toMillis(), TimeUnit.MILLISECONDS);
     }
 
-    private final class TestLease implements BackendLockLease {
+    private final class TestLease implements BackendLease {
         private final LockKey key;
         private final LockMode mode;
         private final FencingToken fencingToken;

@@ -7,12 +7,9 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import com.mycorp.distributedlock.testkit.support.InMemoryLockBackend;
-import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -26,11 +23,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class InMemoryLockBackendThreadOwnershipTest extends LockClientContract {
 
     @Override
-    protected LockRuntime createRuntime() {
-        return LockRuntimeBuilder.create()
-            .backend("in-memory")
-            .backendModules(java.util.List.of(new InMemoryBackendModule("in-memory")))
-            .build();
+    protected BackendConformanceFixture<?> createFixture() {
+        return new InMemoryConformanceFixture();
     }
 
     @Test
@@ -83,7 +77,7 @@ class InMemoryLockBackendThreadOwnershipTest extends LockClientContract {
             close.get(1, TimeUnit.SECONDS);
 
             try (BackendSession contender = backend.openSession();
-                 BackendLockLease ignored = contender.acquire(backendRequest("in-memory:backend-cross-thread-close", LockMode.MUTEX, Duration.ofMillis(200)))) {
+                 BackendLease ignored = contender.acquire(backendRequest("in-memory:backend-cross-thread-close", LockMode.MUTEX, Duration.ofMillis(200)))) {
                 assertThat(ignored.isValid()).isTrue();
             }
         } finally {

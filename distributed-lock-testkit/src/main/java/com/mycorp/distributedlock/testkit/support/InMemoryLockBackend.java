@@ -7,8 +7,9 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,7 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class InMemoryLockBackend implements LockBackend {
+public final class InMemoryLockBackend implements BackendClient {
 
     private final Map<String, InMemoryLockState> lockStates = new ConcurrentHashMap<>();
 
@@ -25,7 +26,11 @@ public final class InMemoryLockBackend implements LockBackend {
         return new InMemoryBackendSession(lockStates);
     }
 
-    static BackendLockLease acquireLease(Map<String, InMemoryLockState> lockStates, LockRequest request)
+    @Override
+    public void close() {
+    }
+
+    static BackendLease acquireLease(Map<String, InMemoryLockState> lockStates, LockRequest request)
         throws InterruptedException {
         String keyValue = request.key().value();
         InMemoryLockState state = lockStates.computeIfAbsent(keyValue, ignored -> new InMemoryLockState());
@@ -142,7 +147,7 @@ public final class InMemoryLockBackend implements LockBackend {
         InMemoryLockState lockState,
         Map<String, InMemoryLockState> lockStates,
         AtomicBoolean released
-    ) implements BackendLockLease {
+    ) implements BackendLease {
 
         @Override
         public LeaseState state() {

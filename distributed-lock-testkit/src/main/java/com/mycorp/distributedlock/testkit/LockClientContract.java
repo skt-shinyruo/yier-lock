@@ -4,7 +4,7 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.api.LockRuntime;
 import org.junit.jupiter.api.AfterEach;
 
 import java.time.Duration;
@@ -15,14 +15,24 @@ public abstract class LockClientContract {
 
     protected final ExecutorService executor = Executors.newSingleThreadExecutor();
     protected LockRuntime runtime;
+    protected BackendConformanceFixture<?> fixture;
 
-    protected abstract LockRuntime createRuntime() throws Exception;
+    protected abstract BackendConformanceFixture<?> createFixture() throws Exception;
+
+    protected LockRuntime createRuntime() throws Exception {
+        fixture = createFixture();
+        runtime = fixture.runtimeBuilder().build();
+        return runtime;
+    }
 
     @AfterEach
     protected void tearDown() throws Exception {
         executor.shutdownNow();
         if (runtime != null) {
             runtime.close();
+        }
+        if (fixture != null) {
+            fixture.close();
         }
     }
 

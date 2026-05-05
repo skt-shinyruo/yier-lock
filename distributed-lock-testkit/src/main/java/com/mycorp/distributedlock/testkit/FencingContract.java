@@ -5,6 +5,7 @@ import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.testkit.support.FencedResource;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -31,6 +32,8 @@ public abstract class FencingContract extends LockClientContract {
     @Test
     void fencingTokenShouldIncreaseAcrossModesForTheSameKey() throws Exception {
         runtime = createRuntime();
+        Assumptions.assumeTrue(runtime.info().behavior().supportsLockMode(LockMode.READ));
+        Assumptions.assumeTrue(runtime.info().behavior().supportsLockMode(LockMode.WRITE));
         try (LockSession session = runtime.lockClient().openSession()) {
             long first;
             try (LockLease lease = session.acquire(request("inventory:fence", LockMode.READ, Duration.ofSeconds(1)))) {
