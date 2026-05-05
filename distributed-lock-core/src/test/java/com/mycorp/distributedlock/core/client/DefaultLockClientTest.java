@@ -1,21 +1,30 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
+import com.mycorp.distributedlock.api.BackendCostModel;
+import com.mycorp.distributedlock.api.FairnessSemantics;
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.FencingSemantics;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LeaseSemantics;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.OwnershipLossSemantics;
+import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.WaitSemantics;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,7 +35,7 @@ class DefaultLockClientTest {
     @Test
     void sessionShouldAcquireLeaseWithoutUsingThreadOwnership() throws Exception {
         StubBackend backend = new StubBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
 
         try (LockSession session = client.openSession();
              LockLease lease = session.acquire(sampleRequest(LockMode.MUTEX))) {
@@ -43,12 +52,12 @@ class DefaultLockClientTest {
     @Test
     void sessionShouldRejectUnsupportedModesBeforeBackendAcquire() {
         StubBackend backend = new StubBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(false, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, mutexOnlyBehavior());
 
         try (LockSession session = client.openSession()) {
-            assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.MUTEX)))
+            assertThatThrownBy(() -> session.acquire(sampleRequest(LockMode.READ)))
                 .isInstanceOf(UnsupportedLockCapabilityException.class)
-                .hasMessageContaining("MUTEX");
+                .hasMessageContaining("READ");
         }
 
         assertThat(backend.acquireCount()).hasValue(0);
@@ -62,14 +71,40 @@ class DefaultLockClientTest {
         );
     }
 
-    private static final class StubBackend implements LockBackend {
+    private static BackendBehavior standardBehavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG, LeaseSemantics.FIXED_TTL))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.EXCLUSIVE_PREFERRED)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
+    }
+
+    private static BackendBehavior mutexOnlyBehavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.NONE)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
+    }
+
+    private static final class StubBackend implements BackendClient {
         private final AtomicInteger acquireCount = new AtomicInteger();
 
         @Override
         public BackendSession openSession() {
             return new BackendSession() {
                 @Override
-                public BackendLockLease acquire(LockRequest lockRequest) {
+                public BackendLease acquire(LockRequest lockRequest) {
                     acquireCount.incrementAndGet();
                     return new StubLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L));
                 }
@@ -94,7 +129,7 @@ class DefaultLockClientTest {
         }
     }
 
-    private record StubLease(LockKey key, LockMode mode, FencingToken fencingToken) implements BackendLockLease {
+    private record StubLease(LockKey key, LockMode mode, FencingToken fencingToken) implements BackendLease {
 
         @Override
         public LeaseState state() {

@@ -1,5 +1,6 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockRequest;
@@ -8,8 +9,8 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.ArrayList;
 import java.util.Objects;
@@ -19,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class DefaultLockSession implements LockSession {
 
-    private final SupportedLockModes supportedLockModes;
+    private final BackendBehavior behavior;
     private final BackendSession backendSession;
     private final LockRequestValidator validator;
     private final Set<SessionBoundLockLease> activeLeases = ConcurrentHashMap.newKeySet();
@@ -27,11 +28,11 @@ public final class DefaultLockSession implements LockSession {
     private final AtomicBoolean closed = new AtomicBoolean();
 
     public DefaultLockSession(
-        SupportedLockModes supportedLockModes,
+        BackendBehavior behavior,
         BackendSession backendSession,
         LockRequestValidator validator
     ) {
-        this.supportedLockModes = Objects.requireNonNull(supportedLockModes, "supportedLockModes");
+        this.behavior = Objects.requireNonNull(behavior, "behavior");
         this.backendSession = Objects.requireNonNull(backendSession, "backendSession");
         this.validator = Objects.requireNonNull(validator, "validator");
     }
@@ -41,11 +42,11 @@ public final class DefaultLockSession implements LockSession {
         if (closed.get()) {
             throw new IllegalStateException("Lock session is already closed");
         }
-        validator.validate(supportedLockModes, request);
+        validator.validate(behavior, request);
         registerKey(request);
         boolean leaseCreated = false;
         try {
-            BackendLockLease backendLease = backendSession.acquire(request);
+            BackendLease backendLease = backendSession.acquire(request);
             SessionBoundLockLease lease = new SessionBoundLockLease(backendLease, this::forgetLease);
             if (!registerLease(lease)) {
                 throw closeLateAcquiredLease(lease);

@@ -1,25 +1,34 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
+import com.mycorp.distributedlock.api.BackendCostModel;
+import com.mycorp.distributedlock.api.FairnessSemantics;
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.FencingSemantics;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LeaseSemantics;
 import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.OwnershipLossSemantics;
+import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.WaitSemantics;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -37,7 +46,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldReleaseUnclosedLeaseBeforeBackendSessionClose() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
 
         session.acquire(sampleRequest("orders:close-one"));
@@ -51,7 +60,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldReleaseEveryUnclosedLease() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
 
         session.acquire(sampleRequest("orders:close-first"));
@@ -66,7 +75,7 @@ class DefaultLockSessionTest {
     @Test
     void manuallyReleasedLeaseShouldNotBeReleasedAgainWhenSessionCloses() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
         LockLease lease = session.acquire(sampleRequest("orders:manual-release"));
 
@@ -80,7 +89,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldContinueAfterLeaseReleaseFailureAndCloseBackendSession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
         RuntimeException releaseFailure = new LockBackendException("first release failed");
 
@@ -98,7 +107,7 @@ class DefaultLockSessionTest {
     @Test
     void closeShouldSuppressBackendCloseFailureWhenLeaseReleaseAlreadyFailed() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
         RuntimeException releaseFailure = new LockBackendException("release failed");
         RuntimeException backendCloseFailure = new LockBackendException("backend close failed");
@@ -116,7 +125,7 @@ class DefaultLockSessionTest {
     @Test
     void backendCloseFailureShouldSurfaceAfterLeaseCleanupSucceeds() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
         RuntimeException backendCloseFailure = new LockBackendException("backend close failed");
 
@@ -132,7 +141,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldReleaseLateBackendLeaseWhenSessionClosesDuringAcquire() throws Exception {
         BlockingAcquireBackend backend = new BlockingAcquireBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
         ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -162,7 +171,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireAfterSessionCloseShouldFail() {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockSession session = client.openSession();
 
         session.close();
@@ -175,7 +184,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldRejectSameKeyAlreadyHeldBySession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         LockRequest request = new LockRequest(new LockKey("orders:42"), LockMode.MUTEX, WaitPolicy.tryOnce());
 
         try (LockSession session = client.openSession();
@@ -196,7 +205,7 @@ class DefaultLockSessionTest {
         LockRequest request = LockRequest.read("orders:read", WaitPolicy.tryOnce());
         LockRequestValidator validator = new LockRequestValidator();
 
-        assertThatThrownBy(() -> validator.validate(new SupportedLockModes(true, false, true), request))
+        assertThatThrownBy(() -> validator.validate(mutexOnlyBehavior(), request))
             .isInstanceOfSatisfying(UnsupportedLockCapabilityException.class, exception -> {
                 assertThat(exception.context().key()).isEqualTo(new LockKey("orders:read"));
                 assertThat(exception.context().mode()).isEqualTo(LockMode.READ);
@@ -206,7 +215,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldAllowDifferentKeysInSameSession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
 
         try (LockSession session = client.openSession();
              LockLease first = session.acquire(sampleRequest("orders:first"));
@@ -219,7 +228,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldRejectFixedLeaseWhenCapabilityUnsupported() {
         TrackingBackend backend = new TrackingBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, false));
+        DefaultLockClient client = new DefaultLockClient(backend, mutexOnlyBehavior());
         LockRequest fixedLeaseRequest = new LockRequest(
             new LockKey("orders:fixed"),
             LockMode.MUTEX,
@@ -239,7 +248,7 @@ class DefaultLockSessionTest {
     @Test
     void acquireShouldAllowRetryForSameKeyAfterBackendAcquireFailure() throws Exception {
         FailingFirstAcquireBackend backend = new FailingFirstAcquireBackend();
-        DefaultLockClient client = new DefaultLockClient(backend, new SupportedLockModes(true, true, true));
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
         RuntimeException acquireFailure = new LockBackendException("backend acquire failed");
         backend.failNextAcquire(acquireFailure);
 
@@ -263,7 +272,33 @@ class DefaultLockSessionTest {
         );
     }
 
-    private static final class TrackingBackend implements LockBackend {
+    private static BackendBehavior standardBehavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG, LeaseSemantics.FIXED_TTL))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.EXCLUSIVE_PREFERRED)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
+    }
+
+    private static BackendBehavior mutexOnlyBehavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.NONE)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
+    }
+
+    private static final class TrackingBackend implements BackendClient {
         private final List<TrackingLease> leases = new CopyOnWriteArrayList<>();
         private final AtomicInteger backendCloseCount = new AtomicInteger();
         private final AtomicReference<RuntimeException> backendCloseFailure = new AtomicReference<>();
@@ -272,7 +307,7 @@ class DefaultLockSessionTest {
         public BackendSession openSession() {
             return new BackendSession() {
                 @Override
-                public BackendLockLease acquire(LockRequest lockRequest) {
+                public BackendLease acquire(LockRequest lockRequest) {
                     TrackingLease lease = new TrackingLease(
                         lockRequest.key(),
                         lockRequest.mode(),
@@ -319,7 +354,7 @@ class DefaultLockSessionTest {
         }
     }
 
-    private static final class BlockingAcquireBackend implements LockBackend {
+    private static final class BlockingAcquireBackend implements BackendClient {
         private final CountDownLatch acquireStarted = new CountDownLatch(1);
         private final CountDownLatch completeAcquire = new CountDownLatch(1);
         private final AtomicReference<TrackingLease> lease = new AtomicReference<>();
@@ -328,7 +363,7 @@ class DefaultLockSessionTest {
         public BackendSession openSession() {
             return new BackendSession() {
                 @Override
-                public BackendLockLease acquire(LockRequest lockRequest) throws InterruptedException {
+                public BackendLease acquire(LockRequest lockRequest) throws InterruptedException {
                     acquireStarted.countDown();
                     assertThat(completeAcquire.await(1, TimeUnit.SECONDS)).isTrue();
                     TrackingLease acquired = new TrackingLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L));
@@ -364,7 +399,7 @@ class DefaultLockSessionTest {
         }
     }
 
-    private static final class FailingFirstAcquireBackend implements LockBackend {
+    private static final class FailingFirstAcquireBackend implements BackendClient {
         private final List<TrackingLease> leases = new CopyOnWriteArrayList<>();
         private final AtomicReference<RuntimeException> acquireFailure = new AtomicReference<>();
 
@@ -372,7 +407,7 @@ class DefaultLockSessionTest {
         public BackendSession openSession() {
             return new BackendSession() {
                 @Override
-                public BackendLockLease acquire(LockRequest lockRequest) {
+                public BackendLease acquire(LockRequest lockRequest) {
                     RuntimeException failure = acquireFailure.getAndSet(null);
                     if (failure != null) {
                         throw failure;
@@ -410,7 +445,7 @@ class DefaultLockSessionTest {
         }
     }
 
-    private static final class TrackingLease implements BackendLockLease {
+    private static final class TrackingLease implements BackendLease {
         private final LockKey key;
         private final LockMode mode;
         private final FencingToken fencingToken;

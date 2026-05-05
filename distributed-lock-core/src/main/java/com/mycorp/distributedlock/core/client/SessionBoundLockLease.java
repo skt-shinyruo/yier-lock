@@ -7,7 +7,7 @@ import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.spi.BackendLease;
 
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -20,11 +20,11 @@ final class SessionBoundLockLease implements LockLease {
         TERMINAL
     }
 
-    private final BackendLockLease delegate;
+    private final BackendLease delegate;
     private final Consumer<SessionBoundLockLease> unregister;
     private LifecycleState lifecycle = LifecycleState.ACTIVE;
 
-    SessionBoundLockLease(BackendLockLease delegate, Consumer<SessionBoundLockLease> unregister) {
+    SessionBoundLockLease(BackendLease delegate, Consumer<SessionBoundLockLease> unregister) {
         this.delegate = Objects.requireNonNull(delegate, "delegate");
         this.unregister = Objects.requireNonNull(unregister, "unregister");
     }

@@ -1,7 +1,6 @@
 package com.mycorp.distributedlock.core.client;
 
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockContext;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
@@ -30,7 +29,7 @@ public final class DefaultSynchronousLockExecutor implements SynchronousLockExec
         rejectReentry(request);
         try (LockSession session = client.openSession();
              LockLease lease = session.acquire(request);
-             LockContext.Binding ignored = LockContext.bind(lease)) {
+             SynchronousLockScope.Binding ignored = SynchronousLockScope.bind(lease)) {
             T result = action.execute(lease);
             rejectAsyncResult(result);
             return result;
@@ -38,7 +37,7 @@ public final class DefaultSynchronousLockExecutor implements SynchronousLockExec
     }
 
     private static void rejectReentry(LockRequest request) {
-        if (LockContext.containsLease(request.key())) {
+        if (SynchronousLockScope.contains(request.key())) {
             throw new LockReentryException(
                 "Lock key is already held in the current synchronous scope: " + request.key().value(),
                 null,
