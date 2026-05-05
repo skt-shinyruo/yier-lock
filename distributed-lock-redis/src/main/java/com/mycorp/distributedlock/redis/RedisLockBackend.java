@@ -1,12 +1,12 @@
 package com.mycorp.distributedlock.redis;
 
 import com.mycorp.distributedlock.api.LockMode;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
 import io.lettuce.core.ClientOptions;
 import io.lettuce.core.RedisClient;
 import io.lettuce.core.api.StatefulRedisConnection;
 import io.lettuce.core.api.sync.RedisCommands;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.Objects;
 import java.util.UUID;
@@ -15,7 +15,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public final class RedisLockBackend implements LockBackend {
+public final class RedisLockBackend implements BackendClient {
 
     private final RedisBackendConfiguration configuration;
     private final RedisClient redisClient;

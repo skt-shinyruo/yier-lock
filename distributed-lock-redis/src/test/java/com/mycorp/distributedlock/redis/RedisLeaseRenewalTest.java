@@ -4,8 +4,8 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,7 +42,7 @@ class RedisLeaseRenewalTest {
     void leaseShouldRemainValidPastBaseTtlWhenHeld() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(1L);
              BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(new LockRequest(
+             BackendLease lease = session.acquire(new LockRequest(
                  new LockKey("renew:1"),
                  LockMode.MUTEX,
                  WaitPolicy.indefinite()

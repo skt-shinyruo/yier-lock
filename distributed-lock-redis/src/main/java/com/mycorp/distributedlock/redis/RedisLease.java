@@ -8,14 +8,14 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
 import io.lettuce.core.ScriptOutputType;
+import com.mycorp.distributedlock.spi.BackendLease;
 
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
-final class RedisLease implements BackendLockLease {
+final class RedisLease implements BackendLease {
 
     private final RedisLockBackend backend;
     private final LockKey key;

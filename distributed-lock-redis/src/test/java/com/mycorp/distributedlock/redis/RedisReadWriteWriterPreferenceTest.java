@@ -6,8 +6,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -54,12 +54,12 @@ class RedisReadWriteWriterPreferenceTest {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             BackendSession readerSession = backend.openSession();
-            BackendLockLease readerLease = readerSession.acquire(readRequest(WRITER_PROGRESS_KEY, Duration.ofSeconds(1)));
+            BackendLease readerLease = readerSession.acquire(readRequest(WRITER_PROGRESS_KEY, Duration.ofSeconds(1)));
             BackendSession writerSession = backend.openSession();
-            Future<BackendLockLease> writerAttempt = executor.submit(() ->
+            Future<BackendLease> writerAttempt = executor.submit(() ->
                 writerSession.acquire(writeRequest(WRITER_PROGRESS_KEY, Duration.ofSeconds(5)))
             );
-            BackendLockLease writerLease = null;
+            BackendLease writerLease = null;
 
             try {
                 assertThat(awaitPendingWriterIntent(WRITER_PROGRESS_KEY)).isTrue();
@@ -87,7 +87,7 @@ class RedisReadWriteWriterPreferenceTest {
     void writerTimeoutShouldRemovePendingIntent() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession readerSession = backend.openSession();
-             BackendLockLease ignored = readerSession.acquire(readRequest(WRITER_TIMEOUT_KEY, Duration.ofSeconds(1)))) {
+             BackendLease ignored = readerSession.acquire(readRequest(WRITER_TIMEOUT_KEY, Duration.ofSeconds(1)))) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             Future<Boolean> writerAttempt = executor.submit(() ->
                 tryAcquireWrite(backend, WRITER_TIMEOUT_KEY, Duration.ofMillis(300))
@@ -110,12 +110,12 @@ class RedisReadWriteWriterPreferenceTest {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             BackendSession readerSession = backend.openSession();
-            BackendLockLease readerLease = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)));
+            BackendLease readerLease = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)));
             BackendSession mutexSession = backend.openSession();
-            Future<BackendLockLease> mutexAttempt = executor.submit(() ->
+            Future<BackendLease> mutexAttempt = executor.submit(() ->
                 mutexSession.acquire(mutexRequest(key, Duration.ofSeconds(5)))
             );
-            BackendLockLease mutexLease = null;
+            BackendLease mutexLease = null;
             try {
                 assertThat(awaitPendingWriterIntent(key)).isTrue();
                 assertThat(tryAcquireRead(backend, key, Duration.ofMillis(150))).isFalse();
@@ -139,7 +139,7 @@ class RedisReadWriteWriterPreferenceTest {
         String key = "redis:rw:mutex-timeout";
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession readerSession = backend.openSession();
-             BackendLockLease ignored = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)))) {
+             BackendLease ignored = readerSession.acquire(readRequest(key, Duration.ofSeconds(1)))) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             Future<Boolean> mutexAttempt = executor.submit(() -> tryAcquireMutex(backend, key, Duration.ofMillis(300)));
             try {
@@ -158,9 +158,9 @@ class RedisReadWriteWriterPreferenceTest {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             BackendSession readerSession = backend.openSession();
-            BackendLockLease readerLease = readerSession.acquire(readRequest(SHORT_FIXED_WRITER_KEY, Duration.ofSeconds(1)));
+            BackendLease readerLease = readerSession.acquire(readRequest(SHORT_FIXED_WRITER_KEY, Duration.ofSeconds(1)));
             BackendSession writerSession = backend.openSession();
-            Future<BackendLockLease> writerAttempt = executor.submit(() ->
+            Future<BackendLease> writerAttempt = executor.submit(() ->
                 writerSession.acquire(writeRequest(
                     SHORT_FIXED_WRITER_KEY,
                     Duration.ofMillis(600),
@@ -211,7 +211,7 @@ class RedisReadWriteWriterPreferenceTest {
 
     private static boolean tryAcquireRead(RedisLockBackend backend, String key, Duration waitTime) throws Exception {
         try (BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(readRequest(key, waitTime))) {
+             BackendLease lease = session.acquire(readRequest(key, waitTime))) {
             return lease.isValid();
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
@@ -220,7 +220,7 @@ class RedisReadWriteWriterPreferenceTest {
 
     private static boolean tryAcquireReadOnce(RedisLockBackend backend, String key) throws Exception {
         try (BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(readRequest(key, WaitPolicy.tryOnce()))) {
+             BackendLease lease = session.acquire(readRequest(key, WaitPolicy.tryOnce()))) {
             return lease.isValid();
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
@@ -229,7 +229,7 @@ class RedisReadWriteWriterPreferenceTest {
 
     private static boolean tryAcquireWrite(RedisLockBackend backend, String key, Duration waitTime) throws Exception {
         try (BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(writeRequest(key, waitTime))) {
+             BackendLease lease = session.acquire(writeRequest(key, waitTime))) {
             return lease.isValid();
         } catch (LockAcquisitionTimeoutException exception) {
             return false;
@@ -238,7 +238,7 @@ class RedisReadWriteWriterPreferenceTest {
 
     private static boolean tryAcquireMutex(RedisLockBackend backend, String key, Duration waitTime) throws Exception {
         try (BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(mutexRequest(key, waitTime))) {
+             BackendLease lease = session.acquire(mutexRequest(key, waitTime))) {
             return lease.isValid();
         } catch (LockAcquisitionTimeoutException exception) {
             return false;

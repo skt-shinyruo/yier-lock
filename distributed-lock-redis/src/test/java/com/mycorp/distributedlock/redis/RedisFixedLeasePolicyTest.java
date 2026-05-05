@@ -6,8 +6,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +48,7 @@ class RedisFixedLeasePolicyTest {
     void fixedRequestLeaseDurationShouldControlMutexOwnerTtl() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession session = backend.openSession();
-             BackendLockLease ignored = session.acquire(mutexRequest(
+             BackendLease ignored = session.acquire(mutexRequest(
                  "redis:fixed:mutex-ttl",
                  LeasePolicy.fixed(Duration.ofMillis(750))
              ))) {
@@ -62,7 +62,7 @@ class RedisFixedLeasePolicyTest {
     void fixedRequestLeaseDurationShouldControlReaderZsetExpiry() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession session = backend.openSession();
-             BackendLockLease ignored = session.acquire(readRequest(
+             BackendLease ignored = session.acquire(readRequest(
                  "redis:fixed:reader-ttl",
                  LeasePolicy.fixed(Duration.ofMillis(800))
              ))) {
@@ -76,7 +76,7 @@ class RedisFixedLeasePolicyTest {
     void fixedRequestLeaseDurationShouldControlWriteOwnerTtl() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession session = backend.openSession();
-             BackendLockLease ignored = session.acquire(writeRequest(
+             BackendLease ignored = session.acquire(writeRequest(
                  "redis:fixed:write-ttl",
                  LeasePolicy.fixed(Duration.ofMillis(750))
              ))) {
@@ -90,7 +90,7 @@ class RedisFixedLeasePolicyTest {
     void backendDefaultLeaseDurationShouldUseRedisConfiguration() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(2L);
              BackendSession session = backend.openSession();
-             BackendLockLease ignored = session.acquire(mutexRequest(
+             BackendLease ignored = session.acquire(mutexRequest(
                  "redis:fixed:backend-default",
                  LeasePolicy.backendDefault()
              ))) {
@@ -104,7 +104,7 @@ class RedisFixedLeasePolicyTest {
     void tryOnceShouldNotWaitBehindHeldLock() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession holderSession = backend.openSession();
-             BackendLockLease ignored = holderSession.acquire(mutexRequest(
+             BackendLease ignored = holderSession.acquire(mutexRequest(
                  "redis:fixed:try-once",
                  LeasePolicy.backendDefault()
              ));
@@ -141,7 +141,7 @@ class RedisFixedLeasePolicyTest {
     void fixedMutexLeaseShouldExpireWithoutRenewalByDefault() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             BackendSession holderSession = backend.openSession();
-            BackendLockLease lease = holderSession.acquire(mutexRequest(
+            BackendLease lease = holderSession.acquire(mutexRequest(
                 "redis:fixed:mutex-expiry",
                 LeasePolicy.fixed(Duration.ofMillis(240))
             ));
@@ -150,7 +150,7 @@ class RedisFixedLeasePolicyTest {
                 Thread.sleep(500L);
 
                 assertThat(lease.isValid()).isFalse();
-                try (BackendLockLease contenderLease = contenderSession.acquire(new LockRequest(
+                try (BackendLease contenderLease = contenderSession.acquire(new LockRequest(
                     new LockKey("redis:fixed:mutex-expiry"),
                     LockMode.MUTEX,
                     WaitPolicy.tryOnce(),
@@ -170,7 +170,7 @@ class RedisFixedLeasePolicyTest {
     void fixedWriteLeaseShouldExpireWithoutRenewalByDefault() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             BackendSession holderSession = backend.openSession();
-            BackendLockLease lease = holderSession.acquire(writeRequest(
+            BackendLease lease = holderSession.acquire(writeRequest(
                 "redis:fixed:write-expiry",
                 LeasePolicy.fixed(Duration.ofMillis(240))
             ));
@@ -179,7 +179,7 @@ class RedisFixedLeasePolicyTest {
                 Thread.sleep(500L);
 
                 assertThat(lease.isValid()).isFalse();
-                try (BackendLockLease contenderLease = contenderSession.acquire(new LockRequest(
+                try (BackendLease contenderLease = contenderSession.acquire(new LockRequest(
                     new LockKey("redis:fixed:write-expiry"),
                     LockMode.WRITE,
                     WaitPolicy.tryOnce(),
@@ -206,7 +206,7 @@ class RedisFixedLeasePolicyTest {
         );
         try (RedisLockBackend backend = new RedisLockBackend(configuration);
              BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(mutexRequest(
+             BackendLease lease = session.acquire(mutexRequest(
                  "redis:fixed:compat-renewal",
                  LeasePolicy.fixed(Duration.ofMillis(240))
              ))) {

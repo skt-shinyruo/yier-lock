@@ -10,7 +10,6 @@ import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.core.client.DefaultLockClient;
 import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
-import com.mycorp.distributedlock.core.client.SupportedLockModes;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -23,11 +22,11 @@ class RedisExecutorOwnershipLossTest {
 
     @Test
     void withLockShouldFailIfOwnershipIsLostDuringAction() throws Exception {
-        try (RedisTestSupport.RunningRedis redis = RedisTestSupport.startRedis();
+            try (RedisTestSupport.RunningRedis redis = RedisTestSupport.startRedis();
              RedisLockBackend backend = redis.newBackend(1L)) {
             SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
                 backend,
-                new SupportedLockModes(true, true, true)
+                new RedisBackendProvider().descriptor().behavior()
             ));
 
             assertThatThrownBy(() -> executor.withLock(request("redis:executor-loss"), lease -> {
