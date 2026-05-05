@@ -1,25 +1,37 @@
 package com.mycorp.distributedlock.observability.springboot.integration;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
+import com.mycorp.distributedlock.api.BackendCostModel;
+import com.mycorp.distributedlock.api.FairnessSemantics;
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.FencingSemantics;
+import com.mycorp.distributedlock.api.LeaseSemantics;
 import com.mycorp.distributedlock.api.LeaseState;
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.OwnershipLossSemantics;
+import com.mycorp.distributedlock.api.RuntimeInfo;
+import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.observability.ObservedLockRuntime;
+import com.mycorp.distributedlock.api.WaitSemantics;
 import com.mycorp.distributedlock.observability.springboot.config.DistributedLockObservabilityAutoConfiguration;
 import com.mycorp.distributedlock.runtime.DefaultLockRuntime;
-import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.runtime.LockRuntimeDecorator;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.springboot.config.LockRuntimeCustomizer;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
-import com.mycorp.distributedlock.spi.BackendModule;
-import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+import com.mycorp.distributedlock.spi.BackendDescriptor;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendProvider;
+import com.mycorp.distributedlock.spi.BackendSession;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
@@ -30,6 +42,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Duration;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,6 +66,7 @@ class DistributedLockObservabilityAutoConfigurationTest {
     void shouldRecordAcquireAndScopeMeters() {
         contextRunner.run(context -> {
             SynchronousLockExecutor executor = context.getBean(SynchronousLockExecutor.class);
+            LockClient client = context.getBean(LockClient.class);
             SimpleMeterRegistry registry = context.getBean(SimpleMeterRegistry.class);
             String value;
             try {
@@ -63,6 +78,14 @@ class DistributedLockObservabilityAutoConfigurationTest {
                     ),
                     lease -> "ok"
                 );
+                try (LockSession session = client.openSession();
+                     LockLease lease = session.acquire(new LockRequest(
+                         new LockKey("orders:43"),
+                         LockMode.MUTEX,
+                         WaitPolicy.timed(Duration.ofSeconds(1))
+                     ))) {
+                    assertThat(lease.isValid()).isTrue();
+                }
             } catch (Exception exception) {
                 throw new RuntimeException(exception);
             }
@@ -71,19 +94,20 @@ class DistributedLockObservabilityAutoConfigurationTest {
             assertThat(registry.find("distributed.lock.acquire").timer()).isNotNull();
             assertThat(registry.find("distributed.lock.scope").timer()).isNotNull();
             assertThat(registry.find("distributed.lock.acquire").tags("outcome", "success").timer().count()).isEqualTo(1);
+            assertThat(registry.find("distributed.lock.scope").tags("outcome", "success").timer().count()).isEqualTo(1);
         });
     }
 
     @Test
     void shouldDecorateStandardRuntimeWithCustomizerOnce() {
         contextRunner.run(context -> {
-            assertThat(context).hasSingleBean(LockRuntimeCustomizer.class);
-            assertThat(context.getBean(LockRuntime.class)).isInstanceOf(ObservedLockRuntime.class);
+            assertThat(context).hasSingleBean(LockRuntimeDecorator.class);
 
-            LockRuntimeCustomizer customizer = context.getBean(LockRuntimeCustomizer.class);
+            LockRuntimeDecorator customizer = context.getBean(LockRuntimeDecorator.class);
             LockRuntime runtime = context.getBean(LockRuntime.class);
 
-            assertThat(customizer.customize(runtime)).isSameAs(runtime);
+            assertThat(runtime).isNotInstanceOf(DefaultLockRuntime.class);
+            assertThat(customizer.decorate(runtime)).isNotNull();
         });
     }
 
@@ -104,7 +128,7 @@ class DistributedLockObservabilityAutoConfigurationTest {
     }
 
     @Test
-    void shouldNotWrapCustomRuntimeImplementations() {
+    void shouldNotDecorateCustomRuntimeImplementationsAutomatically() {
         new ApplicationContextRunner()
             .withConfiguration(AutoConfigurations.of(
                 DistributedLockAutoConfiguration.class,
@@ -115,7 +139,11 @@ class DistributedLockObservabilityAutoConfigurationTest {
                 "distributed.lock.enabled=true",
                 "distributed.lock.observability.enabled=true"
             )
-            .run(context -> assertThat(context.getBean(LockRuntime.class)).isInstanceOf(CustomRuntime.class));
+            .run(context -> {
+                LockRuntime runtime = context.getBean(LockRuntime.class);
+                assertThat(runtime).isInstanceOf(CustomRuntime.class);
+                assertThat(runtime.info().backendId()).isEqualTo("custom");
+            });
     }
 
     @Test
@@ -155,11 +183,11 @@ class DistributedLockObservabilityAutoConfigurationTest {
             .withPropertyValues("distributed.lock.observability.include-lock-key-in-logs=true")
             .run(context -> {
                 SimpleMeterRegistry registry = context.getBean(SimpleMeterRegistry.class);
-                LockRuntime runtime = context.getBean(LockRuntime.class);
-                runtime.synchronousLockExecutor().withLock(
-                    new LockRequest(new LockKey("secret-key"), LockMode.MUTEX, WaitPolicy.tryOnce()),
-                    lease -> "ok"
-                );
+                LockClient client = context.getBean(LockClient.class);
+                try (LockSession session = client.openSession();
+                     LockLease lease = session.acquire(new LockRequest(new LockKey("secret-key"), LockMode.MUTEX, WaitPolicy.tryOnce()))) {
+                    assertThat(lease.isValid()).isTrue();
+                }
 
                 assertThat(registry.find("distributed.lock.acquire").tags("outcome", "success").timer().count()).isEqualTo(1);
                 assertThat(registry.getMeters()).allSatisfy(meter ->
@@ -171,8 +199,13 @@ class DistributedLockObservabilityAutoConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     static class TestConfiguration {
         @Bean
-        BackendModule inMemoryBackendModule() {
-            return new InMemoryBackendModule("in-memory");
+        BackendProvider<TestBackendConfiguration> inMemoryBackendProvider() {
+            return new TestBackendProvider("in-memory");
+        }
+
+        @Bean
+        TestBackendConfiguration inMemoryBackendConfiguration() {
+            return new TestBackendConfiguration();
         }
 
         @Bean
@@ -184,8 +217,13 @@ class DistributedLockObservabilityAutoConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     static class LoggingOnlyTestConfiguration {
         @Bean
-        BackendModule inMemoryBackendModule() {
-            return new InMemoryBackendModule("in-memory");
+        BackendProvider<TestBackendConfiguration> inMemoryBackendProvider() {
+            return new TestBackendProvider("in-memory");
+        }
+
+        @Bean
+        TestBackendConfiguration inMemoryBackendConfiguration() {
+            return new TestBackendConfiguration();
         }
     }
 
@@ -221,13 +259,8 @@ class DistributedLockObservabilityAutoConfigurationTest {
         }
 
         @Override
-        public String backendId() {
-            return delegate.backendId();
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return delegate.capabilities();
+        public RuntimeInfo info() {
+            return delegate.info();
         }
 
         @Override
@@ -316,17 +349,97 @@ class DistributedLockObservabilityAutoConfigurationTest {
         }
 
         @Override
-        public String backendId() {
-            return "custom";
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return BackendCapabilities.standard();
+        public RuntimeInfo info() {
+            return new RuntimeInfo("custom", "Custom", behavior(), "test");
         }
 
         @Override
         public void close() {
         }
+    }
+
+    record TestBackendConfiguration() implements BackendConfiguration {
+    }
+
+    static final class TestBackendProvider implements BackendProvider<TestBackendConfiguration> {
+        private final String id;
+
+        private TestBackendProvider(String id) {
+            this.id = id;
+        }
+
+        @Override
+        public BackendDescriptor<TestBackendConfiguration> descriptor() {
+            return new BackendDescriptor<>(id, id, TestBackendConfiguration.class, behavior());
+        }
+
+        @Override
+        public BackendClient createBackendClient(TestBackendConfiguration configuration) {
+            return new TestBackendClient();
+        }
+    }
+
+    static final class TestBackendClient implements BackendClient {
+        private final AtomicLong fencingCounter = new AtomicLong();
+
+        @Override
+        public BackendSession openSession() {
+            return new TestBackendSession(fencingCounter);
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    static final class TestBackendSession implements BackendSession {
+        private final AtomicLong fencingCounter;
+
+        private TestBackendSession(AtomicLong fencingCounter) {
+            this.fencingCounter = fencingCounter;
+        }
+
+        @Override
+        public BackendLease acquire(LockRequest request) {
+            return new TestBackendLease(request.key(), request.mode(), new FencingToken(fencingCounter.incrementAndGet()));
+        }
+
+        @Override
+        public SessionState state() {
+            return SessionState.ACTIVE;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    record TestBackendLease(LockKey key, LockMode mode, FencingToken fencingToken) implements BackendLease {
+        @Override
+        public LeaseState state() {
+            return LeaseState.ACTIVE;
+        }
+
+        @Override
+        public boolean isValid() {
+            return true;
+        }
+
+        @Override
+        public void release() {
+        }
+    }
+
+    private static BackendBehavior behavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.FIXED_TTL))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.NONE)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
     }
 }

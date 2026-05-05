@@ -1,35 +1,19 @@
 package com.mycorp.distributedlock.observability;
 
 import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockRuntime;
+import com.mycorp.distributedlock.api.RuntimeInfo;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
-import com.mycorp.distributedlock.core.client.DefaultSynchronousLockExecutor;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
-
-import java.util.Objects;
 
 /**
- * Observability decorator for the standard runtime composition produced by {@code LockRuntimeBuilder}.
- *
- * <p>This decorator intentionally rebuilds the executor around the observed client so that
- * executor-scoped calls emit both acquire and scope observations. It is not a transparent
- * wrapper for arbitrary custom {@link LockRuntime} implementations with bespoke executor
- * semantics.</p>
+ * Backwards-compatible runtime wrapper entry point. Prefer {@link ObservedLockRuntimeDecorator}
+ * when composing a runtime through {@code LockRuntimeBuilder}.
  */
 public final class ObservedLockRuntime implements LockRuntime {
     private final LockRuntime delegate;
-    private final LockClient lockClient;
-    private final SynchronousLockExecutor synchronousLockExecutor;
 
-    private ObservedLockRuntime(LockRuntime delegate, LockObservationSink sink, String backendId, boolean includeKey) {
-        this.delegate = Objects.requireNonNull(delegate, "delegate");
-        this.lockClient = new ObservedLockClient(delegate.lockClient(), sink, backendId, includeKey);
-        this.synchronousLockExecutor = new ObservedLockExecutor(
-            new DefaultSynchronousLockExecutor(lockClient),
-            sink,
-            backendId,
-            includeKey
-        );
+    private ObservedLockRuntime(LockRuntime delegate) {
+        this.delegate = delegate;
     }
 
     public static ObservedLockRuntime decorate(
@@ -38,27 +22,22 @@ public final class ObservedLockRuntime implements LockRuntime {
         String backendId,
         boolean includeKey
     ) {
-        return new ObservedLockRuntime(delegate, sink, backendId, includeKey);
+        return new ObservedLockRuntime(new ObservedLockRuntimeDecorator(sink, includeKey).decorate(delegate));
     }
 
     @Override
     public LockClient lockClient() {
-        return lockClient;
+        return delegate.lockClient();
     }
 
     @Override
     public SynchronousLockExecutor synchronousLockExecutor() {
-        return synchronousLockExecutor;
+        return delegate.synchronousLockExecutor();
     }
 
     @Override
-    public String backendId() {
-        return delegate.backendId();
-    }
-
-    @Override
-    public BackendCapabilities capabilities() {
-        return delegate.capabilities();
+    public RuntimeInfo info() {
+        return delegate.info();
     }
 
     @Override

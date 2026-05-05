@@ -1,11 +1,11 @@
 package com.mycorp.distributedlock.observability.springboot.config;
 
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.observability.LockObservationSink;
-import com.mycorp.distributedlock.observability.ObservedLockRuntime;
+import com.mycorp.distributedlock.observability.ObservedLockRuntimeDecorator;
 import com.mycorp.distributedlock.observability.springboot.logging.LoggingLockObservationSink;
 import com.mycorp.distributedlock.observability.springboot.support.CompositeLockObservationSink;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.springboot.config.LockRuntimeCustomizer;
+import com.mycorp.distributedlock.runtime.LockRuntimeDecorator;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
@@ -42,18 +42,18 @@ public class DistributedLockObservabilityAutoConfiguration {
     }
 
     @Bean
-    public LockRuntimeCustomizer observedLockRuntimeCustomizer(
+    public LockRuntimeDecorator observedLockRuntimeDecorator(
         ObjectProvider<LockObservationSink> sinkProvider,
         ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider
     ) {
-        return new ObservedLockRuntimeCustomizer(sinkProvider, observabilityPropertiesProvider);
+        return new ObservedLockRuntimeDecoratorFactory(sinkProvider, observabilityPropertiesProvider);
     }
 
-    private static final class ObservedLockRuntimeCustomizer implements LockRuntimeCustomizer, Ordered {
+    private static final class ObservedLockRuntimeDecoratorFactory implements LockRuntimeDecorator, Ordered {
         private final ObjectProvider<LockObservationSink> sinkProvider;
         private final ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider;
 
-        private ObservedLockRuntimeCustomizer(
+        private ObservedLockRuntimeDecoratorFactory(
             ObjectProvider<LockObservationSink> sinkProvider,
             ObjectProvider<DistributedLockObservabilityProperties> observabilityPropertiesProvider
         ) {
@@ -62,18 +62,16 @@ public class DistributedLockObservabilityAutoConfiguration {
         }
 
         @Override
-        public LockRuntime customize(LockRuntime runtime) {
+        public LockRuntime decorate(LockRuntime runtime) {
             LockObservationSink sink = sinkProvider.getIfAvailable(() -> LockObservationSink.NOOP);
-            if (sink == LockObservationSink.NOOP || runtime instanceof ObservedLockRuntime) {
+            if (sink == LockObservationSink.NOOP) {
                 return runtime;
             }
             DistributedLockObservabilityProperties observabilityProperties = observabilityPropertiesProvider.getIfAvailable();
-            return ObservedLockRuntime.decorate(
-                runtime,
+            return new ObservedLockRuntimeDecorator(
                 sink,
-                runtime.backendId(),
                 observabilityProperties != null && observabilityProperties.isIncludeLockKeyInLogs()
-            );
+            ).decorate(runtime);
         }
 
         @Override

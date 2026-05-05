@@ -15,7 +15,6 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
@@ -401,106 +400,9 @@ class ApiSurfaceTest {
     }
 
     @Test
-    void lockContextShouldExposeCurrentLeaseAndFencingTokenAccessors() throws Exception {
-        assertThat(LockContext.class.getMethod("currentLease").getReturnType().getSimpleName()).isEqualTo("Optional");
-        assertThat(LockContext.class.getMethod("currentFencingToken").getReturnType().getSimpleName()).isEqualTo("Optional");
-        assertThat(LockContext.class.getMethod("containsLease", LockKey.class).getReturnType()).isEqualTo(boolean.class);
-        assertThat(LockContext.class.getMethod("requireCurrentLease").getReturnType()).isEqualTo(LockLease.class);
-        assertThat(LockContext.class.getMethod("requireCurrentFencingToken").getReturnType()).isEqualTo(FencingToken.class);
-        assertThat(LockContext.class.getMethod("bind", LockLease.class).getReturnType().getSimpleName()).isEqualTo("Binding");
-    }
-
-    @Test
-    void lockContextShouldBindAndRestoreLeasesInLifoOrder() {
-        LockLease firstLease = new FakeLockLease("first", 1);
-        LockLease secondLease = new FakeLockLease("second", 2);
-
-        assertThat(LockContext.currentLease()).isEmpty();
-        assertThat(LockContext.currentFencingToken()).isEmpty();
-        assertThat(LockContext.containsLease(firstLease.key())).isFalse();
-        assertThatThrownBy(LockContext::requireCurrentLease)
-                .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(LockContext::requireCurrentFencingToken)
-                .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> LockContext.containsLease(null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> LockContext.bind(null))
-                .isInstanceOf(NullPointerException.class);
-
-        try (LockContext.Binding firstBinding = LockContext.bind(firstLease)) {
-            assertThat(LockContext.currentLease()).containsSame(firstLease);
-            assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
-            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
-            assertThat(LockContext.containsLease(secondLease.key())).isFalse();
-            assertThat(LockContext.requireCurrentLease()).isSameAs(firstLease);
-            assertThat(LockContext.requireCurrentFencingToken()).isEqualTo(firstLease.fencingToken());
-
-            LockContext.Binding secondBinding = LockContext.bind(secondLease);
-            assertThat(LockContext.currentLease()).containsSame(secondLease);
-            assertThat(LockContext.currentFencingToken()).contains(secondLease.fencingToken());
-            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
-            assertThat(LockContext.containsLease(secondLease.key())).isTrue();
-            secondBinding.close();
-            secondBinding.close();
-
-            assertThat(LockContext.currentLease()).containsSame(firstLease);
-            assertThat(LockContext.currentFencingToken()).contains(firstLease.fencingToken());
-            assertThat(LockContext.containsLease(firstLease.key())).isTrue();
-            assertThat(LockContext.containsLease(secondLease.key())).isFalse();
-        }
-
-        assertThat(LockContext.currentLease()).isEmpty();
-        assertThat(LockContext.currentFencingToken()).isEmpty();
-        assertThat(LockContext.containsLease(firstLease.key())).isFalse();
-    }
-
-    @Test
-    void lockContextBindingShouldRejectOutOfOrderCloseWithoutCorruptingContext() {
-        LockLease firstLease = new FakeLockLease("first", 1);
-        LockLease secondLease = new FakeLockLease("second", 2);
-        LockContext.Binding firstBinding = LockContext.bind(firstLease);
-        LockContext.Binding secondBinding = LockContext.bind(secondLease);
-
-        assertThatThrownBy(firstBinding::close)
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(LockContext.currentLease()).containsSame(secondLease);
-        assertThat(LockContext.currentFencingToken()).contains(secondLease.fencingToken());
-
-        secondBinding.close();
-        firstBinding.close();
-        assertThat(LockContext.currentLease()).isEmpty();
-    }
-
-    @Test
-    void lockContextBindingShouldRejectOutOfOrderCloseForSameLeaseInstance() {
-        LockLease lease = new FakeLockLease("same", 1);
-        LockContext.Binding firstBinding = LockContext.bind(lease);
-        LockContext.Binding secondBinding = LockContext.bind(lease);
-
-        assertThatThrownBy(firstBinding::close)
-                .isInstanceOf(IllegalStateException.class);
-        assertThat(LockContext.currentLease()).containsSame(lease);
-        assertThat(LockContext.currentFencingToken()).contains(lease.fencingToken());
-
-        secondBinding.close();
-        assertThat(LockContext.currentLease()).containsSame(lease);
-        firstBinding.close();
-        assertThat(LockContext.currentLease()).isEmpty();
-    }
-
-    @Test
-    void lockContextBindingShouldExposeOnlyCloseAsPublicOperation() {
-        assertThat(Modifier.isPublic(LockContext.Binding.class.getModifiers())).isTrue();
-        assertThat(Modifier.isFinal(LockContext.Binding.class.getModifiers())).isTrue();
-        assertThat(AutoCloseable.class).isAssignableFrom(LockContext.Binding.class);
-        assertThat(Arrays.stream(LockContext.Binding.class.getDeclaredConstructors())
-                .map(Constructor::getModifiers)
-                .noneMatch(Modifier::isPublic))
-                .isTrue();
-        assertThat(Arrays.stream(LockContext.Binding.class.getDeclaredMethods())
-                .filter(method -> Modifier.isPublic(method.getModifiers()))
-                .map(Method::getName))
-                .containsExactly("close");
+    void lockContextShouldNotBePartOfThePublicApi() {
+        assertThatThrownBy(() -> Class.forName("com.mycorp.distributedlock.api.LockContext"))
+            .isInstanceOf(ClassNotFoundException.class);
     }
 
     @Test
@@ -546,42 +448,4 @@ class ApiSurfaceTest {
                 .costModel(BackendCostModel.CHEAP_SESSION);
     }
 
-    private static final class FakeLockLease implements LockLease {
-        private final LockKey key;
-        private final FencingToken fencingToken;
-
-        private FakeLockLease(String key, long fencingTokenValue) {
-            this.key = new LockKey(key);
-            this.fencingToken = new FencingToken(fencingTokenValue);
-        }
-
-        @Override
-        public LockKey key() {
-            return key;
-        }
-
-        @Override
-        public LockMode mode() {
-            return LockMode.MUTEX;
-        }
-
-        @Override
-        public FencingToken fencingToken() {
-            return fencingToken;
-        }
-
-        @Override
-        public LeaseState state() {
-            return LeaseState.ACTIVE;
-        }
-
-        @Override
-        public boolean isValid() {
-            return true;
-        }
-
-        @Override
-        public void release() {
-        }
-    }
 }
