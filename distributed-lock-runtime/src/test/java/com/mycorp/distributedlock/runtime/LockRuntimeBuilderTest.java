@@ -176,8 +176,60 @@ class LockRuntimeBuilderTest {
     }
 
     @Test
+    void builderShouldSuppressCloseFailureWhenDecoratorReturnsNull() {
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        TrackingProvider provider = new TrackingProvider(
+            "redis",
+            "Redis",
+            TestConfiguration.class,
+            standardBehavior(),
+            closeFailure
+        );
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendProvider(provider)
+            .backendConfiguration(new TestConfiguration("decorated"))
+            .decorators(List.of(runtime -> null));
+
+        Throwable thrown = catchThrowable(builder::build);
+
+        assertThat(thrown)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("decorator")
+            .hasMessageContaining("null");
+        assertThat(provider.createdClient().closeCount().get()).isEqualTo(1);
+        assertThat(thrown.getSuppressed()).containsExactly(closeFailure);
+    }
+
+    @Test
     void builderShouldCloseCurrentRuntimeAndPreserveDecoratorFailureWhenDecoratorThrows() {
         IllegalStateException decoratorFailure = new IllegalStateException("decorator failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        TrackingProvider provider = new TrackingProvider(
+            "redis",
+            "Redis",
+            TestConfiguration.class,
+            standardBehavior(),
+            closeFailure
+        );
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendProvider(provider)
+            .backendConfiguration(new TestConfiguration("decorated"))
+            .decorators(List.of(runtime -> {
+                throw decoratorFailure;
+            }));
+
+        Throwable thrown = catchThrowable(builder::build);
+
+        assertThat(thrown).isSameAs(decoratorFailure);
+        assertThat(provider.createdClient().closeCount().get()).isEqualTo(1);
+        assertThat(thrown.getSuppressed()).containsExactly(closeFailure);
+    }
+
+    @Test
+    void builderShouldCloseCurrentRuntimeAndPreserveDecoratorErrorWhenDecoratorThrowsError() {
+        AssertionError decoratorFailure = new AssertionError("decorator failed");
         RuntimeException closeFailure = new RuntimeException("close failed");
         TrackingProvider provider = new TrackingProvider(
             "redis",
