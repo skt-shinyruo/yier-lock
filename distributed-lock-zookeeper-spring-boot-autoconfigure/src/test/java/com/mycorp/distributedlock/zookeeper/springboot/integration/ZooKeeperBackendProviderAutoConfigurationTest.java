@@ -1,12 +1,11 @@
 package com.mycorp.distributedlock.zookeeper.springboot.integration;
 
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.api.LockRuntime;
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendProvider;
 import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockAutoConfiguration;
 import com.mycorp.distributedlock.zookeeper.springboot.config.ZooKeeperDistributedLockProperties;
 import org.junit.jupiter.api.Test;
@@ -17,7 +16,7 @@ import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class ZooKeeperBackendModuleAutoConfigurationTest {
+class ZooKeeperBackendProviderAutoConfigurationTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
         .withConfiguration(AutoConfigurations.of(ZooKeeperDistributedLockAutoConfiguration.class));
@@ -29,7 +28,7 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
         ));
 
     @Test
-    void shouldBindZooKeeperPropertiesAndExposeBackendModule() {
+    void shouldBindZooKeeperPropertiesAndExposeProviderAndConfiguration() {
         contextRunner
             .withPropertyValues(
                 "distributed.lock.enabled=true",
@@ -39,13 +38,19 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(ZooKeeperDistributedLockProperties.class);
-                assertThat(context).hasSingleBean(BackendModule.class);
-                assertThat(context.getBean(BackendModule.class)).isInstanceOf(ZooKeeperBackendModule.class);
-                assertThat(context).hasBean("zooKeeperDistributedLockBackendModule");
+                assertThat(context).hasSingleBean(BackendProvider.class);
+                assertThat(context.getBean(BackendProvider.class)).isInstanceOf(ZooKeeperBackendProvider.class);
+                assertThat(context).hasBean("zooKeeperDistributedLockBackendProvider");
+                assertThat(context).hasSingleBean(BackendConfiguration.class);
+                assertThat(context.getBean(BackendConfiguration.class)).isInstanceOf(ZooKeeperBackendConfiguration.class);
 
                 ZooKeeperDistributedLockProperties properties = context.getBean(ZooKeeperDistributedLockProperties.class);
                 assertThat(properties.getConnectString()).isEqualTo("127.0.0.1:2281");
                 assertThat(properties.getBasePath()).isEqualTo("/test-locks");
+
+                ZooKeeperBackendConfiguration configuration = context.getBean(ZooKeeperBackendConfiguration.class);
+                assertThat(configuration.connectString()).isEqualTo("127.0.0.1:2281");
+                assertThat(configuration.basePath()).isEqualTo("/test-locks");
             });
     }
 
@@ -89,13 +94,14 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
                 "distributed.lock.backend=redis"
             )
             .run(context -> {
-                assertThat(context).doesNotHaveBean(BackendModule.class);
+                assertThat(context).doesNotHaveBean(BackendProvider.class);
+                assertThat(context).doesNotHaveBean(BackendConfiguration.class);
                 assertThat(context).doesNotHaveBean(ZooKeeperDistributedLockProperties.class);
             });
     }
 
     @Test
-    void shouldBackOffForUserSuppliedDefaultBackendModuleBeanName() {
+    void shouldBackOffForUserSuppliedDefaultProviderBeanName() {
         contextRunner
             .withUserConfiguration(UserZooKeeperBackendOverrideConfiguration.class)
             .withPropertyValues(
@@ -103,15 +109,15 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
                 "distributed.lock.backend=zookeeper"
             )
             .run(context -> {
-                assertThat(context).hasSingleBean(BackendModule.class);
-                assertThat(context.getBean("zooKeeperDistributedLockBackendModule")).isInstanceOf(NamedBackendModule.class);
+                assertThat(context).hasSingleBean(BackendProvider.class);
+                assertThat(context.getBean("zooKeeperDistributedLockBackendProvider")).isInstanceOf(NamedBackendProvider.class);
             });
     }
 
     @Test
-    void shouldAutoConfigureDefaultBackendModuleWhenUnrelatedBackendModuleExists() {
+    void shouldAutoConfigureDefaultProviderWhenUnrelatedProviderExists() {
         contextRunner
-            .withUserConfiguration(UnrelatedBackendModuleConfiguration.class)
+            .withUserConfiguration(UnrelatedBackendProviderConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
                 "distributed.lock.backend=zookeeper",
@@ -119,28 +125,9 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
                 "distributed.lock.zookeeper.base-path=/test-locks"
             )
             .run(context -> {
-                assertThat(context.getBeansOfType(BackendModule.class)).hasSize(2);
-                assertThat(context.getBean("unrelatedBackendModule")).isInstanceOf(NamedBackendModule.class);
-                assertThat(context.getBean("zooKeeperDistributedLockBackendModule")).isInstanceOf(ZooKeeperBackendModule.class);
-            });
-    }
-
-    @Test
-    void shouldUseSameIdCustomBackendModuleInsteadOfAutoConfiguredDefault() {
-        starterContextRunner
-            .withUserConfiguration(SameIdZooKeeperBackendModuleConfiguration.class)
-            .withPropertyValues(
-                "distributed.lock.enabled=true",
-                "distributed.lock.backend=zookeeper",
-                "distributed.lock.zookeeper.connect-string=127.0.0.1:2281",
-                "distributed.lock.zookeeper.base-path=/test-locks"
-            )
-            .run(context -> {
-                assertThat(context).hasSingleBean(LockRuntime.class);
-                assertThat(context.getBean(LockRuntime.class).backendId()).isEqualTo("zookeeper");
-                assertThat(context.getBeansOfType(BackendModule.class)).hasSize(2);
-                assertThat(context.getBean("customZooKeeperBackendModule")).isInstanceOf(NamedBackendModule.class);
-                assertThat(context.getBean("zooKeeperDistributedLockBackendModule")).isInstanceOf(ZooKeeperBackendModule.class);
+                assertThat(context.getBeansOfType(BackendProvider.class)).hasSize(2);
+                assertThat(context.getBean("unrelatedBackendProvider")).isInstanceOf(NamedBackendProvider.class);
+                assertThat(context.getBean("zooKeeperDistributedLockBackendProvider")).isInstanceOf(ZooKeeperBackendProvider.class);
             });
     }
 
@@ -154,8 +141,9 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
             )
             .run(context -> {
                 assertThat(context).hasSingleBean(LockRuntime.class);
-                assertThat(context).doesNotHaveBean("zooKeeperDistributedLockBackendModule");
-                assertThat(context).doesNotHaveBean(BackendModule.class);
+                assertThat(context).doesNotHaveBean("zooKeeperDistributedLockBackendProvider");
+                assertThat(context).doesNotHaveBean(BackendProvider.class);
+                assertThat(context).doesNotHaveBean(BackendConfiguration.class);
             });
     }
 
@@ -163,26 +151,17 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
     static class UserZooKeeperBackendOverrideConfiguration {
 
         @Bean
-        BackendModule zooKeeperDistributedLockBackendModule() {
-            return new NamedBackendModule("zookeeper");
+        BackendProvider<?> zooKeeperDistributedLockBackendProvider() {
+            return new NamedBackendProvider("zookeeper");
         }
     }
 
     @Configuration(proxyBeanMethods = false)
-    static class UnrelatedBackendModuleConfiguration {
+    static class UnrelatedBackendProviderConfiguration {
 
         @Bean
-        BackendModule unrelatedBackendModule() {
-            return new NamedBackendModule("unrelated");
-        }
-    }
-
-    @Configuration(proxyBeanMethods = false)
-    static class SameIdZooKeeperBackendModuleConfiguration {
-
-        @Bean
-        BackendModule customZooKeeperBackendModule() {
-            return new NamedBackendModule("zookeeper");
+        BackendProvider<?> unrelatedBackendProvider() {
+            return new NamedBackendProvider("unrelated");
         }
     }
 
@@ -191,63 +170,13 @@ class ZooKeeperBackendModuleAutoConfigurationTest {
 
         @Bean
         LockRuntime userLockRuntime() {
-            return new StubLockRuntime();
+            return TestRuntimes.stub("zookeeper");
         }
     }
 
-    private static final class NamedBackendModule implements BackendModule {
-
-        private final String id;
-
-        private NamedBackendModule(String id) {
-            this.id = id;
-        }
-
-        @Override
-        public String id() {
-            return id;
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return BackendCapabilities.standard();
-        }
-
-        @Override
-        public LockBackend createBackend() {
-            return new LockBackend() {
-                @Override
-                public BackendSession openSession() {
-                    throw new UnsupportedOperationException("not used in test");
-                }
-            };
-        }
-    }
-
-    private static final class StubLockRuntime implements LockRuntime {
-
-        @Override
-        public com.mycorp.distributedlock.api.LockClient lockClient() {
-            return null;
-        }
-
-        @Override
-        public com.mycorp.distributedlock.api.SynchronousLockExecutor synchronousLockExecutor() {
-            return null;
-        }
-
-        @Override
-        public String backendId() {
-            return "zookeeper";
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return BackendCapabilities.standard();
-        }
-
-        @Override
-        public void close() {
+    private static final class NamedBackendProvider extends TestBackendProviderSupport {
+        private NamedBackendProvider(String id) {
+            super(id);
         }
     }
 }

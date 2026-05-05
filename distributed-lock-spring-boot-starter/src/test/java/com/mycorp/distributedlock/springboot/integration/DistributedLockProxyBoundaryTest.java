@@ -1,10 +1,9 @@
 package com.mycorp.distributedlock.springboot.integration;
 
-import com.mycorp.distributedlock.api.LockContext;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
@@ -25,7 +24,7 @@ public class DistributedLockProxyBoundaryTest {
     void jdkProxyShouldHonorInterfaceAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=false").run(context -> {
             InterfaceLockedService service = context.getBean(InterfaceLockedService.class);
-            assertThat(service.process("42")).startsWith("interface-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("interface-42-token-");
         });
     }
 
@@ -33,7 +32,7 @@ public class DistributedLockProxyBoundaryTest {
     void cglibProxyShouldHonorInterfaceAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
             InterfaceLockedServiceImpl service = context.getBean(InterfaceLockedServiceImpl.class);
-            assertThat(service.process("42")).startsWith("interface-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("interface-42-token-");
         });
     }
 
@@ -41,7 +40,7 @@ public class DistributedLockProxyBoundaryTest {
     void cglibProxyShouldHonorGenericInterfaceAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
             GenericInterfaceLockedService service = context.getBean(GenericInterfaceLockedService.class);
-            assertThat(service.process("42")).startsWith("generic-interface-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("generic-interface-42-token-");
         });
     }
 
@@ -49,7 +48,7 @@ public class DistributedLockProxyBoundaryTest {
     void cglibProxyShouldHonorLaterMatchingInterfaceAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
             MultiInterfaceLockedService service = context.getBean(MultiInterfaceLockedService.class);
-            assertThat(service.process("42")).startsWith("multi-interface-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("multi-interface-42-token-");
         });
     }
 
@@ -57,7 +56,7 @@ public class DistributedLockProxyBoundaryTest {
     void jdkProxyShouldHonorImplementationAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=false").run(context -> {
             ImplementationLockedService service = context.getBean(ImplementationLockedService.class);
-            assertThat(service.process("42")).startsWith("implementation-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("implementation-42-token-");
         });
     }
 
@@ -65,15 +64,15 @@ public class DistributedLockProxyBoundaryTest {
     void cglibProxyShouldHonorImplementationAnnotation() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
             CglibLockedService service = context.getBean(CglibLockedService.class);
-            assertThat(service.process("42")).startsWith("cglib-42-token-");
+            assertThat(service.process("42", new FencingToken(1))).startsWith("cglib-42-token-");
         });
     }
 
     @Test
-    void applicationClassNamedBackendModuleShouldStillBeAdvised() {
+    void applicationInfrastructureClassShouldStillBeAdvised() {
         contextRunner.withPropertyValues("spring.aop.proxy-target-class=true").run(context -> {
-            ApplicationBackendModule service = context.getBean(ApplicationBackendModule.class);
-            assertThat(service.process("42")).startsWith("application-backend-module-42-token-");
+            ApplicationInfrastructureService service = context.getBean(ApplicationInfrastructureService.class);
+            assertThat(service.process("42", new FencingToken(1))).startsWith("application-infrastructure-42-token-");
         });
     }
 
@@ -87,73 +86,74 @@ public class DistributedLockProxyBoundaryTest {
 
     @Configuration(proxyBeanMethods = false)
     static class TestApplication {
-        @Bean BackendModule inMemoryBackendModule() { return new InMemoryBackendModule("in-memory"); }
+        @Bean BackendProvider<TestBackends.Configuration> inMemoryBackendProvider() { return new TestBackends.Provider("in-memory"); }
+        @Bean TestBackends.Configuration inMemoryBackendConfiguration() { return new TestBackends.Configuration(); }
         @Bean InterfaceLockedServiceImpl interfaceLockedService() { return new InterfaceLockedServiceImpl(); }
         @Bean GenericInterfaceLockedService genericInterfaceLockedService() { return new GenericInterfaceLockedService(); }
         @Bean MultiInterfaceLockedService multiInterfaceLockedService() { return new MultiInterfaceLockedService(); }
         @Bean ImplementationLockedServiceImpl implementationLockedService() { return new ImplementationLockedServiceImpl(); }
         @Bean CglibLockedService cglibLockedService() { return new CglibLockedService(); }
-        @Bean ApplicationBackendModule applicationBackendModule() { return new ApplicationBackendModule(); }
+        @Bean ApplicationInfrastructureService applicationInfrastructureService() { return new ApplicationInfrastructureService(); }
         @Bean UnannotatedFinalApplicationService unannotatedFinalApplicationService() { return new UnannotatedFinalApplicationService(); }
     }
 
     public interface InterfaceLockedService {
         @DistributedLock(key = "interface:#{#p0}")
-        String process(String id);
+        String process(String id, FencingToken fencingToken);
     }
 
     static class InterfaceLockedServiceImpl implements InterfaceLockedService {
-        public String process(String id) {
-            return "interface-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        public String process(String id, FencingToken fencingToken) {
+            return "interface-" + id + "-token-" + fencingToken.value();
         }
     }
 
     public interface GenericLockedService<T> {
         @DistributedLock(key = "generic-interface:#{#p0}")
-        String process(T id);
+        String process(T id, FencingToken fencingToken);
     }
 
     static class GenericInterfaceLockedService implements GenericLockedService<String> {
-        public String process(String id) {
-            return "generic-interface-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        public String process(String id, FencingToken fencingToken) {
+            return "generic-interface-" + id + "-token-" + fencingToken.value();
         }
     }
 
     public interface UnannotatedSameSignatureService {
-        String process(String id);
+        String process(String id, FencingToken fencingToken);
     }
 
     public interface AnnotatedSameSignatureService {
         @DistributedLock(key = "multi-interface:#{#p0}")
-        String process(String id);
+        String process(String id, FencingToken fencingToken);
     }
 
     static class MultiInterfaceLockedService implements UnannotatedSameSignatureService, AnnotatedSameSignatureService {
-        public String process(String id) {
-            return "multi-interface-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        public String process(String id, FencingToken fencingToken) {
+            return "multi-interface-" + id + "-token-" + fencingToken.value();
         }
     }
 
-    public interface ImplementationLockedService { String process(String id); }
+    public interface ImplementationLockedService { String process(String id, FencingToken fencingToken); }
 
     static class ImplementationLockedServiceImpl implements ImplementationLockedService {
         @DistributedLock(key = "implementation:#{#p0}")
-        public String process(String id) {
-            return "implementation-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        public String process(String id, FencingToken fencingToken) {
+            return "implementation-" + id + "-token-" + fencingToken.value();
         }
     }
 
     static class CglibLockedService {
         @DistributedLock(key = "cglib:#{#p0}")
-        public String process(String id) {
-            return "cglib-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+        public String process(String id, FencingToken fencingToken) {
+            return "cglib-" + id + "-token-" + fencingToken.value();
         }
     }
 
-    static class ApplicationBackendModule {
-        @DistributedLock(key = "application-backend-module:#{#p0}")
-        public String process(String id) {
-            return "application-backend-module-" + id + "-token-" + LockContext.requireCurrentFencingToken().value();
+    static class ApplicationInfrastructureService {
+        @DistributedLock(key = "application-infrastructure:#{#p0}")
+        public String process(String id, FencingToken fencingToken) {
+            return "application-infrastructure-" + id + "-token-" + fencingToken.value();
         }
     }
 

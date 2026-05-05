@@ -1,10 +1,9 @@
 package com.mycorp.distributedlock.springboot.integration;
 
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
@@ -122,8 +121,13 @@ class DistributedLockAsyncGuardTest {
     static class TestApplication {
 
         @Bean
-        BackendModule inMemoryBackendModule() {
-            return new InMemoryBackendModule("in-memory");
+        BackendProvider<TestBackends.Configuration> inMemoryBackendProvider() {
+            return new TestBackends.Provider("in-memory");
+        }
+
+        @Bean
+        TestBackends.Configuration inMemoryBackendConfiguration() {
+            return new TestBackends.Configuration();
         }
 
         @Bean

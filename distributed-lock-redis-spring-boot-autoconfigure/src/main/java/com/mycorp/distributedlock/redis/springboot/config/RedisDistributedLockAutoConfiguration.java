@@ -1,9 +1,10 @@
 package com.mycorp.distributedlock.redis.springboot.config;
 
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
-import com.mycorp.distributedlock.redis.RedisBackendModule;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.redis.RedisBackendProvider;
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -23,24 +24,29 @@ public class RedisDistributedLockAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(RedisDistributedLockProperties.class)
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean(value = LockRuntime.class, name = "redisDistributedLockBackendModule")
+    @ConditionalOnMissingBean(value = LockRuntime.class, name = "redisDistributedLockBackendProvider")
     static class DefaultRedisBackendConfiguration {
 
-        @Bean("redisDistributedLockBackendModule")
-        @ConditionalOnMissingBean(name = "redisDistributedLockBackendModule")
-        BackendModule redisBackendModule(RedisDistributedLockProperties properties) {
+        @Bean("redisDistributedLockBackendProvider")
+        @ConditionalOnMissingBean(name = "redisDistributedLockBackendProvider")
+        BackendProvider<RedisBackendConfiguration> redisBackendProvider() {
+            return new RedisBackendProvider();
+        }
+
+        @Bean("redisDistributedLockBackendConfiguration")
+        @ConditionalOnMissingBean(value = BackendConfiguration.class, name = "redisDistributedLockBackendConfiguration")
+        RedisBackendConfiguration redisBackendConfiguration(RedisDistributedLockProperties properties) {
             int renewalPoolSize = properties.getRenewalPoolSize();
             if (renewalPoolSize < 0) {
                 throw new IllegalArgumentException("distributed.lock.redis.renewal-pool-size must not be negative");
             }
-            RedisBackendConfiguration configuration = new RedisBackendConfiguration(
+            return new RedisBackendConfiguration(
                 requireUri(properties.getUri()),
                 toLeaseSeconds(properties.getLeaseTime()),
                 properties.getKeyStrategy(),
                 properties.isFixedLeaseRenewalEnabled(),
                 renewalPoolSize
             );
-            return new RedisBackendModule(configuration);
         }
 
         private String requireUri(String uri) {
