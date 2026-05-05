@@ -17,6 +17,7 @@ import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.WaitSemantics;
+import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.UnsupportedLockCapabilityException;
 import com.mycorp.distributedlock.spi.BackendClient;
 import com.mycorp.distributedlock.spi.BackendLease;
@@ -61,6 +62,15 @@ class DefaultLockClientTest {
         }
 
         assertThat(backend.acquireCount()).hasValue(0);
+    }
+
+    @Test
+    void openSessionShouldReportNullBackendSession() {
+        DefaultLockClient client = new DefaultLockClient(new NullSessionBackend(), standardBehavior());
+
+        assertThatThrownBy(client::openSession)
+            .isInstanceOf(LockBackendException.class)
+            .hasMessageContaining("null session");
     }
 
     private static LockRequest sampleRequest(LockMode mode) {
@@ -122,6 +132,18 @@ class DefaultLockClientTest {
 
         AtomicInteger acquireCount() {
             return acquireCount;
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class NullSessionBackend implements BackendClient {
+
+        @Override
+        public BackendSession openSession() {
+            return null;
         }
 
         @Override

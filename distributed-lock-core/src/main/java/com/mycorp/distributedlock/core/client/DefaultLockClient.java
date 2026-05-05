@@ -5,6 +5,7 @@ import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.Objects;
 
@@ -26,7 +27,11 @@ public final class DefaultLockClient implements LockClient {
 
     @Override
     public LockSession openSession() {
-        return new DefaultLockSession(behavior, backendClient.openSession(), validator);
+        BackendSession backendSession = backendClient.openSession();
+        if (backendSession == null) {
+            throw new LockBackendException("Backend client returned null session");
+        }
+        return new DefaultLockSession(behavior, backendSession, validator);
     }
 
     @Override

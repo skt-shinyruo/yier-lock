@@ -264,6 +264,29 @@ class DefaultLockSessionTest {
         assertThat(backend.leaseCount()).isEqualTo(1);
     }
 
+    @Test
+    void acquireShouldReportNullBackendLeaseAndAllowSameKeyRetry() throws Exception {
+        NullFirstAcquireBackend backend = new NullFirstAcquireBackend();
+        DefaultLockClient client = new DefaultLockClient(backend, standardBehavior());
+        LockRequest request = sampleRequest("orders:null-lease");
+
+        try (LockSession session = client.openSession()) {
+            assertThatThrownBy(() -> session.acquire(request))
+                .isInstanceOfSatisfying(LockBackendException.class, exception -> {
+                    assertThat(exception).hasMessageContaining("null lease");
+                    assertThat(exception.context().key()).isEqualTo(new LockKey("orders:null-lease"));
+                    assertThat(exception.context().mode()).isEqualTo(LockMode.MUTEX);
+                    assertThat(exception.context().waitPolicy()).isEqualTo(WaitPolicy.timed(Duration.ofSeconds(1)));
+                });
+
+            try (LockLease lease = session.acquire(request)) {
+                assertThat(lease.key()).isEqualTo(new LockKey("orders:null-lease"));
+            }
+        }
+
+        assertThat(backend.leaseCount()).isEqualTo(1);
+    }
+
     private static LockRequest sampleRequest(String key) {
         return new LockRequest(
             new LockKey(key),
@@ -434,6 +457,47 @@ class DefaultLockSessionTest {
 
         void failNextAcquire(RuntimeException failure) {
             acquireFailure.set(failure);
+        }
+
+        int leaseCount() {
+            return leases.size();
+        }
+
+        @Override
+        public void close() {
+        }
+    }
+
+    private static final class NullFirstAcquireBackend implements BackendClient {
+        private final List<TrackingLease> leases = new CopyOnWriteArrayList<>();
+        private final AtomicInteger acquireCount = new AtomicInteger();
+
+        @Override
+        public BackendSession openSession() {
+            return new BackendSession() {
+                @Override
+                public BackendLease acquire(LockRequest lockRequest) {
+                    if (acquireCount.getAndIncrement() == 0) {
+                        return null;
+                    }
+                    TrackingLease lease = new TrackingLease(
+                        lockRequest.key(),
+                        lockRequest.mode(),
+                        new FencingToken(leases.size() + 1L)
+                    );
+                    leases.add(lease);
+                    return lease;
+                }
+
+                @Override
+                public SessionState state() {
+                    return SessionState.ACTIVE;
+                }
+
+                @Override
+                public void close() {
+                }
+            };
         }
 
         int leaseCount() {

@@ -47,6 +47,13 @@ public final class DefaultLockSession implements LockSession {
         boolean leaseCreated = false;
         try {
             BackendLease backendLease = backendSession.acquire(request);
+            if (backendLease == null) {
+                throw new LockBackendException(
+                    "Backend session returned null lease",
+                    null,
+                    LockFailureContext.fromRequest(request, null, null)
+                );
+            }
             SessionBoundLockLease lease = new SessionBoundLockLease(backendLease, this::forgetLease);
             if (!registerLease(lease)) {
                 throw closeLateAcquiredLease(lease);
