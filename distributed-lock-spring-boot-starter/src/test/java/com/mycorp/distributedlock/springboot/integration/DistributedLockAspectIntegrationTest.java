@@ -3,7 +3,6 @@ package com.mycorp.distributedlock.springboot.integration;
 import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseMode;
 import com.mycorp.distributedlock.api.LeaseState;
-import com.mycorp.distributedlock.api.LockContext;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
@@ -11,14 +10,12 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitMode;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendProvider;
+import com.mycorp.distributedlock.spi.BackendSession;
 import com.mycorp.distributedlock.springboot.annotation.DistributedLock;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.testkit.support.InMemoryBackendModule;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.autoconfigure.aop.AopAutoConfiguration;
@@ -65,10 +62,14 @@ class DistributedLockAspectIntegrationTest {
                 CountDownLatch entered = new CountDownLatch(1);
                 CountDownLatch release = new CountDownLatch(1);
 
-                Future<String> firstCall = executor.submit(() -> service.process("42", entered, release));
+                Future<String> firstCall = executor.submit(() ->
+                    service.process("42", entered, release, new FencingToken(1))
+                );
                 assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
 
-                Future<String> secondCall = executor.submit(() -> service.process("42", new CountDownLatch(0), new CountDownLatch(0)));
+                Future<String> secondCall = executor.submit(() ->
+                    service.process("42", new CountDownLatch(0), new CountDownLatch(0), new FencingToken(2))
+                );
 
                 assertThatThrownBy(secondCall::get)
                     .isInstanceOf(ExecutionException.class)
@@ -87,12 +88,12 @@ class DistributedLockAspectIntegrationTest {
     }
 
     @Test
-    void shouldMapTryOnceFixedLeaseAndExposePublicLockContext() {
+    void shouldMapTryOnceFixedLeaseAndPassLeaseToAction() {
         capturingContextRunner().run(context -> {
             PolicyService service = context.getBean(PolicyService.class);
             CapturingBackend backend = context.getBean(CapturingBackend.class);
 
-            assertThat(service.updateWithLease("42")).isEqualTo("ok");
+            assertThat(service.updateWithLease("42", new FencingToken(1))).isEqualTo("ok");
 
             LockRequest request = backend.lastRequest();
             assertThat(request.key()).isEqualTo(new LockKey("order:42"));
@@ -110,7 +111,7 @@ class DistributedLockAspectIntegrationTest {
             PolicyService service = context.getBean(PolicyService.class);
             CapturingBackend backend = context.getBean(CapturingBackend.class);
 
-            assertThat(service.defaultPolicies("42")).isEqualTo("ok");
+            assertThat(service.defaultPolicies("42", new FencingToken(1))).isEqualTo("ok");
 
             LockRequest request = backend.lastRequest();
             assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.INDEFINITE);
@@ -128,7 +129,7 @@ class DistributedLockAspectIntegrationTest {
                 PolicyService service = context.getBean(PolicyService.class);
                 CapturingBackend backend = context.getBean(CapturingBackend.class);
 
-                assertThat(service.defaultPolicies("42")).isEqualTo("ok");
+                assertThat(service.defaultPolicies("42", new FencingToken(1))).isEqualTo("ok");
 
                 LockRequest request = backend.lastRequest();
                 assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TRY_ONCE);
@@ -144,7 +145,7 @@ class DistributedLockAspectIntegrationTest {
                 PolicyService service = context.getBean(PolicyService.class);
                 CapturingBackend backend = context.getBean(CapturingBackend.class);
 
-                assertThat(service.defaultPolicies("42")).isEqualTo("ok");
+                assertThat(service.defaultPolicies("42", new FencingToken(1))).isEqualTo("ok");
 
                 LockRequest request = backend.lastRequest();
                 assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TIMED);
@@ -160,7 +161,7 @@ class DistributedLockAspectIntegrationTest {
                 PolicyService service = context.getBean(PolicyService.class);
                 CapturingBackend backend = context.getBean(CapturingBackend.class);
 
-                assertThat(service.updateWithLease("42")).isEqualTo("ok");
+                assertThat(service.updateWithLease("42", new FencingToken(1))).isEqualTo("ok");
 
                 LockRequest request = backend.lastRequest();
                 assertThat(request.waitPolicy().mode()).isEqualTo(WaitMode.TRY_ONCE);
@@ -220,8 +221,13 @@ class DistributedLockAspectIntegrationTest {
     static class TestApplication {
 
         @Bean
-        BackendModule inMemoryBackendModule() {
-            return new InMemoryBackendModule("in-memory");
+        BackendProvider<TestBackends.Configuration> inMemoryBackendProvider() {
+            return new TestBackends.Provider("in-memory");
+        }
+
+        @Bean
+        TestBackends.Configuration inMemoryBackendConfiguration() {
+            return new TestBackends.Configuration();
         }
 
         @Bean
@@ -246,13 +252,18 @@ class DistributedLockAspectIntegrationTest {
         }
 
         @DistributedLock(key = "order:#{#p0}", mode = LockMode.MUTEX, waitFor = "50ms")
-        public String process(String jobId, CountDownLatch entered, CountDownLatch release) throws InterruptedException {
+        public String process(
+            String jobId,
+            CountDownLatch entered,
+            CountDownLatch release,
+            FencingToken fencingToken
+        ) throws InterruptedException {
             int concurrent = concurrentInvocations.incrementAndGet();
             maxConcurrentInvocations.updateAndGet(previous -> Math.max(previous, concurrent));
             entered.countDown();
             try {
                 release.await();
-                return guardedResource.writeAndReturn(jobId);
+                return guardedResource.writeAndReturn(jobId, fencingToken);
             } finally {
                 concurrentInvocations.decrementAndGet();
             }
@@ -267,8 +278,8 @@ class DistributedLockAspectIntegrationTest {
 
         private final AtomicLong lastObservedFencingToken = new AtomicLong();
 
-        String writeAndReturn(String orderId) {
-            long token = LockContext.requireCurrentFencingToken().value();
+        String writeAndReturn(String orderId, FencingToken fencingToken) {
+            long token = fencingToken.value();
             lastObservedFencingToken.set(token);
             return "processed-" + orderId;
         }
@@ -287,8 +298,13 @@ class DistributedLockAspectIntegrationTest {
         }
 
         @Bean
-        BackendModule capturingBackendModule(CapturingBackend backend) {
-            return new CapturingBackendModule(backend);
+        BackendProvider<TestBackends.Configuration> capturingBackendProvider(CapturingBackend backend) {
+            return new TestBackends.Provider("capturing", backend);
+        }
+
+        @Bean
+        TestBackends.Configuration capturingBackendConfiguration() {
+            return new TestBackends.Configuration();
         }
 
         @Bean
@@ -300,13 +316,13 @@ class DistributedLockAspectIntegrationTest {
     static class PolicyService {
 
         @DistributedLock(key = "order:#{#p0}", waitFor = "0s", leaseFor = "10s")
-        public String updateWithLease(String id) {
-            return LockContext.requireCurrentFencingToken().value() > 0 ? "ok" : "bad";
+        public String updateWithLease(String id, FencingToken fencingToken) {
+            return fencingToken.value() > 0 ? "ok" : "bad";
         }
 
         @DistributedLock(key = "order:#{#p0}")
-        public String defaultPolicies(String id) {
-            return LockContext.requireCurrentFencingToken().value() > 0 ? "ok" : "bad";
+        public String defaultPolicies(String id, FencingToken fencingToken) {
+            return fencingToken.value() > 0 ? "ok" : "bad";
         }
 
         @DistributedLock(key = "order:#{#p0}", leaseFor = "0s")
@@ -326,31 +342,7 @@ class DistributedLockAspectIntegrationTest {
         }
     }
 
-    static final class CapturingBackendModule implements BackendModule {
-
-        private final CapturingBackend backend;
-
-        CapturingBackendModule(CapturingBackend backend) {
-            this.backend = backend;
-        }
-
-        @Override
-        public String id() {
-            return "capturing";
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return BackendCapabilities.standard();
-        }
-
-        @Override
-        public LockBackend createBackend() {
-            return backend;
-        }
-    }
-
-    static final class CapturingBackend implements LockBackend {
+    static final class CapturingBackend implements BackendClient {
 
         private final AtomicReference<LockRequest> lastRequest = new AtomicReference<>();
         private final AtomicLong fencingCounter = new AtomicLong();
@@ -358,6 +350,10 @@ class DistributedLockAspectIntegrationTest {
         @Override
         public BackendSession openSession() {
             return new CapturingSession(this);
+        }
+
+        @Override
+        public void close() {
         }
 
         LockRequest lastRequest() {
@@ -374,7 +370,7 @@ class DistributedLockAspectIntegrationTest {
         }
 
         @Override
-        public BackendLockLease acquire(LockRequest request) {
+        public BackendLease acquire(LockRequest request) {
             backend.lastRequest.set(request);
             return new CapturingLease(
                 request.key(),
@@ -399,7 +395,7 @@ class DistributedLockAspectIntegrationTest {
         LockMode mode,
         FencingToken fencingToken,
         AtomicReference<LeaseState> leaseState
-    ) implements BackendLockLease {
+    ) implements BackendLease {
 
         @Override
         public LeaseState state() {

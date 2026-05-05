@@ -6,11 +6,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
 import com.mycorp.distributedlock.redis.springboot.config.RedisDistributedLockAutoConfiguration;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import com.mycorp.distributedlock.springboot.config.DistributedLockAutoConfiguration;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -72,9 +69,9 @@ class RedisStarterIntegrationTest {
     }
 
     @Test
-    void shouldFailRedisPropertyValidationWhenUnrelatedBackendModuleExistsWithoutRedisProperties() {
+    void shouldFailRedisPropertyValidationWhenUnrelatedBackendProviderExistsWithoutRedisProperties() {
         contextRunner
-            .withUserConfiguration(UserBackendModuleConfiguration.class)
+            .withUserConfiguration(UserBackendProviderConfiguration.class)
             .withPropertyValues(
                 "distributed.lock.enabled=true",
                 "distributed.lock.backend=redis"
@@ -101,40 +98,11 @@ class RedisStarterIntegrationTest {
     }
 
     @Configuration(proxyBeanMethods = false)
-    static class UserBackendModuleConfiguration {
+    static class UserBackendProviderConfiguration {
 
         @Bean
-        BackendModule customBackendModule() {
-            return new NamedBackendModule("custom");
-        }
-    }
-
-    private static final class NamedBackendModule implements BackendModule {
-
-        private final String id;
-
-        private NamedBackendModule(String id) {
-            this.id = id;
-        }
-
-        @Override
-        public String id() {
-            return id;
-        }
-
-        @Override
-        public BackendCapabilities capabilities() {
-            return BackendCapabilities.standard();
-        }
-
-        @Override
-        public LockBackend createBackend() {
-            return new LockBackend() {
-                @Override
-                public BackendSession openSession() {
-                    throw new UnsupportedOperationException("not used in test");
-                }
-            };
+        BackendProvider<?> customBackendProvider() {
+            return new TestBackendProviderSupport("custom");
         }
     }
 

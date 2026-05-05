@@ -1,9 +1,10 @@
 package com.mycorp.distributedlock.zookeeper.springboot.config;
 
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.spi.BackendModule;
+import com.mycorp.distributedlock.api.LockRuntime;
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+import com.mycorp.distributedlock.spi.BackendProvider;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
-import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -20,17 +21,22 @@ public class ZooKeeperDistributedLockAutoConfiguration {
     @Configuration(proxyBeanMethods = false)
     @EnableConfigurationProperties(ZooKeeperDistributedLockProperties.class)
     @ConditionalOnProperty(prefix = "distributed.lock", name = "enabled", havingValue = "true", matchIfMissing = true)
-    @ConditionalOnMissingBean(value = LockRuntime.class, name = "zooKeeperDistributedLockBackendModule")
+    @ConditionalOnMissingBean(value = LockRuntime.class, name = "zooKeeperDistributedLockBackendProvider")
     static class DefaultZooKeeperBackendConfiguration {
 
-        @Bean("zooKeeperDistributedLockBackendModule")
-        @ConditionalOnMissingBean(name = "zooKeeperDistributedLockBackendModule")
-        BackendModule zooKeeperBackendModule(ZooKeeperDistributedLockProperties properties) {
-            ZooKeeperBackendConfiguration configuration = new ZooKeeperBackendConfiguration(
+        @Bean("zooKeeperDistributedLockBackendProvider")
+        @ConditionalOnMissingBean(name = "zooKeeperDistributedLockBackendProvider")
+        BackendProvider<ZooKeeperBackendConfiguration> zooKeeperBackendProvider() {
+            return new ZooKeeperBackendProvider();
+        }
+
+        @Bean("zooKeeperDistributedLockBackendConfiguration")
+        @ConditionalOnMissingBean(value = BackendConfiguration.class, name = "zooKeeperDistributedLockBackendConfiguration")
+        ZooKeeperBackendConfiguration zooKeeperBackendConfiguration(ZooKeeperDistributedLockProperties properties) {
+            return new ZooKeeperBackendConfiguration(
                 requireConnectString(properties.getConnectString()),
                 requireBasePath(properties.getBasePath())
             );
-            return new ZooKeeperBackendModule(configuration);
         }
 
         private String requireConnectString(String connectString) {
