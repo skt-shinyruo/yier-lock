@@ -1,13 +1,13 @@
 package com.mycorp.distributedlock.zookeeper;
 
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 
 import java.util.Objects;
 import java.util.UUID;
 
-public class ZooKeeperLockBackend implements LockBackend {
+public class ZooKeeperLockBackend implements BackendClient {
 
     private final ZooKeeperBackendConfiguration configuration;
     private final ZooKeeperClientFactory clientFactory;

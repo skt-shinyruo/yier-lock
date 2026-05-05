@@ -5,8 +5,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -27,7 +27,7 @@ class ZooKeeperReadWriteConcurrencyTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession readerSession = backend.openSession();
-             BackendLockLease ignored = readerSession.acquire(new LockRequest(
+             BackendLease ignored = readerSession.acquire(new LockRequest(
                  new LockKey("zk:rw"),
                  LockMode.READ,
                  WaitPolicy.indefinite()
@@ -92,7 +92,7 @@ class ZooKeeperReadWriteConcurrencyTest {
     ) throws Exception {
         start.await();
         try (BackendSession session = backend.openSession();
-             BackendLockLease lease = session.acquire(new LockRequest(
+             BackendLease lease = session.acquire(new LockRequest(
                  new LockKey("zk:rw-race"),
                  mode,
                  WaitPolicy.timed(Duration.ofMillis(200))

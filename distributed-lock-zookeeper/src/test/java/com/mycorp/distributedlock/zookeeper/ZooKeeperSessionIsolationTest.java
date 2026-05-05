@@ -5,8 +5,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
 import org.junit.jupiter.api.Test;
@@ -37,7 +37,7 @@ class ZooKeeperSessionIsolationTest {
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession first = backend.openSession();
             BackendSession second = backend.openSession();
-            BackendLockLease secondLease = second.acquire(new LockRequest(
+            BackendLease secondLease = second.acquire(new LockRequest(
                 new LockKey("zk:isolation:second"),
                 LockMode.MUTEX,
                 WaitPolicy.timed(Duration.ofSeconds(1))

@@ -8,14 +8,14 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.spi.BackendLease;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.data.Stat;
 
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
-final class ZooKeeperLease implements BackendLockLease {
+final class ZooKeeperLease implements BackendLease {
 
     private final LockKey key;
     private final LockMode mode;

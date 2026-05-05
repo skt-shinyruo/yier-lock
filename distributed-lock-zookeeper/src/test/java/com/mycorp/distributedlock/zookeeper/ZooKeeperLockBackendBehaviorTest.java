@@ -7,8 +7,8 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
@@ -31,10 +31,10 @@ class ZooKeeperLockBackendBehaviorTest {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
                 try (BackendSession firstSession = backend.openSession();
-                     BackendLockLease ignored = firstSession.acquire(request("orders:1", Duration.ofSeconds(1)))) {
+                     BackendLease ignored = firstSession.acquire(request("orders:1", Duration.ofSeconds(1)))) {
                     assertThat(executor.submit(() -> {
                         try (BackendSession secondSession = backend.openSession();
-                             BackendLockLease lease = secondSession.acquire(request("orders_1", Duration.ofMillis(100)))) {
+                             BackendLease lease = secondSession.acquire(request("orders_1", Duration.ofMillis(100)))) {
                             return lease != null;
                         }
                     }).get()).isTrue();
@@ -50,14 +50,14 @@ class ZooKeeperLockBackendBehaviorTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession ownerSession = backend.openSession();
-            BackendLockLease ownerLease = ownerSession.acquire(request("zk:session-close:release", Duration.ofSeconds(1)));
+            BackendLease ownerLease = ownerSession.acquire(request("zk:session-close:release", Duration.ofSeconds(1)));
 
             assertThatCode(ownerSession::close).doesNotThrowAnyException();
 
             assertThat(ownerSession.state()).isEqualTo(SessionState.CLOSED);
             assertThat(ownerLease.state()).isEqualTo(LeaseState.RELEASED);
             try (BackendSession nextSession = backend.openSession();
-                 BackendLockLease nextLease = nextSession.acquire(request(
+                 BackendLease nextLease = nextSession.acquire(request(
                      "zk:session-close:release",
                      Duration.ofSeconds(1)
                  ))) {

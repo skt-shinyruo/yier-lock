@@ -1,10 +1,9 @@
 package com.mycorp.distributedlock.zookeeper;
 
-import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import org.apache.curator.test.TestingServer;
 
-import java.util.List;
 import java.util.UUID;
 
 final class ZooKeeperTestSupport implements AutoCloseable {
@@ -26,9 +25,11 @@ final class ZooKeeperTestSupport implements AutoCloseable {
     }
 
     LockRuntime runtime() {
+        ZooKeeperBackendConfiguration configuration = configuration();
         return LockRuntimeBuilder.create()
             .backend("zookeeper")
-            .backendModules(List.of(new ZooKeeperBackendModule(configuration())))
+            .backendProvider(new ZooKeeperBackendProvider())
+            .backendConfiguration(configuration)
             .build();
     }
 

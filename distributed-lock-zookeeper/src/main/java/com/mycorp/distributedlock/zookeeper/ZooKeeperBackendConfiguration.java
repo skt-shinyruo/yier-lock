@@ -1,8 +1,10 @@
 package com.mycorp.distributedlock.zookeeper;
 
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+
 import java.util.Objects;
 
-public record ZooKeeperBackendConfiguration(String connectString, String basePath) {
+public record ZooKeeperBackendConfiguration(String connectString, String basePath) implements BackendConfiguration {
 
     public ZooKeeperBackendConfiguration {
         Objects.requireNonNull(connectString, "connectString");

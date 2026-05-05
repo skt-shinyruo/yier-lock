@@ -10,8 +10,8 @@ import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.api.CuratorWatcher;
 import org.apache.curator.framework.state.ConnectionState;
@@ -72,7 +72,7 @@ final class ZooKeeperBackendSession implements BackendSession, CuratorBackedSess
     }
 
     @Override
-    public BackendLockLease acquire(LockRequest request) throws InterruptedException {
+    public BackendLease acquire(LockRequest request) throws InterruptedException {
         ensureActive(request);
         return switch (request.mode()) {
             case MUTEX, READ, WRITE -> acquireQueued(request);

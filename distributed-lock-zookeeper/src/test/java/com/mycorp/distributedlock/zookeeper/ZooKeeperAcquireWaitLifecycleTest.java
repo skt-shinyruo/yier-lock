@@ -5,8 +5,8 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
 import org.junit.jupiter.api.Test;
@@ -27,7 +27,7 @@ class ZooKeeperAcquireWaitLifecycleTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
-             BackendLockLease ignored = holder.acquire(request("zk:wait:lost"))) {
+             BackendLease ignored = holder.acquire(request("zk:wait:lost"))) {
             BackendSession waiter = backend.openSession();
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
@@ -50,7 +50,7 @@ class ZooKeeperAcquireWaitLifecycleTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
-             BackendLockLease ignored = holder.acquire(request("zk:wait:closed"));
+             BackendLease ignored = holder.acquire(request("zk:wait:closed"));
              BackendSession waiter = backend.openSession()) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
@@ -72,15 +72,15 @@ class ZooKeeperAcquireWaitLifecycleTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
-             BackendLockLease holderLease = holder.acquire(request("zk:wait:timed"));
+             BackendLease holderLease = holder.acquire(request("zk:wait:timed"));
              BackendSession waiter = backend.openSession()) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             try {
-                Future<BackendLockLease> result = executor.submit(() -> waiter.acquire(timedRequest("zk:wait:timed")));
+                Future<BackendLease> result = executor.submit(() -> waiter.acquire(timedRequest("zk:wait:timed")));
                 Thread.sleep(500L);
                 holderLease.release();
 
-                try (BackendLockLease waiterLease = result.get(3, TimeUnit.SECONDS)) {
+                try (BackendLease waiterLease = result.get(3, TimeUnit.SECONDS)) {
                     assertThat(waiterLease.isValid()).isTrue();
                 }
             } finally {
@@ -94,13 +94,13 @@ class ZooKeeperAcquireWaitLifecycleTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration());
              BackendSession holder = backend.openSession();
-             BackendLockLease holderLease = holder.acquire(request("zk:wait:prompt"));
+             BackendLease holderLease = holder.acquire(request("zk:wait:prompt"));
              BackendSession waiter = backend.openSession()) {
             ExecutorService executor = Executors.newSingleThreadExecutor();
             AtomicLong releasedNanos = new AtomicLong();
             try {
                 Future<Duration> result = executor.submit(() -> {
-                    try (BackendLockLease waiterLease = waiter.acquire(timedRequest("zk:wait:prompt"))) {
+                    try (BackendLease waiterLease = waiter.acquire(timedRequest("zk:wait:prompt"))) {
                         assertThat(waiterLease.isValid()).isTrue();
                         return Duration.ofNanos(System.nanoTime() - releasedNanos.get());
                     }
