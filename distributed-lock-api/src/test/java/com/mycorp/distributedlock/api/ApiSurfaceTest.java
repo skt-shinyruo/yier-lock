@@ -21,7 +21,9 @@ import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -62,6 +64,47 @@ class ApiSurfaceTest {
                 .containsExactly(
                         "close:void",
                         "openSession:LockSession");
+    }
+
+    @Test
+    void lockRuntimeShouldExposeOnlyApiTypes() throws Exception {
+        Method info = LockRuntime.class.getMethod("info");
+
+        assertThat(info.getReturnType()).isEqualTo(RuntimeInfo.class);
+        assertThat(Arrays.stream(LockRuntime.class.getMethods())
+                .filter(method -> method.getDeclaringClass().equals(LockRuntime.class))
+                .flatMap(method -> Stream.concat(Stream.of(method.getReturnType()), Arrays.stream(method.getParameterTypes())))
+                .map(Class::getName))
+                .noneMatch(name -> name.startsWith("com.mycorp.distributedlock.spi."));
+    }
+
+    @Test
+    void backendBehaviorShouldDescribeRedisAndZooKeeperVisibleSemantics() {
+        BackendBehavior redis = BackendBehavior.builder()
+                .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+                .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+                .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG, LeaseSemantics.FIXED_TTL))
+                .session(SessionSemantics.CLIENT_LOCAL_TTL)
+                .wait(WaitSemantics.POLLING)
+                .fairness(FairnessSemantics.EXCLUSIVE_PREFERRED)
+                .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+                .costModel(BackendCostModel.CHEAP_SESSION)
+                .build();
+
+        BackendBehavior zookeeper = BackendBehavior.builder()
+                .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+                .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+                .leaseSemantics(Set.of(LeaseSemantics.SESSION_BOUND))
+                .session(SessionSemantics.BACKEND_EPHEMERAL_SESSION)
+                .wait(WaitSemantics.WATCHED_QUEUE)
+                .fairness(FairnessSemantics.FIFO_QUEUE)
+                .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+                .costModel(BackendCostModel.NETWORK_CLIENT_PER_SESSION)
+                .build();
+
+        assertThat(redis.supportsLockMode(LockMode.READ)).isTrue();
+        assertThat(redis.supportsLeaseSemantics(LeaseSemantics.FIXED_TTL)).isTrue();
+        assertThat(zookeeper.supportsLeaseSemantics(LeaseSemantics.FIXED_TTL)).isFalse();
     }
 
     @Test
