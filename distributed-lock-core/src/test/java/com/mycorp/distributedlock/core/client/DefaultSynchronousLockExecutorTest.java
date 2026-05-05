@@ -1,27 +1,35 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
+import com.mycorp.distributedlock.api.BackendCostModel;
+import com.mycorp.distributedlock.api.FairnessSemantics;
 import com.mycorp.distributedlock.api.FencingToken;
+import com.mycorp.distributedlock.api.FencingSemantics;
 import com.mycorp.distributedlock.api.LeaseState;
+import com.mycorp.distributedlock.api.LeaseSemantics;
 import com.mycorp.distributedlock.api.LockClient;
-import com.mycorp.distributedlock.api.LockContext;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.OwnershipLossSemantics;
+import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.WaitSemantics;
 import com.mycorp.distributedlock.api.exception.LockConfigurationException;
 import com.mycorp.distributedlock.api.exception.LockReentryException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Proxy;
 import java.time.Duration;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,26 +43,20 @@ class DefaultSynchronousLockExecutorTest {
     @Test
     void withLockShouldReleaseLeaseAfterAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         String result = executor.withLock(sampleRequest(), lease -> "ok");
 
         assertThat(result).isEqualTo("ok");
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     @Test
     void withLockShouldReleaseLeaseWhenActionFails() {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> {
             throw new IllegalStateException("boom");
@@ -64,38 +66,32 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     @Test
-    void withLockShouldPassAcquiredLeaseAndBindLockContextDuringAction() throws Exception {
+    void withLockShouldPassAcquiredLeaseAndBindSynchronousScopeDuringAction() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
         AtomicReference<LockLease> callbackLease = new AtomicReference<>();
-        AtomicReference<LockLease> contextLease = new AtomicReference<>();
+        AtomicReference<Boolean> scopeContainedLease = new AtomicReference<>();
 
         String result = executor.withLock(sampleRequest(), lease -> {
             callbackLease.set(lease);
-            contextLease.set(LockContext.requireCurrentLease());
+            scopeContainedLease.set(SynchronousLockScope.contains(lease.key()));
             return "ok";
         });
 
         assertThat(result).isEqualTo("ok");
-        assertThat(callbackLease.get()).isSameAs(contextLease.get());
-        assertThat(contextLease.get().fencingToken()).isEqualTo(new FencingToken(1L));
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(callbackLease.get().fencingToken()).isEqualTo(new FencingToken(1L));
+        assertThat(scopeContainedLease.get()).isTrue();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     @Test
     void withLockShouldRejectSameKeyReentryBeforeOpeningNestedSession() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         assertThatThrownBy(() -> executor.withLock(sampleRequest(), outerLease ->
             executor.withLock(sampleRequest(), innerLease -> "nested")
@@ -115,10 +111,7 @@ class DefaultSynchronousLockExecutorTest {
     @Test
     void withLockShouldRejectSameKeyReentryAcrossNestedDifferentKeyScope() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         assertThatThrownBy(() -> executor.withLock(sampleRequest("inventory:outer"), outerLease ->
             executor.withLock(sampleRequest("inventory:inner"), innerLease ->
@@ -166,43 +159,40 @@ class DefaultSynchronousLockExecutorTest {
     }
 
     @Test
-    void withLockShouldRestoreOuterLockContextAfterNestedDifferentKeyScope() throws Exception {
+    void withLockShouldRestoreOuterSynchronousScopeAfterNestedDifferentKeyScope() throws Exception {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
-        AtomicReference<LockLease> outerBeforeInner = new AtomicReference<>();
-        AtomicReference<LockLease> innerContext = new AtomicReference<>();
-        AtomicReference<LockLease> outerAfterInner = new AtomicReference<>();
+        SynchronousLockExecutor executor = executor(backend);
+        LockKey outerKey = new LockKey("inventory:outer");
+        LockKey innerKey = new LockKey("inventory:inner");
+        AtomicReference<Boolean> outerBeforeInner = new AtomicReference<>();
+        AtomicReference<Boolean> innerContainsOuter = new AtomicReference<>();
+        AtomicReference<Boolean> innerContainsInner = new AtomicReference<>();
+        AtomicReference<Boolean> outerAfterInner = new AtomicReference<>();
 
         String result = executor.withLock(sampleRequest("inventory:outer"), outerLease -> {
-            outerBeforeInner.set(LockContext.requireCurrentLease());
-            assertThat(outerBeforeInner.get()).isSameAs(outerLease);
+            outerBeforeInner.set(SynchronousLockScope.contains(outerKey));
             String innerResult = executor.withLock(sampleRequest("inventory:inner"), innerLease -> {
-                innerContext.set(LockContext.requireCurrentLease());
-                assertThat(innerContext.get()).isSameAs(innerLease);
+                innerContainsOuter.set(SynchronousLockScope.contains(outerKey));
+                innerContainsInner.set(SynchronousLockScope.contains(innerKey));
                 return "inner";
             });
-            outerAfterInner.set(LockContext.requireCurrentLease());
-            assertThat(outerAfterInner.get()).isSameAs(outerLease);
+            outerAfterInner.set(SynchronousLockScope.contains(outerKey));
             return innerResult;
         });
 
         assertThat(result).isEqualTo("inner");
-        assertThat(outerBeforeInner.get().key()).isEqualTo(new LockKey("inventory:outer"));
-        assertThat(innerContext.get().key()).isEqualTo(new LockKey("inventory:inner"));
-        assertThat(outerAfterInner.get()).isSameAs(outerBeforeInner.get());
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(outerBeforeInner.get()).isTrue();
+        assertThat(innerContainsOuter.get()).isTrue();
+        assertThat(innerContainsInner.get()).isTrue();
+        assertThat(outerAfterInner.get()).isTrue();
+        assertThat(SynchronousLockScope.contains(outerKey)).isFalse();
+        assertThat(SynchronousLockScope.contains(innerKey)).isFalse();
     }
 
     @Test
     void withLockShouldRejectCompletionStageResults() {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         assertThatThrownBy(() -> executor.withLock(sampleRequest(), lease -> CompletableFuture.completedFuture("ok")))
             .isInstanceOf(LockConfigurationException.class)
@@ -211,16 +201,13 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     @Test
     void withLockShouldRejectFutureResults() {
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
         FutureTask<String> futureTask = new FutureTask<>(() -> "ok");
         futureTask.run();
 
@@ -231,17 +218,14 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     @Test
     void withLockShouldRejectReactivePublisherResultsWhenReactiveStreamsIsPresent() throws Exception {
         Assumptions.assumeTrue(isReactiveStreamsPresent());
         TrackingBackend backend = new TrackingBackend();
-        SynchronousLockExecutor executor = new DefaultSynchronousLockExecutor(new DefaultLockClient(
-            backend,
-            new SupportedLockModes(true, true, true)
-        ));
+        SynchronousLockExecutor executor = executor(backend);
 
         ClassLoader classLoader = DefaultSynchronousLockExecutorTest.class.getClassLoader();
         Class<?> publisherType = Class.forName("org.reactivestreams.Publisher", false, classLoader);
@@ -258,7 +242,7 @@ class DefaultSynchronousLockExecutorTest {
 
         assertThat(backend.releaseCount()).hasValue(1);
         assertThat(backend.sessionCloseCount()).hasValue(1);
-        assertThat(LockContext.currentLease()).isEmpty();
+        assertThat(SynchronousLockScope.contains(new LockKey("inventory"))).isFalse();
     }
 
     private static LockRequest sampleRequest() {
@@ -282,7 +266,24 @@ class DefaultSynchronousLockExecutorTest {
         }
     }
 
-    private static final class TrackingBackend implements LockBackend {
+    private static SynchronousLockExecutor executor(TrackingBackend backend) {
+        return new DefaultSynchronousLockExecutor(new DefaultLockClient(backend, standardBehavior()));
+    }
+
+    private static BackendBehavior standardBehavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG, LeaseSemantics.FIXED_TTL))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.EXCLUSIVE_PREFERRED)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
+    }
+
+    private static final class TrackingBackend implements BackendClient {
         private final AtomicInteger releaseCount = new AtomicInteger();
         private final AtomicInteger sessionCloseCount = new AtomicInteger();
         private final AtomicInteger openSessionCount = new AtomicInteger();
@@ -292,7 +293,7 @@ class DefaultSynchronousLockExecutorTest {
             openSessionCount.incrementAndGet();
             return new BackendSession() {
                 @Override
-                public BackendLockLease acquire(LockRequest lockRequest) {
+                public BackendLease acquire(LockRequest lockRequest) {
                     return new TrackingLease(lockRequest.key(), lockRequest.mode(), new FencingToken(1L), releaseCount);
                 }
 
@@ -330,7 +331,7 @@ class DefaultSynchronousLockExecutorTest {
         LockMode mode,
         FencingToken fencingToken,
         AtomicInteger releaseCount
-    ) implements BackendLockLease {
+    ) implements BackendLease {
 
         @Override
         public LeaseState state() {

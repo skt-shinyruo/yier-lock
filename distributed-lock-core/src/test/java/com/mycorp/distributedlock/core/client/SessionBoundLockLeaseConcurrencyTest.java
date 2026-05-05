@@ -4,7 +4,7 @@ import com.mycorp.distributedlock.api.FencingToken;
 import com.mycorp.distributedlock.api.LeaseState;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
+import com.mycorp.distributedlock.spi.BackendLease;
 import org.junit.jupiter.api.Test;
 
 import java.lang.management.ManagementFactory;
@@ -61,7 +61,7 @@ class SessionBoundLockLeaseConcurrencyTest {
         }
     }
 
-    private static final class BlockingLease implements BackendLockLease {
+    private static final class BlockingLease implements BackendLease {
         private final CountDownLatch releaseStarted = new CountDownLatch(1);
         private final CountDownLatch releaseMayFinish = new CountDownLatch(1);
         private final AtomicInteger releaseCount = new AtomicInteger();

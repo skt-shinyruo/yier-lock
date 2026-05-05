@@ -1,41 +1,42 @@
 package com.mycorp.distributedlock.core.client;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockSession;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
 
 import java.util.Objects;
 
 public final class DefaultLockClient implements LockClient {
 
-    private final LockBackend backend;
-    private final SupportedLockModes supportedLockModes;
+    private final BackendClient backendClient;
+    private final BackendBehavior behavior;
     private final LockRequestValidator validator;
 
-    public DefaultLockClient(LockBackend backend, SupportedLockModes supportedLockModes) {
-        this(backend, supportedLockModes, new LockRequestValidator());
+    public DefaultLockClient(BackendClient backendClient, BackendBehavior behavior) {
+        this(backendClient, behavior, new LockRequestValidator());
     }
 
-    DefaultLockClient(LockBackend backend, SupportedLockModes supportedLockModes, LockRequestValidator validator) {
-        this.backend = Objects.requireNonNull(backend, "backend");
-        this.supportedLockModes = Objects.requireNonNull(supportedLockModes, "supportedLockModes");
+    DefaultLockClient(BackendClient backendClient, BackendBehavior behavior, LockRequestValidator validator) {
+        this.backendClient = Objects.requireNonNull(backendClient, "backendClient");
+        this.behavior = Objects.requireNonNull(behavior, "behavior");
         this.validator = Objects.requireNonNull(validator, "validator");
     }
 
     @Override
     public LockSession openSession() {
-        return new DefaultLockSession(supportedLockModes, backend.openSession(), validator);
+        return new DefaultLockSession(behavior, backendClient.openSession(), validator);
     }
 
     @Override
     public void close() {
         try {
-            backend.close();
+            backendClient.close();
         } catch (RuntimeException exception) {
             throw exception;
         } catch (Exception exception) {
-            throw new LockBackendException("Failed to close lock backend", exception);
+            throw new LockBackendException("Failed to close lock backend client", exception);
         }
     }
 }
