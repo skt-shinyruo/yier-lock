@@ -12,7 +12,7 @@
 
     <artifactId>distributed-lock-examples</artifactId>
     <name>Distributed Lock Examples</name>
-    <description>Examples for distributed lock 2.0</description>
+    <description>Examples for distributed lock 3.x</description>
 
     <dependencies>
         <dependency>

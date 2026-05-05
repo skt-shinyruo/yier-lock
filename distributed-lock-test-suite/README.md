@@ -1,6 +1,6 @@
 # Distributed Lock Regression Matrix
 
-This module is the canonical regression matrix entry point for the distributed lock reactor. It keeps suite-level smoke tests executable while backend-specific coverage remains in each module.
+This module is the canonical regression matrix entry point for the distributed lock reactor. It runs behavior-driven conformance fixtures from `distributed-lock-testkit` and keeps suite-level smoke tests executable while backend-specific coverage remains in each module.
 
 ## Backend Prerequisites
 
@@ -12,7 +12,7 @@ This module is the canonical regression matrix entry point for the distributed l
 
 ```bash
 mvn test
-mvn -pl distributed-lock-core,distributed-lock-testkit -am test
+mvn -pl distributed-lock-api,distributed-lock-spi,distributed-lock-core,distributed-lock-runtime -am test
 mvn -pl distributed-lock-runtime,distributed-lock-spring-boot-starter -am test
 mvn -pl distributed-lock-zookeeper -am test
 mvn -pl distributed-lock-redis,distributed-lock-redis-spring-boot-autoconfigure -am test

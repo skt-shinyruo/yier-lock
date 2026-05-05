@@ -1,11 +1,11 @@
 package com.mycorp.distributedlock.benchmarks;
 
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.redis.RedisBackendConfiguration;
-import com.mycorp.distributedlock.redis.RedisBackendModule;
-import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.redis.RedisBackendProvider;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
-import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendProvider;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -20,7 +20,6 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 @BenchmarkMode({Mode.Throughput, Mode.AverageTime})
@@ -59,7 +58,8 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("redis")
-                .backendModules(List.of(new RedisBackendModule(new RedisBackendConfiguration(redisUri, 30L))))
+                .backendProvider(new RedisBackendProvider())
+                .backendConfiguration(new RedisBackendConfiguration(redisUri, 30L))
                 .build(),
             "redis",
             blackhole
@@ -71,9 +71,8 @@ public class RuntimeLifecycleBenchmark {
         BenchmarkWorkloads.runtimeLifecycle(
             () -> LockRuntimeBuilder.create()
                 .backend("zookeeper")
-                .backendModules(List.of(new ZooKeeperBackendModule(
-                    new ZooKeeperBackendConfiguration(zooKeeperConnectString, zooKeeperBasePath)
-                )))
+                .backendProvider(new ZooKeeperBackendProvider())
+                .backendConfiguration(new ZooKeeperBackendConfiguration(zooKeeperConnectString, zooKeeperBasePath))
                 .build(),
             "zookeeper",
             blackhole

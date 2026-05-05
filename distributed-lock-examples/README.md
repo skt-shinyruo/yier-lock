@@ -1,12 +1,12 @@
-# Distributed Lock 2.0 Examples
+# Distributed Lock 3.x Examples
 
-`distributed-lock-examples` contains compile-checked usage samples for the 2.0 API.
+`distributed-lock-examples` contains compile-checked usage samples for the 3.x API.
 
 ## Included examples
 
 - `ProgrammaticRedisExample`
   - selects the Redis backend explicitly
-  - builds a `LockRuntime` from a typed `RedisBackendModule`
+  - builds a `LockRuntime` from `RedisBackendProvider` plus typed configuration
   - uses `LockRuntime.synchronousLockExecutor()` for scoped execution
 - `ProgrammaticZooKeeperExample`
   - selects the ZooKeeper backend explicitly
@@ -18,16 +18,15 @@
 
 ## Configuration model
 
-Programmatic examples instantiate typed backend modules directly:
+Programmatic examples instantiate typed backend providers and configurations directly.
 
-Programmatic runtime construction must always declare `.backend("...")`; backend discovery can supply candidate modules, but it is not allowed to auto-select one.
+Programmatic runtime construction must always declare `.backend("...")`; the runtime never auto-selects a backend from classpath contents.
 
 ```java
 LockRuntime runtime = LockRuntimeBuilder.create()
     .backend("redis")
-    .backendModules(List.of(new RedisBackendModule(
-        new RedisBackendConfiguration("redis://127.0.0.1:6379", 30L)
-    )))
+    .backendProvider(new RedisBackendProvider())
+    .backendConfiguration(new RedisBackendConfiguration("redis://127.0.0.1:6379", 30L))
     .build();
 
 String result = runtime.synchronousLockExecutor().withLock(
@@ -36,7 +35,7 @@ String result = runtime.synchronousLockExecutor().withLock(
 );
 ```
 
-Spring examples use the 2.0 namespace and require the matching backend Spring auto-config module on the classpath:
+Spring examples use the 3.x namespace and require the matching backend Spring auto-config module on the classpath:
 
 ```yaml
 distributed:
