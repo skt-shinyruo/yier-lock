@@ -8,11 +8,12 @@
         <groupId>com.mycorp</groupId>
         <artifactId>distributed-lock</artifactId>
         <version>1.0.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>distributed-lock-extension-observability</artifactId>
-    <name>Distributed Lock Observability Extension</name>
-    <description>Backend-neutral observability decorators for distributed lock 2.0</description>
+    <artifactId>distributed-lock-extension-context</artifactId>
+    <name>Distributed Lock Context Extension</name>
+    <description>Optional synchronous lock scope context decorators</description>
 
     <dependencies>
         <dependency>
@@ -23,24 +24,10 @@
             <groupId>com.mycorp</groupId>
             <artifactId>distributed-lock-runtime</artifactId>
         </dependency>
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-        </dependency>
 
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-core</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.mockito</groupId>
-            <artifactId>mockito-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

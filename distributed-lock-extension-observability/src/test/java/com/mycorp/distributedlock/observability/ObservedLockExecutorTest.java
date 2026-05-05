@@ -1,22 +1,30 @@
 package com.mycorp.distributedlock.observability;
 
+import com.mycorp.distributedlock.api.BackendBehavior;
+import com.mycorp.distributedlock.api.BackendCostModel;
+import com.mycorp.distributedlock.api.FairnessSemantics;
+import com.mycorp.distributedlock.api.FencingSemantics;
+import com.mycorp.distributedlock.api.LeaseSemantics;
 import com.mycorp.distributedlock.api.LockedAction;
 import com.mycorp.distributedlock.api.LockClient;
 import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockLease;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
-import com.mycorp.distributedlock.api.LockSession;
+import com.mycorp.distributedlock.api.LockRuntime;
+import com.mycorp.distributedlock.api.OwnershipLossSemantics;
+import com.mycorp.distributedlock.api.RuntimeInfo;
+import com.mycorp.distributedlock.api.SessionSemantics;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
 import com.mycorp.distributedlock.api.WaitPolicy;
+import com.mycorp.distributedlock.api.WaitSemantics;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.runtime.LockRuntime;
-import com.mycorp.distributedlock.spi.BackendCapabilities;
 import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -122,47 +130,48 @@ class ObservedLockExecutorTest {
     }
 
     @Test
-    void observedRuntimeShouldEmitAcquireAndScopeEventsFromObservedClient() throws Exception {
+    void observedRuntimeShouldUseDelegateExecutorAndObserveScope() throws Exception {
         LockLease lease = mock(LockLease.class);
-        LockSession session = mock(LockSession.class);
-        when(session.acquire(sampleRequest())).thenReturn(lease);
-
         LockClient client = mock(LockClient.class);
-        when(client.openSession()).thenReturn(session);
+        SynchronousLockExecutor delegateExecutor = new SynchronousLockExecutor() {
+            @Override
+            public <T> T withLock(LockRequest request, LockedAction<T> action) throws Exception {
+                return action.execute(lease);
+            }
+        };
 
         LockRuntime delegate = mock(LockRuntime.class);
         when(delegate.lockClient()).thenReturn(client);
-        when(delegate.synchronousLockExecutor()).thenReturn(mock(SynchronousLockExecutor.class));
+        when(delegate.synchronousLockExecutor()).thenReturn(delegateExecutor);
+        when(delegate.info()).thenReturn(new RuntimeInfo("redis", "Redis", behavior(), "test"));
 
         List<LockObservationEvent> events = new ArrayList<>();
-        LockRuntime observedRuntime = ObservedLockRuntime.decorate(delegate, events::add, "redis", false);
+        LockRuntime observedRuntime = new ObservedLockRuntimeDecorator(events::add, false).decorate(delegate);
 
         String result = observedRuntime.synchronousLockExecutor().withLock(sampleRequest(), leaseArgument -> "ok");
 
         assertThat(result).isEqualTo("ok");
-        assertThat(events).hasSize(2);
-        assertThat(events.get(0).operation()).isEqualTo("acquire");
-        assertThat(events.get(0).surface()).isEqualTo("client");
-        assertThat(events.get(1).operation()).isEqualTo("scope");
-        assertThat(events.get(1).surface()).isEqualTo("executor");
-        verify(client).openSession();
-        verify(session).acquire(sampleRequest());
-        verify(delegate, never()).synchronousLockExecutor();
+        assertThat(events).singleElement().satisfies(event -> {
+            assertThat(event.operation()).isEqualTo("scope");
+            assertThat(event.surface()).isEqualTo("executor");
+            assertThat(event.backendId()).isEqualTo("redis");
+        });
+        verify(client, never()).openSession();
+        verify(delegate).synchronousLockExecutor();
     }
 
     @Test
     void observedRuntimeShouldPreserveDelegateMetadata() {
-        BackendCapabilities capabilities = BackendCapabilities.withoutFixedLeaseDuration();
         LockClient client = mock(LockClient.class);
         LockRuntime delegate = mock(LockRuntime.class);
         when(delegate.lockClient()).thenReturn(client);
-        when(delegate.backendId()).thenReturn("redis-primary");
-        when(delegate.capabilities()).thenReturn(capabilities);
+        when(delegate.synchronousLockExecutor()).thenReturn(mock(SynchronousLockExecutor.class));
+        RuntimeInfo info = new RuntimeInfo("redis-primary", "Redis Primary", behavior(), "test");
+        when(delegate.info()).thenReturn(info);
 
-        LockRuntime observedRuntime = ObservedLockRuntime.decorate(delegate, event -> { }, "observed", false);
+        LockRuntime observedRuntime = new ObservedLockRuntimeDecorator(event -> { }, false).decorate(delegate);
 
-        assertThat(observedRuntime.backendId()).isEqualTo("redis-primary");
-        assertThat(observedRuntime.capabilities()).isSameAs(capabilities);
+        assertThat(observedRuntime.info()).isSameAs(info);
     }
 
     private static LockRequest sampleRequest() {
@@ -171,5 +180,18 @@ class ObservedLockExecutorTest {
             LockMode.MUTEX,
             WaitPolicy.timed(Duration.ofSeconds(1))
         );
+    }
+
+    private static BackendBehavior behavior() {
+        return BackendBehavior.builder()
+            .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+            .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+            .leaseSemantics(Set.of(LeaseSemantics.FIXED_TTL))
+            .session(SessionSemantics.CLIENT_LOCAL_TTL)
+            .wait(WaitSemantics.POLLING)
+            .fairness(FairnessSemantics.NONE)
+            .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+            .costModel(BackendCostModel.CHEAP_SESSION)
+            .build();
     }
 }
