@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 class LockRuntimeBuilderTest {
 
@@ -151,6 +152,53 @@ class LockRuntimeBuilderTest {
             assertThat(runtime.info().backendId()).isEqualTo("redis");
             assertThat(order).containsExactly("first:decorate", "second:decorate", "second:info", "first:info");
         }
+    }
+
+    @Test
+    void builderShouldCloseCurrentRuntimeWhenDecoratorReturnsNull() {
+        TrackingProvider provider = new TrackingProvider(
+            "redis",
+            "Redis",
+            TestConfiguration.class,
+            standardBehavior()
+        );
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendProvider(provider)
+            .backendConfiguration(new TestConfiguration("decorated"))
+            .decorators(List.of(runtime -> null));
+
+        assertThatThrownBy(builder::build)
+            .isInstanceOf(LockConfigurationException.class)
+            .hasMessageContaining("decorator")
+            .hasMessageContaining("null");
+        assertThat(provider.createdClient().closeCount().get()).isEqualTo(1);
+    }
+
+    @Test
+    void builderShouldCloseCurrentRuntimeAndPreserveDecoratorFailureWhenDecoratorThrows() {
+        IllegalStateException decoratorFailure = new IllegalStateException("decorator failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        TrackingProvider provider = new TrackingProvider(
+            "redis",
+            "Redis",
+            TestConfiguration.class,
+            standardBehavior(),
+            closeFailure
+        );
+        LockRuntimeBuilder builder = LockRuntimeBuilder.create()
+            .backend("redis")
+            .backendProvider(provider)
+            .backendConfiguration(new TestConfiguration("decorated"))
+            .decorators(List.of(runtime -> {
+                throw decoratorFailure;
+            }));
+
+        Throwable thrown = catchThrowable(builder::build);
+
+        assertThat(thrown).isSameAs(decoratorFailure);
+        assertThat(provider.createdClient().closeCount().get()).isEqualTo(1);
+        assertThat(thrown.getSuppressed()).containsExactly(closeFailure);
     }
 
     @Test
@@ -398,6 +446,7 @@ class LockRuntimeBuilderTest {
 
     private static class TrackingProvider implements BackendProvider<TestConfiguration> {
         private final BackendDescriptor<TestConfiguration> descriptor;
+        private final RuntimeException closeFailure;
         private final List<TestConfiguration> createdConfigurations = new ArrayList<>();
         private TrackingBackendClient createdClient;
 
@@ -407,7 +456,18 @@ class LockRuntimeBuilderTest {
             Class<TestConfiguration> configurationType,
             BackendBehavior behavior
         ) {
+            this(id, displayName, configurationType, behavior, null);
+        }
+
+        private TrackingProvider(
+            String id,
+            String displayName,
+            Class<TestConfiguration> configurationType,
+            BackendBehavior behavior,
+            RuntimeException closeFailure
+        ) {
             this.descriptor = new BackendDescriptor<>(id, displayName, configurationType, behavior);
+            this.closeFailure = closeFailure;
         }
 
         @Override
@@ -418,7 +478,7 @@ class LockRuntimeBuilderTest {
         @Override
         public BackendClient createBackendClient(TestConfiguration configuration) {
             createdConfigurations.add(configuration);
-            createdClient = new TrackingBackendClient();
+            createdClient = new TrackingBackendClient(closeFailure);
             return createdClient;
         }
 
@@ -434,6 +494,15 @@ class LockRuntimeBuilderTest {
     private static final class TrackingBackendClient implements BackendClient {
         private final AtomicInteger acquireCount = new AtomicInteger();
         private final AtomicInteger closeCount = new AtomicInteger();
+        private final RuntimeException closeFailure;
+
+        private TrackingBackendClient() {
+            this(null);
+        }
+
+        private TrackingBackendClient(RuntimeException closeFailure) {
+            this.closeFailure = closeFailure;
+        }
 
         @Override
         public BackendSession openSession() {
@@ -447,6 +516,9 @@ class LockRuntimeBuilderTest {
         @Override
         public void close() {
             closeCount.incrementAndGet();
+            if (closeFailure != null) {
+                throw closeFailure;
+            }
         }
     }
 
