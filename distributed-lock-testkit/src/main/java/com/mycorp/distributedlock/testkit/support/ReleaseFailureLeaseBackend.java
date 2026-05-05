@@ -7,14 +7,14 @@ import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
-import com.mycorp.distributedlock.core.backend.LockBackend;
+import com.mycorp.distributedlock.spi.BackendClient;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class ReleaseFailureLeaseBackend implements LockBackend {
+public final class ReleaseFailureLeaseBackend implements BackendClient {
 
     private final AtomicBoolean firstRelease = new AtomicBoolean(true);
     private final AtomicLong fencingCounter = new AtomicLong();
@@ -23,9 +23,9 @@ public final class ReleaseFailureLeaseBackend implements LockBackend {
     public BackendSession openSession() {
         return new BackendSession() {
             @Override
-            public BackendLockLease acquire(LockRequest lockRequest) {
+            public BackendLease acquire(LockRequest lockRequest) {
                 FencingToken fencingToken = new FencingToken(fencingCounter.incrementAndGet());
-                return new BackendLockLease() {
+                return new BackendLease() {
                     @Override
                     public LockKey key() {
                         return lockRequest.key();
@@ -69,5 +69,9 @@ public final class ReleaseFailureLeaseBackend implements LockBackend {
             public void close() {
             }
         };
+    }
+
+    @Override
+    public void close() {
     }
 }

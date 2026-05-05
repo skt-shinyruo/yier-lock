@@ -6,8 +6,8 @@ import com.mycorp.distributedlock.api.LockKey;
 import com.mycorp.distributedlock.api.LockMode;
 import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.SessionState;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.ArrayList;
 import java.util.Map;
@@ -26,11 +26,11 @@ public final class InMemoryBackendSession implements BackendSession {
     }
 
     @Override
-    public BackendLockLease acquire(LockRequest request) throws InterruptedException {
+    public BackendLease acquire(LockRequest request) throws InterruptedException {
         if (closed.get()) {
             throw new IllegalStateException("Session is already closed");
         }
-        BackendLockLease backendLease = InMemoryLockBackend.acquireLease(lockStates, request);
+        BackendLease backendLease = InMemoryLockBackend.acquireLease(lockStates, request);
         SessionTrackedLease trackedLease = new SessionTrackedLease(backendLease, activeLeases);
         activeLeases.add(trackedLease);
         if (closed.get()) {
@@ -54,12 +54,12 @@ public final class InMemoryBackendSession implements BackendSession {
         }
     }
 
-    private static final class SessionTrackedLease implements BackendLockLease {
+    private static final class SessionTrackedLease implements BackendLease {
 
-        private final BackendLockLease delegate;
+        private final BackendLease delegate;
         private final Set<SessionTrackedLease> activeLeases;
 
-        private SessionTrackedLease(BackendLockLease delegate, Set<SessionTrackedLease> activeLeases) {
+        private SessionTrackedLease(BackendLease delegate, Set<SessionTrackedLease> activeLeases) {
             this.delegate = delegate;
             this.activeLeases = activeLeases;
         }
