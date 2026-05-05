@@ -19,8 +19,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.RecordComponent;
+import java.lang.reflect.Type;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -70,12 +72,27 @@ class ApiSurfaceTest {
     void lockRuntimeShouldExposeOnlyApiTypes() throws Exception {
         Method info = LockRuntime.class.getMethod("info");
 
+        assertThat(LockRuntime.class.getInterfaces()).containsExactly(AutoCloseable.class);
+        assertThat(Arrays.stream(LockRuntime.class.getDeclaredMethods())
+                .map(method -> method.getName() + ":" + method.getReturnType().getSimpleName() + ":"
+                        + Arrays.stream(method.getParameterTypes())
+                                .map(Class::getSimpleName)
+                                .collect(Collectors.joining(","))
+                        + ":"
+                        + Arrays.stream(method.getExceptionTypes())
+                                .map(Class::getSimpleName)
+                                .collect(Collectors.joining(",")))
+                .sorted()
+                .collect(Collectors.toList()))
+                .containsExactly(
+                        "close:void::",
+                        "info:RuntimeInfo::",
+                        "lockClient:LockClient::",
+                        "synchronousLockExecutor:SynchronousLockExecutor::");
         assertThat(info.getReturnType()).isEqualTo(RuntimeInfo.class);
-        assertThat(Arrays.stream(LockRuntime.class.getMethods())
-                .filter(method -> method.getDeclaringClass().equals(LockRuntime.class))
-                .flatMap(method -> Stream.concat(Stream.of(method.getReturnType()), Arrays.stream(method.getParameterTypes())))
-                .map(Class::getName))
-                .noneMatch(name -> name.startsWith("com.mycorp.distributedlock.spi."));
+        assertThat(Arrays.stream(LockRuntime.class.getDeclaredMethods())
+                .flatMap(ApiSurfaceTest::runtimeMethodTypeNames))
+                .noneMatch(name -> name.contains("com.mycorp.distributedlock.spi."));
     }
 
     @Test
@@ -105,6 +122,81 @@ class ApiSurfaceTest {
         assertThat(redis.supportsLockMode(LockMode.READ)).isTrue();
         assertThat(redis.supportsLeaseSemantics(LeaseSemantics.FIXED_TTL)).isTrue();
         assertThat(zookeeper.supportsLeaseSemantics(LeaseSemantics.FIXED_TTL)).isFalse();
+    }
+
+    @Test
+    void backendBehaviorShouldDefensivelyCopyAndExposeImmutableEnumSets() {
+        EnumSet<LockMode> lockModes = EnumSet.of(LockMode.MUTEX);
+        EnumSet<LeaseSemantics> leaseSemantics = EnumSet.of(LeaseSemantics.FIXED_TTL);
+
+        BackendBehavior behavior = standardBehaviorBuilder()
+                .lockModes(lockModes)
+                .leaseSemantics(leaseSemantics)
+                .build();
+
+        lockModes.add(LockMode.READ);
+        leaseSemantics.add(LeaseSemantics.SESSION_BOUND);
+
+        assertThat(behavior.lockModes()).containsExactly(LockMode.MUTEX);
+        assertThat(behavior.leaseSemantics()).containsExactly(LeaseSemantics.FIXED_TTL);
+        assertThatThrownBy(() -> behavior.lockModes().add(LockMode.WRITE))
+                .isInstanceOf(UnsupportedOperationException.class);
+        assertThatThrownBy(() -> behavior.leaseSemantics().add(LeaseSemantics.RENEWABLE_WATCHDOG))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void backendBehaviorShouldRejectNullAndEmptyEnumSets() {
+        assertThatThrownBy(() -> standardBehaviorBuilder().lockModes(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().lockModes(Set.of()).build())
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().leaseSemantics(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().leaseSemantics(Set.of()).build())
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void backendBehaviorShouldRejectNullScalarSemantics() {
+        BackendBehavior behavior = standardBehaviorBuilder().build();
+
+        assertThatThrownBy(() -> standardBehaviorBuilder().fencing(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().session(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().wait(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().fairness(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().ownershipLoss(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> standardBehaviorBuilder().costModel(null).build())
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> behavior.supportsLockMode(null))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> behavior.supportsLeaseSemantics(null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    void runtimeInfoShouldRejectBlankRequiredStringsAndNullBehavior() {
+        BackendBehavior behavior = standardBehaviorBuilder().build();
+
+        assertThatThrownBy(() -> new RuntimeInfo(null, "Redis", behavior, "1.0.0"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo(" ", "Redis", behavior, "1.0.0"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo("redis", null, behavior, "1.0.0"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo("redis", " ", behavior, "1.0.0"))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo("redis", "Redis", behavior, null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo("redis", "Redis", behavior, " "))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new RuntimeInfo("redis", "Redis", null, "1.0.0"))
+                .isInstanceOf(NullPointerException.class);
     }
 
     @Test
@@ -373,6 +465,38 @@ class ApiSurfaceTest {
         assertThat(LockSessionLostException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
         assertThat(UnsupportedLockCapabilityException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
         assertThat(LockReentryException.class.getSuperclass()).isEqualTo(DistributedLockException.class);
+    }
+
+    private static Stream<String> runtimeMethodTypeNames(Method method) {
+        Stream<String> rawTypeNames = Stream.concat(
+                Stream.of(method.getReturnType().getName()),
+                Stream.concat(
+                        Arrays.stream(method.getParameterTypes()).map(Class::getName),
+                        Arrays.stream(method.getExceptionTypes()).map(Class::getName)));
+        Stream<String> genericTypeNames = Stream.concat(
+                Stream.of(method.getGenericReturnType()),
+                Stream.concat(
+                        Arrays.stream(method.getGenericParameterTypes()),
+                        Arrays.stream(method.getGenericExceptionTypes())))
+                .map(Type::getTypeName);
+        Stream<String> typeParameterBounds = Arrays.stream(method.getTypeParameters())
+                .flatMap(typeParameter -> Arrays.stream(typeParameter.getBounds()))
+                .map(Type::getTypeName);
+
+        return Stream.of(rawTypeNames, genericTypeNames, typeParameterBounds)
+                .flatMap(stream -> stream);
+    }
+
+    private static BackendBehavior.Builder standardBehaviorBuilder() {
+        return BackendBehavior.builder()
+                .lockModes(Set.of(LockMode.MUTEX, LockMode.READ, LockMode.WRITE))
+                .fencing(FencingSemantics.MONOTONIC_PER_KEY)
+                .leaseSemantics(Set.of(LeaseSemantics.RENEWABLE_WATCHDOG, LeaseSemantics.FIXED_TTL))
+                .session(SessionSemantics.CLIENT_LOCAL_TTL)
+                .wait(WaitSemantics.POLLING)
+                .fairness(FairnessSemantics.EXCLUSIVE_PREFERRED)
+                .ownershipLoss(OwnershipLossSemantics.EXPLICIT_LOST_STATE)
+                .costModel(BackendCostModel.CHEAP_SESSION);
     }
 
     private static final class FakeLockLease implements LockLease {
