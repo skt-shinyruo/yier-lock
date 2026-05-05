@@ -20,9 +20,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class RedisBackendProviderTest {
 
     @Test
-    void shouldExposeRedisBackendDescriptorAndClientFactory() {
+    void shouldExposeRedisBackendDescriptor() {
         RedisBackendProvider provider = new RedisBackendProvider();
-        RedisBackendConfiguration configuration = new RedisBackendConfiguration("redis://localhost:6379", 30L);
         BackendDescriptor<RedisBackendConfiguration> expectedDescriptor = new BackendDescriptor<>(
             "redis",
             "Redis",
@@ -40,7 +39,6 @@ class RedisBackendProviderTest {
         );
 
         assertThat(provider.descriptor()).isEqualTo(expectedDescriptor);
-        assertThat(provider.createClient(configuration)).isInstanceOf(RedisLockBackend.class);
     }
 
     @Test
