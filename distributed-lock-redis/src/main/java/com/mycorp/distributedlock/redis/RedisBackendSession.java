@@ -9,9 +9,9 @@ import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockFailureContext;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
 import io.lettuce.core.ScriptOutputType;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 
 import java.util.ArrayList;
 import java.util.Objects;
@@ -40,7 +40,7 @@ final class RedisBackendSession implements BackendSession {
     }
 
     @Override
-    public BackendLockLease acquire(LockRequest request) throws InterruptedException {
+    public BackendLease acquire(LockRequest request) throws InterruptedException {
         ensureActive(request);
 
         String exclusiveIntent = request.mode() == com.mycorp.distributedlock.api.LockMode.WRITE

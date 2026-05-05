@@ -1,5 +1,7 @@
 package com.mycorp.distributedlock.redis;
 
+import com.mycorp.distributedlock.spi.BackendConfiguration;
+
 import java.util.Objects;
 
 public record RedisBackendConfiguration(
@@ -8,7 +10,7 @@ public record RedisBackendConfiguration(
     RedisKeyStrategy keyStrategy,
     boolean fixedLeaseRenewalEnabled,
     int renewalPoolSize
-) {
+) implements BackendConfiguration {
 
     public RedisBackendConfiguration(String redisUri, long leaseSeconds) {
         this(redisUri, leaseSeconds, RedisKeyStrategy.LEGACY);

@@ -6,8 +6,8 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,7 +43,7 @@ class RedisOwnershipLossTest {
     void redisShouldInvalidateLeaseAfterTokenDeletion() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L)) {
             BackendSession session = backend.openSession();
-            BackendLockLease lease = session.acquire(new LockRequest(
+            BackendLease lease = session.acquire(new LockRequest(
                 new LockKey("lost:1"),
                 LockMode.MUTEX,
                 WaitPolicy.indefinite()
@@ -75,7 +75,7 @@ class RedisOwnershipLossTest {
     void redisBackendExceptionShouldIncludeLeaseContext() throws Exception {
         RedisLockBackend backend = redis.newBackend(30L);
         BackendSession session = backend.openSession();
-        BackendLockLease lease = session.acquire(new LockRequest(
+        BackendLease lease = session.acquire(new LockRequest(
             new LockKey("redis:backend:context"),
             LockMode.MUTEX,
             WaitPolicy.indefinite()

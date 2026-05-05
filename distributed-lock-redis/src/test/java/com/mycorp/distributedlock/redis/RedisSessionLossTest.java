@@ -8,8 +8,8 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +27,7 @@ class RedisSessionLossTest {
         try (RedisTestSupport.RunningRedis redis = RedisTestSupport.startRedis();
              RedisLockBackend backend = redis.newBackend(1L)) {
             BackendSession session = backend.openSession();
-            BackendLockLease lease = session.acquire(new LockRequest(
+            BackendLease lease = session.acquire(new LockRequest(
                 new LockKey("redis:session-loss"),
                 LockMode.MUTEX,
                 WaitPolicy.indefinite()
@@ -66,7 +66,7 @@ class RedisSessionLossTest {
         try (RedisTestSupport.RunningRedis redis = RedisTestSupport.startRedis();
              RedisLockBackend backend = redis.newBackend(1L)) {
             BackendSession session = backend.openSession();
-            BackendLockLease lease = session.acquire(new LockRequest(
+            BackendLease lease = session.acquire(new LockRequest(
                 new LockKey("redis:session-loss:close"),
                 LockMode.MUTEX,
                 WaitPolicy.indefinite()
@@ -95,7 +95,7 @@ class RedisSessionLossTest {
         }
     }
 
-    private static void waitUntilLost(BackendSession session, BackendLockLease lease) throws InterruptedException {
+    private static void waitUntilLost(BackendSession session, BackendLease lease) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
         while (System.nanoTime() < deadline) {
             if (session.state() == SessionState.LOST && lease.state() == LeaseState.LOST) {

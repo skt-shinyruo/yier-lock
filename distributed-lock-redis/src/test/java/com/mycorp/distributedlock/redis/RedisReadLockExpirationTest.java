@@ -6,8 +6,8 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.LeasePolicy;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockAcquisitionTimeoutException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,18 +48,18 @@ class RedisReadLockExpirationTest {
     void expiredReaderShouldNotBlockWriterAfterActiveReaderReleases() throws Exception {
         RedisLockBackend expiredReaderBackend = redis.newBackend(1L);
         BackendSession expiredReaderSession = expiredReaderBackend.openSession();
-        BackendLockLease expiredReaderLease = expiredReaderSession.acquire(readRequest("read:stale-writer"));
+        BackendLease expiredReaderLease = expiredReaderSession.acquire(readRequest("read:stale-writer"));
         expiredReaderBackend.close();
 
         try (RedisLockBackend activeBackend = redis.newBackend(1L);
              BackendSession activeReaderSession = activeBackend.openSession();
-             BackendLockLease activeReaderLease = activeReaderSession.acquire(readRequest("read:stale-writer"))) {
+             BackendLease activeReaderLease = activeReaderSession.acquire(readRequest("read:stale-writer"))) {
             Thread.sleep(Duration.ofSeconds(2).toMillis());
 
             activeReaderLease.release();
 
             try (BackendSession writerSession = activeBackend.openSession();
-                 BackendLockLease writerLease = writerSession.acquire(writeRequest("read:stale-writer"))) {
+                 BackendLease writerLease = writerSession.acquire(writeRequest("read:stale-writer"))) {
                 assertThat(writerLease.isValid()).isTrue();
             }
         } finally {
@@ -72,10 +72,10 @@ class RedisReadLockExpirationTest {
     void readLeaseValidityShouldNotBeExtendedByAnotherReaderRenewal() throws Exception {
         RedisLockBackend expiredReaderBackend = redis.newBackend(1L);
         BackendSession expiredReaderSession = expiredReaderBackend.openSession();
-        BackendLockLease expiredReaderLease = expiredReaderSession.acquire(readRequest("read:stale-valid"));
+        BackendLease expiredReaderLease = expiredReaderSession.acquire(readRequest("read:stale-valid"));
         try (RedisLockBackend activeBackend = redis.newBackend(1L);
              BackendSession activeReaderSession = activeBackend.openSession();
-             BackendLockLease activeReaderLease = activeReaderSession.acquire(readRequest("read:stale-valid"))) {
+             BackendLease activeReaderLease = activeReaderSession.acquire(readRequest("read:stale-valid"))) {
             cancelRenewal(expiredReaderLease);
 
             Thread.sleep(Duration.ofSeconds(2).toMillis());
@@ -93,12 +93,12 @@ class RedisReadLockExpirationTest {
     void shortReaderShouldNotShrinkSharedReadKeyExpiryBelowLongReaderScore() throws Exception {
         try (RedisLockBackend backend = redis.newBackend(30L);
              BackendSession longReaderSession = backend.openSession();
-             BackendLockLease longReaderLease = longReaderSession.acquire(readRequest(
+             BackendLease longReaderLease = longReaderSession.acquire(readRequest(
                  "read:mixed-fixed",
                  LeasePolicy.fixed(Duration.ofMillis(2_000))
              ));
              BackendSession shortReaderSession = backend.openSession();
-             BackendLockLease shortReaderLease = shortReaderSession.acquire(readRequest(
+             BackendLease shortReaderLease = shortReaderSession.acquire(readRequest(
                  "read:mixed-fixed",
                  LeasePolicy.fixed(Duration.ofMillis(240))
              ))) {
@@ -141,7 +141,7 @@ class RedisReadLockExpirationTest {
         );
     }
 
-    private static void cancelRenewal(BackendLockLease lease) throws Exception {
+    private static void cancelRenewal(BackendLease lease) throws Exception {
         Field renewalTaskField = lease.getClass().getDeclaredField("renewalTask");
         renewalTaskField.setAccessible(true);
         @SuppressWarnings("unchecked")

@@ -1,6 +1,6 @@
 package com.mycorp.distributedlock.redis;
 
-import com.mycorp.distributedlock.runtime.LockRuntime;
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.testkit.FencingContract;
 import com.mycorp.distributedlock.testkit.FixedLeasePolicyContract;
@@ -14,8 +14,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
-
-import java.util.List;
 
 @Tag("redis-integration")
 class RedisMutexLockContractTest extends MutexLockContract implements RedisContractRuntime {
@@ -128,7 +126,8 @@ final class RedisContractRuntimes {
     static LockRuntime createRuntime() {
         return LockRuntimeBuilder.create()
             .backend("redis")
-            .backendModules(List.of(new RedisBackendModule(redis.configuration(30L))))
+            .backendProvider(new RedisBackendProvider())
+            .backendConfiguration(redis.configuration(30L))
             .build();
     }
 }
