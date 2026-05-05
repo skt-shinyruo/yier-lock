@@ -68,11 +68,6 @@
         </dependency>
         <dependency>
             <groupId>com.mycorp</groupId>
-            <artifactId>distributed-lock-testkit</artifactId>
-            <scope>test</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.mycorp</groupId>
             <artifactId>distributed-lock-runtime</artifactId>
             <scope>test</scope>
         </dependency>
