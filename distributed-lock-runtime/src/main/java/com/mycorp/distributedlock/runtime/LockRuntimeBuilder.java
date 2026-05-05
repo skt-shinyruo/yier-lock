@@ -92,12 +92,31 @@ public final class LockRuntimeBuilder {
         );
 
         for (LockRuntimeDecorator decorator : decorators) {
-            runtime = decorator.decorate(runtime);
-            if (runtime == null) {
-                throw new LockConfigurationException("Lock runtime decorator returned null runtime");
+            LockRuntime decorated;
+            try {
+                decorated = decorator.decorate(runtime);
+            } catch (RuntimeException | Error failure) {
+                closeRuntimeAfterDecoratorFailure(runtime, failure);
+                throw failure;
             }
+            if (decorated == null) {
+                LockConfigurationException failure = new LockConfigurationException(
+                    "Lock runtime decorator returned null runtime"
+                );
+                closeRuntimeAfterDecoratorFailure(runtime, failure);
+                throw failure;
+            }
+            runtime = decorated;
         }
         return runtime;
+    }
+
+    private static void closeRuntimeAfterDecoratorFailure(LockRuntime runtime, Throwable failure) {
+        try {
+            runtime.close();
+        } catch (RuntimeException | Error closeFailure) {
+            failure.addSuppressed(closeFailure);
+        }
     }
 
     private void validateBackendId() {
