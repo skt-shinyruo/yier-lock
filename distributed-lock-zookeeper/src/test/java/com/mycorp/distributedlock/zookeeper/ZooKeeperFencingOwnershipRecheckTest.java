@@ -6,7 +6,7 @@ import com.mycorp.distributedlock.api.LockRequest;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockBackendException;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;

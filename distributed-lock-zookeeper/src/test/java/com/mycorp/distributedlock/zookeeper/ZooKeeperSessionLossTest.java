@@ -8,8 +8,8 @@ import com.mycorp.distributedlock.api.SessionState;
 import com.mycorp.distributedlock.api.WaitPolicy;
 import com.mycorp.distributedlock.api.exception.LockOwnershipLostException;
 import com.mycorp.distributedlock.api.exception.LockSessionLostException;
-import com.mycorp.distributedlock.core.backend.BackendLockLease;
-import com.mycorp.distributedlock.core.backend.BackendSession;
+import com.mycorp.distributedlock.spi.BackendLease;
+import com.mycorp.distributedlock.spi.BackendSession;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.test.KillSession;
 import org.junit.jupiter.api.Test;
@@ -70,7 +70,7 @@ class ZooKeeperSessionLossTest {
         try (ZooKeeperTestSupport support = new ZooKeeperTestSupport();
              ZooKeeperLockBackend backend = new ZooKeeperLockBackend(support.configuration())) {
             BackendSession session = backend.openSession();
-            BackendLockLease lease = session.acquire(new LockRequest(
+            BackendLease lease = session.acquire(new LockRequest(
                 new LockKey("zk:lost:lease"),
                 LockMode.MUTEX,
                 WaitPolicy.indefinite()
