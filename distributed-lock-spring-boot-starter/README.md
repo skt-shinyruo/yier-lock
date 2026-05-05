@@ -1,6 +1,6 @@
 # Distributed Lock Spring Boot Starter
 
-This starter is the Spring Boot 3 integration layer for distributed lock 2.0.
+This starter is the Spring Boot 3 integration layer for distributed lock 3.x.
 
 ## Scope
 
@@ -62,16 +62,15 @@ Raw lock keys stay out of metrics by default; `distributed.lock.observability.in
 - Java 17+
 - Spring Boot 3.2.x is the primary tested line
 - Spring Boot 3.3.x and 3.4.x are compatibility targets verified by overriding `spring-boot.version` during regression
-- one backend Spring auto-config module on the classpath, or an explicit backend module bean
+- one backend Spring auto-config module on the classpath, or explicit backend provider/configuration beans
 - explicit `distributed.lock.backend` selection whenever `distributed.lock.enabled=true`
 
 ## Configuration
 
 The generic starter owns only generic runtime and annotation settings:
 
-The `backend` property is required. The generic starter will not auto-select a backend from discovered modules.
-If the application defines any explicit `BackendModule` bean, backend-specific backend-module registration backs off.
-At that point the application owns the full backend module registry and must supply a module whose `id()` matches `distributed.lock.backend`.
+The `backend` property is required. The generic starter will not auto-select a backend from the classpath.
+Spring Boot v3 integration is provider-based. The generic starter does not know Redis or ZooKeeper bean names. Backend-specific auto-config modules contribute a `BackendProvider<?>` bean and a typed backend configuration bean; the generic starter selects the provider whose descriptor id matches `distributed.lock.backend`.
 
 ```yaml
 distributed:
@@ -116,11 +115,12 @@ class OrderService {
 
     @DistributedLock(key = "order:#{#p0}", waitFor = "2s", leaseFor = "10s")
     public void processOrder(String orderId) {
-        FencingToken token = LockContext.requireCurrentFencingToken();
         // critical section
     }
 }
 ```
+
+`LockContext` is no longer part of the core public API. Prefer the `lease` callback parameter for programmatic locking. Applications that intentionally need synchronous annotation-only context access can add `distributed-lock-extension-context` and use `LockScopeContext`.
 
 Supported annotation fields:
 
@@ -187,7 +187,7 @@ The starter is covered by:
 - `DistributedLockAsyncGuardTest`
 - `DistributedLockProxyBoundaryTest`
 - `SpelLockKeyResolverTest`
-- `RedisBackendModuleAutoConfigurationTest`
-- `ZooKeeperBackendModuleAutoConfigurationTest`
+- `RedisBackendProviderAutoConfigurationTest`
+- `ZooKeeperBackendProviderAutoConfigurationTest`
 - `RedisStarterIntegrationTest`
 - `ZooKeeperStarterIntegrationTest`

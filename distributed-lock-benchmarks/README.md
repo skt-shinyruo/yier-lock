@@ -4,10 +4,10 @@
 
 - local Redis running on `127.0.0.1:6379`, or `BENCHMARK_REDIS_URI` / `-Dbenchmark.redis.uri=...`
 - local ZooKeeper running on `127.0.0.1:2181`, or `BENCHMARK_ZOOKEEPER_CONNECT_STRING` / `-Dbenchmark.zookeeper.connect-string=...`
-- current 2.0 artifacts installed with `mvn -q install -DskipTests`
+- current 3.x artifacts installed with `mvn -q install -DskipTests`
 
 The benchmark module is intentionally outside the default root reactor. Mainline `mvn test` does not include it.
-Because of that, rerun `mvn -q install -DskipTests` after changing runtime, backend, or starter modules so this module sees the current typed-module API.
+Because of that, rerun `mvn -q install -DskipTests` after changing runtime, backend, or starter modules so this module sees the current provider-based API.
 
 ## Benchmark Suites
 
@@ -24,7 +24,7 @@ Because of that, rerun `mvn -q install -DskipTests` after changing runtime, back
 
 ## Commands
 
-### Install current 2.0 artifacts
+### Install current 3.x artifacts
 
 ```bash
 mvn -q install -DskipTests

@@ -12,7 +12,7 @@
 
     <artifactId>distributed-lock-benchmarks</artifactId>
     <name>Distributed Lock Benchmarks</name>
-    <description>JMH benchmarks for distributed lock 2.0</description>
+    <description>JMH benchmarks for distributed lock 3.x</description>
 
     <dependencies>
         <dependency>

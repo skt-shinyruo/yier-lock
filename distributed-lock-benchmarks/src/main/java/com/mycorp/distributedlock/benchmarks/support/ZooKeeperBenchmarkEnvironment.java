@@ -1,13 +1,12 @@
 package com.mycorp.distributedlock.benchmarks.support;
 
 import com.mycorp.distributedlock.api.LockClient;
+import com.mycorp.distributedlock.api.LockRuntime;
 import com.mycorp.distributedlock.api.SynchronousLockExecutor;
-import com.mycorp.distributedlock.runtime.LockRuntime;
 import com.mycorp.distributedlock.runtime.LockRuntimeBuilder;
 import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendConfiguration;
-import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendModule;
+import com.mycorp.distributedlock.zookeeper.ZooKeeperBackendProvider;
 
-import java.util.List;
 import java.util.Objects;
 
 public final class ZooKeeperBenchmarkEnvironment implements AutoCloseable {
@@ -30,9 +29,8 @@ public final class ZooKeeperBenchmarkEnvironment implements AutoCloseable {
         String basePath = configuredBasePath();
         LockRuntime runtime = LockRuntimeBuilder.create()
             .backend("zookeeper")
-            .backendModules(List.of(new ZooKeeperBackendModule(
-                new ZooKeeperBackendConfiguration(connectString, basePath)
-            )))
+            .backendProvider(new ZooKeeperBackendProvider())
+            .backendConfiguration(new ZooKeeperBackendConfiguration(connectString, basePath))
             .build();
         return new ZooKeeperBenchmarkEnvironment(connectString, basePath, runtime);
     }
