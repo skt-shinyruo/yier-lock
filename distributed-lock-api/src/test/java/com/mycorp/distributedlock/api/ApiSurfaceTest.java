@@ -125,6 +125,53 @@ class ApiSurfaceTest {
     }
 
     @Test
+    void runtimeMetadataRecordsShouldExposeTheApprovedShape() throws Exception {
+        assertThat(Arrays.stream(BackendBehavior.class.getRecordComponents())
+                .map(component -> component.getName() + ":" + component.getType().getSimpleName()))
+                .containsExactly(
+                        "lockModes:Set",
+                        "fencing:FencingSemantics",
+                        "leaseSemantics:Set",
+                        "session:SessionSemantics",
+                        "waitSemantics:WaitSemantics",
+                        "fairness:FairnessSemantics",
+                        "ownershipLoss:OwnershipLossSemantics",
+                        "costModel:BackendCostModel");
+        assertThat(Arrays.stream(RuntimeInfo.class.getRecordComponents())
+                .map(component -> component.getName() + ":" + component.getType().getSimpleName()))
+                .containsExactly(
+                        "backendId:String",
+                        "backendDisplayName:String",
+                        "behavior:BackendBehavior",
+                        "runtimeVersion:String");
+        assertThat(Arrays.stream(BackendBehavior.Builder.class.getDeclaredMethods())
+                .filter(method -> Modifier.isPublic(method.getModifiers()))
+                .map(method -> method.getName() + ":" + method.getReturnType().getSimpleName() + ":"
+                        + Arrays.stream(method.getParameterTypes())
+                                .map(Class::getSimpleName)
+                                .collect(Collectors.joining(",")))
+                .sorted()
+                .collect(Collectors.toList()))
+                .containsExactly(
+                        "build:BackendBehavior:",
+                        "costModel:Builder:BackendCostModel",
+                        "fairness:Builder:FairnessSemantics",
+                        "fencing:Builder:FencingSemantics",
+                        "leaseSemantics:Builder:Set",
+                        "lockModes:Builder:Set",
+                        "ownershipLoss:Builder:OwnershipLossSemantics",
+                        "session:Builder:SessionSemantics",
+                        "wait:Builder:WaitSemantics",
+                        "waitSemantics:Builder:WaitSemantics");
+
+        BackendBehavior behavior = standardBehaviorBuilder()
+                .waitSemantics(WaitSemantics.WATCHED_QUEUE)
+                .build();
+
+        assertThat(behavior.waitSemantics()).isEqualTo(WaitSemantics.WATCHED_QUEUE);
+    }
+
+    @Test
     void backendBehaviorShouldDefensivelyCopyAndExposeImmutableEnumSets() {
         EnumSet<LockMode> lockModes = EnumSet.of(LockMode.MUTEX);
         EnumSet<LeaseSemantics> leaseSemantics = EnumSet.of(LeaseSemantics.FIXED_TTL);

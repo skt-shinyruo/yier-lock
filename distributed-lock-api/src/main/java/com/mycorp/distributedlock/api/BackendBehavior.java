@@ -78,7 +78,11 @@ public record BackendBehavior(
         }
 
         public Builder wait(WaitSemantics wait) {
-            this.wait = wait;
+            return waitSemantics(wait);
+        }
+
+        public Builder waitSemantics(WaitSemantics waitSemantics) {
+            this.wait = waitSemantics;
             return this;
         }
 
